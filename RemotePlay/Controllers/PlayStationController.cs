@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json.Linq;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.Base;
 using RemotePlay.Models.Context;
@@ -977,17 +978,7 @@ namespace RemotePlay.Controllers
                 }
 
                 // 发现设备获取详细信息
-                ConsoleInfo? deviceInfo = null;
-                if (registerResult != null && !string.IsNullOrEmpty(registerResult.HostId))
-                {
-                    // 如果注册成功，使用注册结果中的信息
-                    deviceInfo = await _remotePlayService.DiscoverDeviceAsync(request.HostIp);
-                }
-                else
-                {
-                    // 如果没有注册，直接发现设备
-                    deviceInfo = await _remotePlayService.DiscoverDeviceAsync(request.HostIp);
-                }
+                ConsoleInfo? deviceInfo = await _remotePlayService.DiscoverDeviceAsync(request.HostIp);
 
                 if (deviceInfo == null)
                 {
@@ -1012,14 +1003,18 @@ namespace RemotePlay.Controllers
                     device.HostType = deviceInfo.HostType;
                     device.SystemVersion = deviceInfo.SystemVerion;
                     device.DiscoverProtocolVersion = deviceInfo.DeviceDiscoverPotocolVersion;
-                    device.Status = deviceInfo.status;
-                    
+                    device.Status = "OK";
+
                     // 如果注册成功，更新注册信息
                     if (registerResult != null && registerResult.Success)
                     {
                         device.IsRegistered = true;
-                        // 注意：这里需要从注册结果中获取RPKey和RegistKey
-                        // 但当前的RegisterResult可能不包含这些信息，需要后续完善
+                        device.APBssid = registerResult?.RegistData?.GetValueOrDefault("AP-Bssid");
+                        device.RegistData = JObject.FromObject(registerResult?.RegistData ?? new() { });
+                        device.RegistKey = registerResult?.RegistData?.FirstOrDefault(x => x.Key.Contains("RegistKey")).Value;
+                        device.MacAddress = device.HostId;
+                        device.RPKeyType = registerResult?.RegistData?.GetValueOrDefault("RP-KeyType");
+                        device.RPKey = registerResult?.RegistData?.GetValueOrDefault("RP-Key");
                     }
                 }
                 else
@@ -1036,7 +1031,14 @@ namespace RemotePlay.Controllers
                         SystemVersion = deviceInfo.SystemVerion,
                         DiscoverProtocolVersion = deviceInfo.DeviceDiscoverPotocolVersion,
                         Status = deviceInfo.status,
-                        IsRegistered = registerResult?.Success ?? false
+                        IsRegistered = registerResult?.Success ?? false,
+                        APBssid = registerResult?.RegistData?.GetValueOrDefault("AP-Bssid"),
+                        RegistData = JObject.FromObject(registerResult?.RegistData ?? new() { }),
+                        RegistKey = registerResult?.RegistData?.FirstOrDefault(x => x.Key.Contains("RegistKey")).Value,
+                        MacAddress = registerResult?.RegistData?.FirstOrDefault(x => x.Key.Contains("Mac")).Value,
+                        RPKeyType = registerResult?.RegistData?.GetValueOrDefault("RP-KeyType"),
+                        RPKey = registerResult?.RegistData?.GetValueOrDefault("RP-Key"),
+
                     };
                     _rpContext.PSDevices.Add(device);
                 }

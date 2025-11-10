@@ -419,7 +419,9 @@ namespace RemotePlay.Services
                 {
                     Success = true,
                     HostId = info.GetValueOrDefault("host-id", ""),
-                    HostName = info.GetValueOrDefault("host-name", "Unknown")
+                    HostName = info.GetValueOrDefault("host-name", "Unknown"),
+                    SystemVersion = info.GetValueOrDefault("system-version", "Unknown"),
+                    RegistData = info,
                 };
             }
 
