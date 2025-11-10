@@ -1,4 +1,4 @@
-# Remote Play (PlayStation Remote Play Platform)
+# Remote Play
 EN | [中文](README.zh-CN.md)
 ## Overview
 PSRP is implemented as an ASP.NET Core service that bridges PlayStation Remote Play to the browser, pairing a SignalR/WebRTC media pipeline with a React front-end and PostgreSQL-backed persistence so you can self-host a low-latency streaming experience.
@@ -43,8 +43,8 @@ The system follows a layered architecture: the web client communicates with the 
 
 2. **Clone the repository**
    ```bash
-   git clone https://github.com/<your-account>/PSRP.git
-   cd PSRP
+   git clone https://github.com/o1298098/remote-play.git
+   cd remote-play
    ```
 
 3. **Configure the backend**

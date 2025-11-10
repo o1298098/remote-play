@@ -1,4 +1,4 @@
-# Remote Play（PlayStation Remote Play 平台）
+# Remote Play
 中文 | [EN](README.md)
 ## 项目简介
 PSRP 基于 ASP.NET Core，结合 SignalR/WebRTC 串流管线、React 前端与 PostgreSQL 持久化，将 PlayStation Remote Play 会话桥接到浏览器，便于自建低延迟云游戏体验。
@@ -43,8 +43,8 @@ PSRP 基于 ASP.NET Core，结合 SignalR/WebRTC 串流管线、React 前端与 
 
 2. **克隆项目**
    ```bash
-   git clone https://github.com/<your-account>/PSRP.git
-   cd PSRP
+   git clone https://github.com/o1298098/remote-play.git
+   cd remote-play
    ```
 
 3. **配置后端**
