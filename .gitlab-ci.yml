@@ -1,0 +1,124 @@
+stages:
+  - build
+  - push
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  # 镜像名称前缀，使用 GitLab 容器仓库
+  REGISTRY_IMAGE: $CI_REGISTRY_IMAGE
+  # 使用提交 SHA 短版本作为标签，更精确的版本控制
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # 分支名作为额外标签
+  BRANCH_TAG: $CI_COMMIT_REF_SLUG
+
+# 构建 RemotePlay 后端服务
+build-remoteplay:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    IMAGE_NAME: $REGISTRY_IMAGE/server
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      set -e
+      cd RemotePlay
+      docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+      docker buildx inspect multiarch-builder --bootstrap
+      TAG_ARGS="-t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$BRANCH_TAG"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:latest"
+      fi
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        $TAG_ARGS \
+        -f Dockerfile \
+        --push \
+        .
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - RemotePlay/**/*
+        - RemotePlay/Dockerfile
+        - RemotePlay/RemotePlay.csproj
+        - .gitlab-ci.yml
+  tags:
+    - docker
+
+# 构建 RemotePlay.DBTool
+build-dbtool:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    IMAGE_NAME: $REGISTRY_IMAGE/dbtool
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      set -e
+      docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+      docker buildx inspect multiarch-builder --bootstrap
+      TAG_ARGS="-t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$BRANCH_TAG"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:latest"
+      fi
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        $TAG_ARGS \
+        -f RemotePlay.DBTool/Dockerfile \
+        --build-arg BUILD_CONFIGURATION=Release \
+        --push \
+        .
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - RemotePlay.DBTool/**/*
+        - RemotePlay/**/*
+        - RemotePlay.DBTool/Dockerfile
+        - RemotePlay.DBTool/RemotePlay.DBTool.csproj
+        - .gitlab-ci.yml
+  tags:
+    - docker
+
+# 构建 remoteplay.web 前端
+build-web:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    IMAGE_NAME: $REGISTRY_IMAGE/web
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      set -e
+      cd RemotePlay.Web
+      docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+      docker buildx inspect multiarch-builder --bootstrap
+      TAG_ARGS="-t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$BRANCH_TAG"
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:latest"
+      fi
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        $TAG_ARGS \
+        -f Dockerfile \
+        --push \
+        .
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - RemotePlay.Web/**/*
+        - RemotePlay.Web/Dockerfile
+        - RemotePlay.Web/package.json
+        - .gitlab-ci.yml
+        - RemotePlay.Web/.gitlab-ci.yml
+  tags:
+    - docker
+

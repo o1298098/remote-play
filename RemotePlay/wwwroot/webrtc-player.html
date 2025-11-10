@@ -1,0 +1,2352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlayStation Remote Play - WebRTC Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .video-container {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            min-height: 400px;
+        }
+
+        .video-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            text-align: center;
+            font-size: 1.2em;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-weight: 600;
+            color: #333;
+            font-size: 0.9em;
+        }
+
+        input[type="text"] {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 150px;
+            padding: 15px 30px;
+            font-size: 1em;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(17, 153, 142, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(235, 51, 73, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .status {
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .status-label {
+            font-weight: 600;
+            color: #666;
+        }
+
+        .status-value {
+            color: #333;
+            font-family: 'Courier New', monospace;
+        }
+
+        .status-connected {
+            color: #11998e;
+            font-weight: 600;
+        }
+
+        .status-disconnected {
+            color: #eb3349;
+            font-weight: 600;
+        }
+
+        .logs {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-info {
+            color: #4fc3f7;
+        }
+
+        .log-success {
+            color: #81c784;
+        }
+
+        .log-error {
+            color: #e57373;
+        }
+
+        .log-warning {
+            color: #ffb74d;
+        }
+
+        .controller-section {
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .controller-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .controller-shoulder-row {
+            display: flex;
+            gap: 10px;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+        }
+
+        .controller-center-space {
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .controller-main-area {
+            display: flex;
+            gap: 40px;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+
+        .controller-left,
+        .controller-right {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .controller-dpad-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .controller-dpad {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .controller-dpad-row {
+            display: flex;
+            gap: 5px;
+            justify-content: center;
+        }
+
+        .controller-face-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .controller-face-row {
+            display: flex;
+            gap: 5px;
+            justify-content: center;
+        }
+
+        .controller-function-row {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+
+        .controller-btn {
+            min-width: 60px;
+            height: 60px;
+            padding: 10px 20px;
+            font-size: 1.2em;
+            font-weight: 600;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .controller-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            border-color: #667eea;
+        }
+
+        .controller-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .controller-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .controller-btn-small {
+            min-width: 80px;
+            height: 44px;
+            font-size: 0.9em;
+            padding: 8px 15px;
+        }
+
+        .controller-btn-shoulder {
+            min-width: 70px;
+            height: 50px;
+            font-size: 0.85em;
+            padding: 8px 15px;
+            background: linear-gradient(135deg, #8e9eab 0%, #eef2f3 100%);
+        }
+
+        .controller-btn-dpad {
+            min-width: 50px;
+            height: 50px;
+            font-size: 1.2em;
+            padding: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .controller-btn-face {
+            min-width: 70px;
+            height: 70px;
+            font-size: 1.5em;
+            padding: 10px;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            border-radius: 50%;
+        }
+
+        .controller-btn-function {
+            min-width: 90px;
+            height: 40px;
+            font-size: 0.75em;
+            padding: 6px 12px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .controls {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            button {
+                min-width: 100%;
+            }
+
+            .controller-btn {
+                min-width: 50px;
+                height: 50px;
+                font-size: 1em;
+            }
+
+            .controller-btn-small {
+                min-width: 70px;
+                height: 40px;
+                font-size: 0.8em;
+            }
+
+            .controller-main-area {
+                flex-direction: column;
+                gap: 20px;
+            }
+
+            .controller-shoulder-row {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .controller-center-space {
+                display: none;
+            }
+
+            .controller-btn-shoulder {
+                min-width: 60px;
+                height: 45px;
+                font-size: 0.75em;
+            }
+
+            .controller-btn-dpad {
+                min-width: 45px;
+                height: 45px;
+                font-size: 1em;
+            }
+
+            .controller-btn-face {
+                min-width: 60px;
+                height: 60px;
+                font-size: 1.2em;
+            }
+
+            .controller-btn-function {
+                min-width: 80px;
+                height: 38px;
+                font-size: 0.7em;
+            }
+        }
+    </style>
+    <!-- SignalR 库用于低延迟控制器输入 -->
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 PlayStation Remote Play</h1>
+            <p>WebRTC 实时流媒体播放器</p>
+        </div>
+
+        <div class="content">
+            <div class="controller-section" id="authSection">
+                <h3 style="margin-bottom: 15px; color: #333;">🔐 身份验证</h3>
+                <div class="input-group">
+                    <label for="authTokenInput">JWT Token</label>
+                    <div class="url-input-group">
+                        <input type="password" id="authTokenInput" placeholder="粘贴 Bearer Token，或直接输入 JWT 字符串">
+                        <button class="btn-primary" onclick="saveAuthToken()">保存</button>
+                        <button class="btn-danger" onclick="clearAuthToken()">清除</button>
+                    </div>
+                    <small id="authTokenStatus" style="color: #666; font-size: 0.85em;">
+                        当前未配置 Token。
+                    </small>
+                </div>
+            </div>
+
+            <div class="video-container">
+                <!-- ✅ 低延迟优化：添加preload="none"和muted属性 -->
+                <video id="remoteVideo" autoplay playsinline preload="none" 
+                       style="object-fit: contain;"></video>
+                <div class="video-placeholder" id="placeholder">
+                    等待连接...
+                </div>
+            </div>
+
+            <div class="controller-section">
+                <h3 style="margin-bottom: 15px; color: #333;">🎮 PS5 控制器</h3>
+                <div style="margin-bottom: 15px; padding: 10px; background: #fff; border-radius: 5px; font-size: 0.9em; color: #666;">
+                    <strong>⌨️ 键盘映射：</strong>
+                    <span style="margin-left: 10px;">WASD/方向键 = 方向键</span>
+                    <span style="margin-left: 10px;">空格 = ✕</span>
+                    <span style="margin-left: 10px;">Enter = ○</span>
+                    <span style="margin-left: 10px;">Shift = □</span>
+                    <span style="margin-left: 10px;">Ctrl = △</span>
+                    <span style="margin-left: 10px;">Q = L1</span>
+                    <span style="margin-left: 10px;">E = R1</span>
+                    <span style="margin-left: 10px;">Z = L2</span>
+                    <span style="margin-left: 10px;">C = R2</span>
+                    <span style="margin-left: 10px;">Tab = OPTIONS</span>
+                    <span style="margin-left: 10px;">Backspace = SHARE</span>
+                    <span style="margin-left: 10px;">Esc = PS</span>
+                </div>
+                <div class="controller-wrapper">
+                    <!-- 肩键区域 -->
+                    <div class="controller-shoulder-row">
+                        <button class="controller-btn controller-btn-shoulder" data-button="L1" title="L1">L1</button>
+                        <button class="controller-btn controller-btn-shoulder" data-button="L2" title="L2">L2</button>
+                        <div class="controller-center-space"></div>
+                        <button class="controller-btn controller-btn-shoulder" data-button="R1" title="R1">R1</button>
+                        <button class="controller-btn controller-btn-shoulder" data-button="R2" title="R2">R2</button>
+                    </div>
+                    
+                    <!-- 主要控制区域 -->
+                    <div class="controller-main-area">
+                        <!-- 左侧：方向键 -->
+                        <div class="controller-left">
+                            <div class="controller-dpad-container">
+                                <div class="controller-dpad">
+                                    <button class="controller-btn controller-btn-dpad" data-button="UP" title="上">↑</button>
+                                    <div class="controller-dpad-row">
+                                        <button class="controller-btn controller-btn-dpad" data-button="LEFT" title="左">←</button>
+                                        <button class="controller-btn controller-btn-dpad" data-button="DOWN" title="下">↓</button>
+                                        <button class="controller-btn controller-btn-dpad" data-button="RIGHT" title="右">→</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 右侧：主要按钮 -->
+                        <div class="controller-right">
+                            <div class="controller-face-buttons">
+                                <button class="controller-btn controller-btn-face" data-button="TRIANGLE" title="三角键">△</button>
+                                <div class="controller-face-row">
+                                    <button class="controller-btn controller-btn-face" data-button="SQUARE" title="方块键">□</button>
+                                    <button class="controller-btn controller-btn-face" data-button="CROSS" title="叉键">✕</button>
+                                    <button class="controller-btn controller-btn-face" data-button="CIRCLE" title="圆圈键">○</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 功能键区域 -->
+                    <div class="controller-function-row">
+                        <button class="controller-btn controller-btn-function" data-button="OPTIONS" title="选项">OPTIONS</button>
+                        <button class="controller-btn controller-btn-function" data-button="SHARE" title="分享">SHARE</button>
+                        <button class="controller-btn controller-btn-function" data-button="PS" title="PS 键">PS</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <div class="input-group">
+                    <label for="remotePlaySessionId">Host ID 或 Session ID</label>
+                    <input type="text" id="remotePlaySessionId" placeholder="输入 Host ID 或 Session ID">
+                    <small style="color: #666; font-size: 0.85em; margin-top: 5px;">
+                        支持直接输入 Host ID（自动创建 Session）或已存在的 Session ID
+                    </small>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn-primary" id="connectBtn" onclick="connect()">
+                    🔗 连接
+                </button>
+                <button class="btn-danger" id="disconnectBtn" onclick="disconnect()" disabled>
+                    ⏹️ 断开连接
+                </button>
+            </div>
+
+            <div class="status">
+                <h3 style="margin-bottom: 15px; color: #333;">📊 连接状态</h3>
+                <div class="status-item">
+                    <span class="status-label">WebRTC Session ID:</span>
+                    <span class="status-value" id="sessionId">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">连接状态:</span>
+                    <span class="status-value status-disconnected" id="connectionState">未连接</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">ICE 状态:</span>
+                    <span class="status-value" id="iceState">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">信令状态:</span>
+                    <span class="status-value" id="signalingState">-</span>
+                </div>
+            </div>
+
+            <div class="status">
+                <h3 style="margin-bottom: 15px; color: #333;">⏱️ 延时统计</h3>
+                <div class="status-item">
+                    <span class="status-label">当前延迟 (与PS5画面):</span>
+                    <span class="status-value" id="currentLatency" style="font-weight: 600; color: #667eea;">-</span>                    
+                </div>
+                <div class="status-item">
+                    <span class="status-label">WebRTC RTT:</span>
+                    <span class="status-value" id="webrtcRtt">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">视频播放延迟:</span>
+                    <span class="status-value" id="videoPlaybackLatency">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">总延迟 (平均):</span>
+                    <span class="status-value" id="latencyTotalAvg">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">总延迟 (最小/最大):</span>
+                    <span class="status-value" id="latencyTotalRange">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">网络传输 (平均):</span>
+                    <span class="status-value" id="latencyNetworkAvg">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">服务器处理 (平均):</span>
+                    <span class="status-value" id="latencyServerAvg">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">样本数量:</span>
+                    <span class="status-value" id="latencySampleCount">0</span>
+                </div>
+            </div>
+
+            <div>
+                <h3 style="margin-bottom: 15px; color: #333;">📝 日志</h3>
+                <div class="logs" id="logs"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const AUTH_STORAGE_KEY = 'remoteplay.authToken';
+        let authToken = localStorage.getItem(AUTH_STORAGE_KEY) || '';
+        let warnedAuthMissing = false;
+
+        function getAuthToken() {
+            return authToken?.trim() || '';
+        }
+
+        function setAuthToken(token) {
+            authToken = (token || '').trim();
+            if (authToken) {
+                localStorage.setItem(AUTH_STORAGE_KEY, authToken);
+            } else {
+                localStorage.removeItem(AUTH_STORAGE_KEY);
+            }
+            warnedAuthMissing = false;
+            updateAuthTokenStatus();
+        }
+
+        function updateAuthTokenStatus() {
+            const statusEl = document.getElementById('authTokenStatus');
+            const inputEl = document.getElementById('authTokenInput');
+            if (!statusEl || !inputEl) {
+                return;
+            }
+            if (authToken) {
+                statusEl.textContent = `Token 已保存（长度 ${authToken.length}）`;
+                statusEl.style.color = '#11998e';
+                inputEl.value = authToken;
+            } else {
+                statusEl.textContent = '当前未配置 Token。';
+                statusEl.style.color = '#666';
+                inputEl.value = '';
+            }
+        }
+
+        function saveAuthToken() {
+            const input = document.getElementById('authTokenInput');
+            setAuthToken(input?.value || '');
+            if (authToken) {
+                log('✅ Token 已保存', 'success');
+            } else {
+                log('✅ Token 已清空', 'info');
+            }
+        }
+
+        function clearAuthToken() {
+            setAuthToken('');
+            log('✅ Token 已清空', 'info');
+        }
+
+        function authorizedFetch(url, options = {}) {
+            const headers = new Headers(options.headers || {});
+            const token = getAuthToken();
+            if (token) {
+                headers.set('Authorization', `Bearer ${token}`);
+                warnedAuthMissing = false;
+            } else if (!warnedAuthMissing) {
+                log('⚠️ 尚未设置 JWT Token，请在“身份验证”中配置', 'warning');
+                warnedAuthMissing = true;
+            }
+            return fetch(url, { ...options, headers });
+        }
+
+        let peerConnection = null;
+        let webrtcSessionId = null;
+        let remotePlaySessionId = null; // 保存 Remote Play Session ID，用于控制器
+        const API_BASE = '/api/webrtc'; // 常量，不应修改
+        
+        // SignalR 连接（用于低延迟控制器输入）
+        let controllerConnection = null;
+        let controllerConnected = false;
+        let isConnecting = false; // ✅ 连接锁，防止并发连接
+        
+        // 延时统计
+        let latencyStatsInterval = null;
+        let currentLatencyInterval = null; // 实时延迟更新间隔
+        let currentVideoFrameIndex = 0;
+        let currentAudioFrameIndex = 0;
+        
+        // 实时延迟计算相关
+        let lastFrameTime = null; // 上一帧的时间戳
+        let frameReceiveTimes = []; // 最近帧的接收时间（用于计算平滑延迟）
+        const MAX_FRAME_TIMES = 30; // 保留最近30帧的时间
+
+        function log(message, type = 'info') {
+            const logsDiv = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logsDiv.appendChild(entry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        function updateStatus(field, value, isConnected = null) {
+            const element = document.getElementById(field);
+            if (element) {
+                element.textContent = value;
+                if (isConnected !== null) {
+                    element.className = isConnected ? 'status-value status-connected' : 'status-value status-disconnected';
+                }
+            }
+        }
+
+        // 判断输入的是 Host ID 还是 Session ID（GUID 格式）
+        function isGuid(str) {
+            const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            return guidRegex.test(str);
+        }
+
+        // 从 Host ID 创建或获取 Session
+        async function getSessionFromHostId(hostId) {
+            try {
+                log(`正在从 Host ID 创建 Session: ${hostId}...`, 'info');
+                const response = await authorizedFetch(`/api/PlayStation/start-session?hostId=${encodeURIComponent(hostId)}`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`创建 Session 失败: ${response.status} ${errorText}`);
+                }
+
+                const result = await response.json();
+                
+                // 调试：打印完整响应
+                if (result.data) {
+                    log(`📋 API 返回数据: ${JSON.stringify(result.data).substring(0, 200)}...`, 'info');
+                }
+                
+                if (!result.success) {
+                    throw new Error(result.errorMessage || '创建 Session 失败');
+                }
+
+                // ⚠️ 修复：检查多种可能的字段名（Id, id, sessionId, session_id）
+                const sessionId = result.data?.Id || result.data?.id || result.data?.sessionId || result.data?.session_id;
+                
+                if (!sessionId) {
+                    // 如果找不到 ID，尝试从 data 对象中查找 GUID 格式的字段
+                    if (result.data) {
+                        for (const key in result.data) {
+                            const value = result.data[key];
+                            if (typeof value === 'string' && isGuid(value)) {
+                                log(`✅ 找到 Session ID (字段名: ${key}): ${value}`, 'success');
+                                return value;
+                            }
+                        }
+                    }
+                    
+                    // 如果还是找不到，打印完整数据以便调试
+                    log(`⚠️ 无法找到 Session ID，完整响应: ${JSON.stringify(result)}`, 'warning');
+                    throw new Error('Session 创建成功但未返回 Session ID');
+                }
+
+                log(`✅ Session 已创建/获取: ${sessionId}`, 'success');
+                return sessionId;
+            } catch (error) {
+                log(`❌ 从 Host ID 创建 Session 失败: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        async function connect() {
+            try {
+                const inputValue = document.getElementById('remotePlaySessionId').value.trim();
+                if (!inputValue) {
+                    alert('请输入 Host ID 或 Session ID');
+                    return;
+                }
+
+                document.getElementById('connectBtn').disabled = true;
+                log('开始连接...', 'info');
+
+                // 判断输入的是 Host ID 还是 Session ID
+                let sessionIdForConnect;
+                if (isGuid(inputValue)) {
+                    // 输入的是 Session ID（GUID 格式）
+                    log(`检测到 Session ID 格式: ${inputValue}`, 'info');
+                    sessionIdForConnect = inputValue;
+                } else {
+                    // 输入的是 Host ID，需要先创建 Session
+                    log(`检测到 Host ID 格式: ${inputValue}`, 'info');
+                    sessionIdForConnect = await getSessionFromHostId(inputValue);
+                }
+
+                // 1. 创建 Offer
+                log('正在创建 WebRTC Offer...', 'info');
+                const offerResponse = await authorizedFetch(`${API_BASE}/offer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!offerResponse.ok) {
+                    throw new Error('创建 Offer 失败');
+                }
+
+                const offerData = await offerResponse.json();
+                if (!offerData.success) {
+                    throw new Error(offerData.errorMessage || '创建 Offer 失败');
+                }
+
+                webrtcSessionId = offerData.data.sessionId;
+                const offer = {
+                    type: 'offer',
+                    sdp: offerData.data.sdp
+                };
+
+                log(`✅ Offer 已创建，Session ID: ${webrtcSessionId}`, 'success');
+                updateStatus('sessionId', webrtcSessionId);
+
+                // 2. 创建 PeerConnection（优化低延迟配置）
+                log('正在创建 PeerConnection...', 'info');
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' }
+                    ],
+                    // 低延迟优化配置
+                    iceCandidatePoolSize: 0, // 减少候选池大小，降低延迟
+                    bundlePolicy: 'max-bundle', // 使用 bundle 策略减少延迟
+                    rtcpMuxPolicy: 'require' // 要求 RTCP mux，减少延迟
+                });
+                
+                // 设置低延迟选项
+                if (peerConnection.setConfiguration) {
+                    try {
+                        const config = peerConnection.getConfiguration();
+                        config.iceTransportPolicy = 'all'; // 允许所有ICE传输类型
+                        peerConnection.setConfiguration(config);
+                        log('✅ 已应用低延迟配置', 'success');
+                    } catch (e) {
+                        log(`⚠️ 配置设置失败: ${e.message}`, 'warning');
+                    }
+                }
+
+                // 设置事件监听
+                peerConnection.ontrack = (event) => {
+                    log(`📺 收到媒体轨道: ${event.track.kind}`, 'success');
+                    const video = document.getElementById('remoteVideo');
+                    if (event.streams && event.streams[0]) {
+                        video.srcObject = event.streams[0];
+                        document.getElementById('placeholder').style.display = 'none';
+                        
+                        // ✅ 低延迟优化：优化视频播放设置（零缓冲模式）
+                        if (event.track.kind === 'video') {
+                            // 设置低延迟播放参数
+                            video.playbackRate = 1.0; // 确保正常播放速度
+                            video.defaultPlaybackRate = 1.0;
+                            
+                            // ✅ 零缓冲设置：禁用自动缓冲行为
+                            try {
+                                // 设置视频属性以最小化缓冲
+                                video.muted = false; // 确保音频正常（如果需要）
+                                
+                                // ✅ 使用 requestVideoFrameCallback 记录每帧（保留作为主要方式）
+                                // 这种方式可以确保 frameIndex 匹配，虽然记录的是渲染时间
+                                if ('requestVideoFrameCallback' in video) {
+                                    let frameCount = 0;
+                                    const onVideoFrame = (now, metadata) => {
+                                        frameCount++;
+                                        
+                                        // ✅ 记录每帧的接收时间（用于延迟统计）
+                                        // 需要从渲染时间中减去缓冲延迟，得到真实的接收时间
+                                        if (webrtcSessionId && frameCount <= 1000) {
+                                            // 将 DOMHighResTimeStamp 转换为 UTC 时间
+                                            // now 是帧渲染的时间戳（相对于页面加载的高精度时间）
+                                            const renderTime = new Date(performance.timeOrigin + now);
+                                            
+                                            // ✅ 关键修复：从渲染时间中减去缓冲延迟，得到真实的接收时间
+                                            // 这样才能准确计算与PS5画面的延迟，而不是包含缓冲的累积延迟
+                                            let bufferLatency = 0;
+                                            if (video.buffered && video.buffered.length > 0) {
+                                                const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                                                const currentTime = video.currentTime;
+                                                bufferLatency = (bufferedEnd - currentTime) * 1000; // 转换为毫秒
+                                                
+                                                // 限制缓冲延迟的最大值（避免异常值）
+                                                if (bufferLatency > 5000) bufferLatency = 0;
+                                                if (bufferLatency < 0) bufferLatency = 0;
+                                            }
+                                            
+                                            // 接收时间 = 渲染时间 - 缓冲延迟
+                                            // 这样得到的是数据包实际到达并解码完成的时间，而不是显示时间
+                                            const receiveTime = new Date(renderTime.getTime() - bufferLatency);
+                                            
+                                            // 使用帧序号作为 frameIndex（与服务器端同步）
+                                            recordPacketReceiveTime('video', frameCount, receiveTime);
+                                        }
+                                        
+                                        // ✅ 记录帧渲染时间用于实时延迟计算
+                                        const frameTime = performance.now();
+                                        frameReceiveTimes.push(frameTime);
+                                        if (frameReceiveTimes.length > MAX_FRAME_TIMES) {
+                                            frameReceiveTimes.shift(); // 移除最旧的
+                                        }
+                                        
+                                        // 每帧都检查并减少缓冲
+                                        if (video.buffered && video.buffered.length > 0) {
+                                            const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                                            const currentTime = video.currentTime;
+                                            const bufferAhead = bufferedEnd - currentTime;
+                                            
+                                            // 如果缓冲超过50ms，立即跳转
+                                            if (bufferAhead > 0.05 && currentTime > 0.01) {
+                                                try {
+                                                    video.currentTime = bufferedEnd - 0.01;
+                                                } catch (e) {
+                                                    // 忽略错误
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 继续请求下一帧回调
+                                        video.requestVideoFrameCallback(onVideoFrame);
+                                    };
+                                    video.requestVideoFrameCallback(onVideoFrame);
+                                }
+                                
+                                // 2. 监控缓冲并主动减少延迟（零缓冲策略）
+                                let lastBufferCheck = 0;
+                                const bufferCheckInterval = 50; // 每50ms检查一次（更频繁）
+                                const maxBufferTime = 0.05; // 最大允许缓冲时间：50ms（接近零缓冲）
+                                
+                                const checkBufferAndOptimize = () => {
+                                    if (video.buffered && video.buffered.length > 0) {
+                                        const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                                        const currentTime = video.currentTime;
+                                        const bufferAhead = bufferedEnd - currentTime;
+                                        
+                                        // ✅ 零缓冲策略：如果缓冲超过50ms，立即跳转以减少延迟
+                                        if (bufferAhead > maxBufferTime && currentTime > 0.01) {
+                                            // 跳转到缓冲末尾，只保留最小缓冲（10ms）
+                                            const targetTime = bufferedEnd - 0.01; // 只保留10ms缓冲
+                                            if (targetTime > currentTime && targetTime < bufferedEnd) {
+                                                try {
+                                                    video.currentTime = targetTime;
+                                                    if (lastBufferCheck % 20 === 0) {
+                                                        log(`⚡ 零缓冲优化: ${(bufferAhead * 1000).toFixed(0)}ms -> 10ms`, 'info');
+                                                    }
+                                                } catch (e) {
+                                                    // 忽略跳转错误（可能因为缓冲太小）
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 定期记录缓冲状态（每2秒一次）
+                                        if (lastBufferCheck % 40 === 0) {
+                                            log(`📊 视频缓冲: ${(bufferAhead * 1000).toFixed(0)}ms`, 'info');
+                                        }
+                                    }
+                                    lastBufferCheck++;
+                                };
+                                
+                                // 启动高频缓冲监控（零缓冲模式）
+                                const bufferMonitor = setInterval(checkBufferAndOptimize, bufferCheckInterval);
+                                
+                                // 在视频结束时清理监控
+                                event.track.onended = () => {
+                                    clearInterval(bufferMonitor);
+                                };
+                                
+                                // ✅ 已移除 timeupdate 事件中的延迟记录（不准确）
+                                // 延迟记录现在使用 requestVideoFrameCallback，更准确
+                                
+                                log('✅ 视频轨道已连接，已优化低延迟播放', 'success');
+                            } catch (e) {
+                                log(`⚠️ 视频优化设置失败: ${e.message}`, 'warning');
+                            }
+                        }
+                        
+                        if (event.track.kind === 'audio') {
+                            // 记录音频帧接收时间
+                            event.track.onended = () => {
+                                // 音频轨道结束
+                            };
+                        }
+                    }
+                };
+
+                peerConnection.onicecandidate = async (event) => {
+                    if (event.candidate) {
+                        log(`🧊 发送 ICE Candidate`, 'info');
+                        try {
+                            // 使用当前作用域的 webrtcSessionId（从外部作用域捕获）
+                            const currentSessionId = webrtcSessionId;
+                            if (!currentSessionId) {
+                                log(`⚠️ 无法发送 ICE Candidate: sessionId 未设置`, 'warning');
+                                return;
+                            }
+                            
+                            await authorizedFetch(`${API_BASE}/ice`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    sessionId: currentSessionId,
+                                    candidate: event.candidate.candidate,
+                                    sdpMid: event.candidate.sdpMid,
+                                    sdpMLineIndex: event.candidate.sdpMLineIndex
+                                })
+                            });
+                        } catch (err) {
+                            log(`❌ 发送 ICE Candidate 失败: ${err.message}`, 'error');
+                        }
+                    }
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    const state = peerConnection.connectionState;
+                    log(`🔄 连接状态: ${state}`, 'info');
+                    updateStatus('connectionState', state, state === 'connected');
+                    
+                    if (state === 'connected') {
+                        document.getElementById('disconnectBtn').disabled = false;
+                    } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                        document.getElementById('disconnectBtn').disabled = true;
+                        document.getElementById('connectBtn').disabled = false;
+                    }
+                };
+
+                peerConnection.oniceconnectionstatechange = () => {
+                    const state = peerConnection.iceConnectionState;
+                    log(`🧊 ICE 状态: ${state}`, 'info');
+                    updateStatus('iceState', state);
+                };
+
+                peerConnection.onsignalingstatechange = () => {
+                    const state = peerConnection.signalingState;
+                    updateStatus('signalingState', state);
+                };
+
+                // 3. 设置远端 Offer 并创建 Answer
+                log('正在设置远端描述...', 'info');
+                await peerConnection.setRemoteDescription(offer);
+
+                log('正在创建 Answer...', 'info');
+                // 创建 Answer 时使用低延迟选项
+                const answerOptions = {
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: true
+                };
+                const answer = await peerConnection.createAnswer(answerOptions);
+                
+                // 优化 Answer SDP 以降低延迟（如果失败则跳过）
+                if (answer.sdp) {
+                    try {
+                        const optimizedSdp = optimizeSdpForLowLatency(answer.sdp);
+                        if (optimizedSdp && optimizedSdp.length > 10) {
+                            answer.sdp = optimizedSdp;
+                        } else {
+                            log('⚠️ SDP 优化结果无效，使用原始 SDP', 'warning');
+                        }
+                    } catch (sdpError) {
+                        log(`⚠️ SDP 优化出错: ${sdpError.message}，使用原始 SDP`, 'warning');
+                        // 继续使用原始 SDP
+                    }
+                }
+                
+                try {
+                    await peerConnection.setLocalDescription(answer);
+                    log('✅ Answer 已设置', 'success');
+                } catch (descError) {
+                    log(`❌ 设置本地描述失败: ${descError.message}`, 'error');
+                    // 如果设置失败，尝试使用未优化的 SDP
+                    if (answer.sdp) {
+                        const originalAnswer = await peerConnection.createAnswer(answerOptions);
+                        await peerConnection.setLocalDescription(originalAnswer);
+                        log('✅ 使用原始 Answer 重试成功', 'success');
+                    } else {
+                        throw descError;
+                    }
+                }
+
+                // 4. 发送 Answer
+                log('正在发送 Answer...', 'info');
+                const answerResponse = await authorizedFetch(`${API_BASE}/answer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId: webrtcSessionId,
+                        sdp: answer.sdp,
+                        type: 'answer'
+                    })
+                });
+
+                if (!answerResponse.ok) {
+                    throw new Error('发送 Answer 失败');
+                }
+
+                log('✅ Answer 已发送', 'success');
+
+                // 5. 连接到 Remote Play Session
+                // 保存 Remote Play Session ID 到全局变量（用于控制器）
+                remotePlaySessionId = sessionIdForConnect;
+                
+                log(`正在连接到 Remote Play Session: ${sessionIdForConnect}...`, 'info');
+                
+                // 确保 webrtcSessionId 已设置
+                if (!webrtcSessionId) {
+                    throw new Error('WebRTC Session ID 未设置');
+                }
+                
+                let connectResponse;
+                try {
+                    connectResponse = await authorizedFetch(
+                        `${API_BASE}/connect/${webrtcSessionId}/${sessionIdForConnect}`,
+                        { method: 'POST' }
+                    );
+                } catch (fetchError) {
+                    log(`❌ Fetch 错误: ${fetchError.message}`, 'error');
+                    throw new Error(`连接到 Remote Play Session 失败: ${fetchError.message}`);
+                }
+
+                if (!connectResponse.ok) {
+                    const errorText = await connectResponse.text();
+                    log(`❌ HTTP 错误响应: ${errorText}`, 'error');
+                    throw new Error(`连接到 Remote Play Session 失败: ${connectResponse.status} ${connectResponse.statusText}`);
+                }
+
+                let connectData;
+                try {
+                    connectData = await connectResponse.json();
+                } catch (jsonError) {
+                    log(`❌ JSON 解析错误: ${jsonError.message}`, 'error');
+                    throw new Error(`解析响应失败: ${jsonError.message}`);
+                }
+                
+                if (!connectData.success) {
+                    throw new Error(connectData.errorMessage || '连接失败');
+                }
+
+                log('✅ 已连接到 Remote Play Session，等待媒体流...', 'success');
+                updateStatus('connectionState', '等待连接...', false);
+                
+                // 启动延时统计更新
+                startLatencyStatsUpdate();
+                
+                // 连接 SignalR 控制器（低延迟）
+                await connectControllerSignalR(sessionIdForConnect);
+                
+                // 初始化控制器按钮（连接成功后，只初始化一次）
+                try {
+                    initControllerButtons();
+                    initKeyboardMapping();
+                } catch (initError) {
+                    log(`⚠️ 初始化控制器失败: ${initError.message}`, 'warning');
+                    // 不抛出错误，允许连接继续
+                }
+
+            } catch (error) {
+                // 记录完整的错误信息，包括堆栈跟踪
+                const errorMessage = error.message || '未知错误';
+                const errorStack = error.stack || '';
+                log(`❌ 连接失败: ${errorMessage}`, 'error');
+                if (errorStack) {
+                    log(`❌ 错误堆栈: ${errorStack.substring(0, 500)}`, 'error');
+                }
+                console.error('连接错误详情:', error);
+                document.getElementById('connectBtn').disabled = false;
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+            }
+        }
+
+        async function disconnect() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+
+            const video = document.getElementById('remoteVideo');
+            video.srcObject = null;
+            document.getElementById('placeholder').style.display = 'block';
+
+            updateStatus('sessionId', '-');
+            updateStatus('connectionState', '未连接', false);
+            updateStatus('iceState', '-');
+            updateStatus('signalingState', '-');
+
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+
+            log('已断开连接', 'warning');
+
+            // 清理服务器端会话
+            if (webrtcSessionId) {
+                authorizedFetch(`${API_BASE}/session/${webrtcSessionId}`, {
+                    method: 'DELETE'
+                }).catch(() => {});
+                webrtcSessionId = null;
+            }
+            
+            // 清理 Remote Play Session ID
+            remotePlaySessionId = null;
+            
+            // 断开 SignalR 连接
+            await disconnectControllerSignalR();
+            
+            // 停止延时统计更新
+            stopLatencyStatsUpdate();
+        }
+        
+        // 记录数据包接收时间
+        // ✅ 修复：支持传入精确的时间戳（从 requestVideoFrameCallback 获取）
+        async function recordPacketReceiveTime(packetType, frameIndex, receiveTime = null) {
+            if (!webrtcSessionId) return;
+            
+            try {
+                // 使用传入的时间戳，如果没有则使用当前时间
+                const timestamp = receiveTime ? receiveTime.toISOString() : new Date().toISOString();
+                
+                await authorizedFetch(`${API_BASE}/latency/receive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId: webrtcSessionId,
+                        packetType: packetType,
+                        frameIndex: frameIndex,
+                        clientReceiveTime: timestamp
+                    })
+                });
+            } catch (error) {
+                // 静默失败，不影响主要功能
+                console.debug('记录接收时间失败:', error);
+            }
+        }
+        
+        // 开始延时统计更新
+        function startLatencyStatsUpdate() {
+            if (latencyStatsInterval) {
+                clearInterval(latencyStatsInterval);
+            }
+            
+            // 每2秒更新一次延时统计
+            latencyStatsInterval = setInterval(async () => {
+                if (!webrtcSessionId) return;
+                
+                try {
+                    const response = await authorizedFetch(`${API_BASE}/latency/${webrtcSessionId}`);
+                    if (!response.ok) return;
+                    
+                    const data = await response.json();
+                    if (data.success && data.data) {
+                        const stats = data.data;
+                        updateLatencyStats(stats);
+                        // ✅ 更新当前延迟（与PS5的延迟）
+                        updateCurrentLatencyFromServer(stats);
+                    }
+                } catch (error) {
+                    // 静默失败
+                    console.debug('获取延时统计失败:', error);
+                }
+            }, 2000);
+            
+            // ✅ 开始实时延迟计算
+            startCurrentLatencyUpdate();
+        }
+        
+        // 开始实时延迟更新
+        function startCurrentLatencyUpdate() {
+            if (currentLatencyInterval) {
+                clearInterval(currentLatencyInterval);
+            }
+            
+            // 每100ms更新一次实时延迟（更频繁）
+            currentLatencyInterval = setInterval(() => {
+                updateCurrentLatency();
+            }, 100);
+        }
+        
+        // 更新实时延迟显示
+        function updateCurrentLatency() {
+            if (!peerConnection) {
+                document.getElementById('currentLatency').textContent = '-';
+                document.getElementById('webrtcRtt').textContent = '-';
+                document.getElementById('videoPlaybackLatency').textContent = '-';
+                return;
+            }
+            
+            // 1. 获取 WebRTC RTT
+            updateWebRTCStats();
+            
+            // 2. 计算视频播放延迟
+            updateVideoPlaybackLatency();
+            
+            // 3. ✅ 优先使用服务器返回的与PS5的延迟，如果没有则使用本地计算
+            if (serverCurrentLatency !== null && serverCurrentLatency > 0) {
+                // 使用服务器返回的延迟（更准确，反映与PS5的真实延迟）
+                displayCurrentLatency(serverCurrentLatency);
+            } else {
+                // 备用方案：使用本地计算的延迟
+                calculateCurrentLatency();
+            }
+        }
+        
+        // 获取 WebRTC 统计信息（RTT）
+        async function updateWebRTCStats() {
+            if (!peerConnection) return;
+            
+            try {
+                const stats = await peerConnection.getStats();
+                let rtt = null;
+                let jitter = null;
+                
+                stats.forEach(report => {
+                    // 查找 candidate-pair 或 transport 报告（包含 RTT）
+                    if (report.type === 'candidate-pair' && report.currentRoundTripTime) {
+                        rtt = report.currentRoundTripTime * 1000; // 转换为毫秒
+                    } else if (report.type === 'transport' && report.currentRoundTripTime) {
+                        rtt = report.currentRoundTripTime * 1000;
+                    }
+                    
+                    // 查找视频接收器统计（包含 jitter）
+                    if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
+                        if (report.jitter !== undefined) {
+                            jitter = report.jitter * 1000; // 转换为毫秒
+                        }
+                    }
+                });
+                
+                if (rtt !== null) {
+                    document.getElementById('webrtcRtt').textContent = `${rtt.toFixed(1)} ms`;
+                } else {
+                    document.getElementById('webrtcRtt').textContent = '-';
+                }
+            } catch (error) {
+                console.debug('获取 WebRTC 统计失败:', error);
+                document.getElementById('webrtcRtt').textContent = '-';
+            }
+        }
+        
+        // 计算视频播放延迟（基于缓冲）
+        function updateVideoPlaybackLatency() {
+            const video = document.getElementById('remoteVideo');
+            if (!video || !video.buffered || video.buffered.length === 0) {
+                document.getElementById('videoPlaybackLatency').textContent = '-';
+                return;
+            }
+            
+            try {
+                const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                const currentTime = video.currentTime;
+                const bufferAhead = bufferedEnd - currentTime;
+                
+                // 播放延迟 = 缓冲时间
+                const playbackLatency = bufferAhead * 1000; // 转换为毫秒
+                
+                if (playbackLatency >= 0 && playbackLatency < 5000) {
+                    document.getElementById('videoPlaybackLatency').textContent = `${playbackLatency.toFixed(1)} ms`;
+                } else {
+                    document.getElementById('videoPlaybackLatency').textContent = '-';
+                }
+            } catch (error) {
+                document.getElementById('videoPlaybackLatency').textContent = '-';
+            }
+        }
+        
+        // ✅ 从服务器获取的当前延迟（与PS5的延迟）
+        let serverCurrentLatency = null;
+        
+        // 更新服务器返回的当前延迟
+        function updateCurrentLatencyFromServer(stats) {
+            if (stats && stats.currentLatency !== undefined && stats.currentLatency > 0) {
+                serverCurrentLatency = stats.currentLatency;
+                // 立即更新显示
+                displayCurrentLatency(serverCurrentLatency);
+            }
+        }
+        
+        // 计算综合当前延迟（备用方案，如果服务器没有返回延迟值）
+        function calculateCurrentLatency() {
+            // ✅ 优先使用服务器返回的与PS5的延迟
+            if (serverCurrentLatency !== null && serverCurrentLatency > 0) {
+                displayCurrentLatency(serverCurrentLatency);
+                return;
+            }
+            
+            // 备用方案：使用本地计算的延迟
+            const rttText = document.getElementById('webrtcRtt').textContent;
+            const playbackLatencyText = document.getElementById('videoPlaybackLatency').textContent;
+            
+            let rtt = null;
+            let playbackLatency = null;
+            
+            // 解析 RTT
+            if (rttText && rttText !== '-') {
+                const rttMatch = rttText.match(/([\d.]+)\s*ms/);
+                if (rttMatch) {
+                    rtt = parseFloat(rttMatch[1]);
+                }
+            }
+            
+            // 解析播放延迟
+            if (playbackLatencyText && playbackLatencyText !== '-') {
+                const latencyMatch = playbackLatencyText.match(/([\d.]+)\s*ms/);
+                if (latencyMatch) {
+                    playbackLatency = parseFloat(latencyMatch[1]);
+                }
+            }
+            
+            // 计算综合延迟（使用帧接收时间如果有的话）
+            let currentLatency = null;
+            
+            if (frameReceiveTimes.length > 0) {
+                // 使用最近的帧接收时间计算延迟
+                const now = performance.now();
+                const recentTimes = frameReceiveTimes.slice(-10); // 使用最近10帧
+                if (recentTimes.length > 0) {
+                    // 估算当前延迟：播放延迟 + 网络延迟的一半
+                    if (playbackLatency !== null) {
+                        currentLatency = playbackLatency + (rtt !== null ? rtt / 2 : 0);
+                    } else if (rtt !== null) {
+                        currentLatency = rtt;
+                    }
+                }
+            } else if (playbackLatency !== null) {
+                // 如果没有帧时间，使用播放延迟
+                currentLatency = playbackLatency + (rtt !== null ? rtt / 2 : 0);
+            } else if (rtt !== null) {
+                // 只有 RTT
+                currentLatency = rtt;
+            }
+            
+            // 更新显示
+            if (currentLatency !== null && currentLatency >= 0 && currentLatency < 10000) {
+                displayCurrentLatency(currentLatency);
+            } else {
+                document.getElementById('currentLatency').textContent = '-';
+            }
+        }
+        
+        // 显示当前延迟（带颜色标识）
+        function displayCurrentLatency(latency) {
+            if (latency === null || latency < 0 || latency >= 10000) {
+                document.getElementById('currentLatency').textContent = '-';
+                return;
+            }
+            
+            // 根据延迟值设置颜色
+            let color = '#667eea'; // 默认蓝色
+            if (latency < 50) {
+                color = '#11998e'; // 绿色（低延迟）
+            } else if (latency < 100) {
+                color = '#ffb74d'; // 橙色（中等延迟）
+            } else {
+                color = '#eb3349'; // 红色（高延迟）
+            }
+            
+            const element = document.getElementById('currentLatency');
+            element.textContent = `${latency.toFixed(1)} ms`;
+            element.style.color = color;
+        }
+        
+        // 停止延时统计更新
+        function stopLatencyStatsUpdate() {
+            if (latencyStatsInterval) {
+                clearInterval(latencyStatsInterval);
+                latencyStatsInterval = null;
+            }
+            
+            // ✅ 停止实时延迟更新
+            if (currentLatencyInterval) {
+                clearInterval(currentLatencyInterval);
+                currentLatencyInterval = null;
+            }
+            
+            // 重置显示
+            updateLatencyStats(null);
+            
+            // 重置实时延迟显示
+            document.getElementById('currentLatency').textContent = '-';
+            document.getElementById('webrtcRtt').textContent = '-';
+            document.getElementById('videoPlaybackLatency').textContent = '-';
+            
+            // 清理帧时间记录
+            frameReceiveTimes = [];
+            lastFrameTime = null;
+            serverCurrentLatency = null; // ✅ 清理服务器延迟值
+        }
+        
+        // 更新延时统计显示
+        function updateLatencyStats(stats) {
+            if (!stats) {
+                document.getElementById('latencyTotalAvg').textContent = '-';
+                document.getElementById('latencyTotalRange').textContent = '-';
+                document.getElementById('latencyNetworkAvg').textContent = '-';
+                document.getElementById('latencyServerAvg').textContent = '-';
+                document.getElementById('latencySampleCount').textContent = '0';
+                return;
+            }
+            
+            document.getElementById('latencyTotalAvg').textContent = 
+                stats.totalLatencyAvg > 0 ? `${stats.totalLatencyAvg.toFixed(1)} ms` : '-';
+            document.getElementById('latencyTotalRange').textContent = 
+                stats.totalLatencyMin > 0 && stats.totalLatencyMax > 0 
+                    ? `${stats.totalLatencyMin.toFixed(1)} / ${stats.totalLatencyMax.toFixed(1)} ms`
+                    : '-';
+            document.getElementById('latencyNetworkAvg').textContent = 
+                stats.networkTransmitAvg > 0 ? `${stats.networkTransmitAvg.toFixed(1)} ms` : '-';
+            document.getElementById('latencyServerAvg').textContent = 
+                stats.serverProcessingAvg > 0 ? `${stats.serverProcessingAvg.toFixed(1)} ms` : '-';
+            document.getElementById('latencySampleCount').textContent = stats.sampleCount || 0;
+        }
+        
+        // 连接 SignalR 控制器
+        async function connectControllerSignalR(sessionId) {
+            // ✅ 防止并发连接
+            if (isConnecting) {
+                log('⚠️ SignalR 连接正在进行中，跳过重复连接', 'warning');
+                return;
+            }
+            
+            // ✅ 如果已经连接且状态正常，直接返回（主要检查连接状态）
+            if (controllerConnection && 
+                controllerConnection.state === signalR.HubConnectionState.Connected) {
+                log('✅ SignalR 已连接，跳过重复连接', 'info');
+                // 确保 controllerConnected 标志也正确
+                controllerConnected = true;
+                return;
+            }
+            
+            isConnecting = true;
+            
+            const token = getAuthToken();
+            if (!token) {
+                log('❌ 未检测到 JWT Token，无法建立 SignalR 连接', 'error');
+                isConnecting = false;
+                return;
+            }
+
+            try {
+                // ✅ 如果已有连接但在非正常状态，先清理
+                if (controllerConnection) {
+                    const currentState = controllerConnection.state;
+                    if (currentState === signalR.HubConnectionState.Connecting) {
+                        log('⚠️ 检测到连接正在进行中，等待完成...', 'warning');
+                        // 等待最多3秒让连接完成
+                        for (let i = 0; i < 30; i++) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            if (controllerConnection.state === signalR.HubConnectionState.Connected) {
+                                isConnecting = false;
+                                return; // 连接已成功
+                            }
+                            if (controllerConnection.state === signalR.HubConnectionState.Disconnected) {
+                                break; // 连接已断开，可以重新连接
+                            }
+                        }
+                    }
+                    
+                    // 只有在非 Connecting 状态时才断开
+                    if (controllerConnection.state !== signalR.HubConnectionState.Connecting) {
+                        await disconnectControllerSignalR();
+                    } else {
+                        // 如果还在 Connecting，等待或取消
+                        try {
+                            await controllerConnection.stop();
+                        } catch (e) {
+                            // 忽略错误
+                        }
+                        controllerConnection = null;
+                    }
+                }
+                
+                log('🔌 正在连接 SignalR 控制器...', 'info');
+                
+                // ✅ 检查 SignalR 库是否已加载
+                if (typeof signalR === 'undefined' || !signalR.HubConnectionBuilder) {
+                    throw new Error('SignalR 库未加载，请检查网络连接或 CDN 状态');
+                }
+                
+                controllerConnection = new signalR.HubConnectionBuilder()
+                    .withUrl('/hubs/controller', {
+                        accessTokenFactory: () => getAuthToken() || ''
+                    })
+                    .withAutomaticReconnect({
+                        nextRetryDelayInMilliseconds: retryContext => {
+                            // 重试策略：前3次快速重试，之后逐渐增加间隔
+                            if (retryContext.previousRetryCount < 3) {
+                                return 1000; // 1秒
+                            } else {
+                                return Math.min(30000, 1000 * Math.pow(2, retryContext.previousRetryCount - 2)); // 最多30秒
+                            }
+                        }
+                    })
+                    .build();
+                
+                // 注册事件（在 start 之前）
+                controllerConnection.on('ControllerConnected', (success) => {
+                    if (success) {
+                        log(`✅ 控制器已通过 SignalR 连接`, 'success');
+                        controllerConnected = true;
+                    } else {
+                        log(`⚠️ 控制器连接返回失败，将在启动时验证实际状态`, 'warning');
+                        // 不立即设置 controllerConnected = false，等待 StartController 的结果
+                    }
+                });
+                
+                controllerConnection.on('ControllerStarted', (success) => {
+                    if (success) {
+                        log(`✅ 控制器已启动: ${success}`, 'success');
+                        // 如果控制器启动成功，说明连接是正常的
+                        controllerConnected = true;
+                    } else {
+                        log(`⚠️ 控制器启动失败: ${success}`, 'warning');
+                    }
+                });
+                
+                controllerConnection.on('Error', (message) => {
+                    // 区分错误类型：如果是"已连接"错误，不算真正的错误
+                    if (message && message.includes('已连接')) {
+                        log(`ℹ️ SignalR 提示: ${message}`, 'info');
+                        // 如果提示已连接，设置连接状态为 true
+                        controllerConnected = true;
+                    } else {
+                        log(`❌ SignalR 错误: ${message}`, 'error');
+                    }
+                });
+                
+                controllerConnection.onclose((error) => {
+                    if (error) {
+                        log(`⚠️ SignalR 连接已关闭（错误: ${error.message}）`, 'warning');
+                    } else {
+                        log('⚠️ SignalR 连接已关闭', 'warning');
+                    }
+                    controllerConnected = false;
+                    isConnecting = false;
+                    
+                    // 只有在非手动断开且不是连接失败时才尝试自动重连
+                    if (!isManualDisconnect && remotePlaySessionId) {
+                        // 延迟重连，避免频繁重连
+                        setTimeout(async () => {
+                            // 再次检查是否应该重连（确保不是手动断开，且确实断开了）
+                            if (!isManualDisconnect && 
+                                remotePlaySessionId &&
+                                (!controllerConnection || controllerConnection.state === signalR.HubConnectionState.Disconnected)) {
+                                log('🔄 SignalR 连接意外断开，尝试自动重连...', 'info');
+                                try {
+                                    await connectControllerSignalR(remotePlaySessionId);
+                                } catch (reconnectError) {
+                                    log(`❌ 自动重连失败: ${reconnectError.message}`, 'error');
+                                }
+                            }
+                        }, 2000); // 延迟2秒重连
+                    }
+                });
+                
+                // ✅ 启动连接 - start() 会等待连接建立
+                await controllerConnection.start();
+                
+                // ✅ 等待连接状态变为 Connected（最多等待2秒）
+                let waitCount = 0;
+                while (controllerConnection.state !== signalR.HubConnectionState.Connected && waitCount < 20) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    waitCount++;
+                }
+                
+                // ✅ 验证连接状态
+                const state = controllerConnection.state;
+                if (state !== signalR.HubConnectionState.Connected) {
+                    throw new Error(`SignalR 连接未成功建立，当前状态: ${state}`);
+                }
+                
+                log('✅ SignalR 连接已建立', 'success');
+                
+                // 连接控制器到会话（如果失败，可能是已经连接过了）
+                let connectResult = false;
+                try {
+                    // ConnectController 现在会返回成功（通过事件），但我们需要等待事件
+                    await controllerConnection.invoke('ConnectController', sessionId);
+                    // 等待一下让 ControllerConnected 事件处理（最多等待500ms）
+                    for (let i = 0; i < 5; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        if (controllerConnected) {
+                            connectResult = true;
+                            break;
+                        }
+                    }
+                } catch (connectError) {
+                    log(`⚠️ ConnectController 调用异常: ${connectError.message}，继续尝试启动`, 'warning');
+                }
+                
+                // 启动控制器（如果启动成功，说明连接是正常的）
+                let startResult = false;
+                try {
+                    await controllerConnection.invoke('StartController', sessionId);
+                    // 等待一下让 ControllerStarted 事件处理（最多等待500ms）
+                    for (let i = 0; i < 5; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        // 如果收到 ControllerStarted 事件，connectResult 会在事件处理中设置
+                        if (controllerConnected) {
+                            startResult = true;
+                            break;
+                        }
+                    }
+                    
+                    // 如果启动成功，确保连接状态为 true
+                    if (controllerConnection.state === signalR.HubConnectionState.Connected) {
+                        controllerConnected = true;
+                        startResult = true;
+                    }
+                } catch (startError) {
+                    log(`⚠️ StartController 调用失败: ${startError.message}`, 'warning');
+                }
+                
+                // 最终验证：如果连接状态正常，即使事件未及时触发，也认为连接成功
+                if (controllerConnection.state === signalR.HubConnectionState.Connected) {
+                    // 如果 StartController 成功（即使 ConnectController 失败），也认为连接成功
+                    if (startResult || connectResult) {
+                        controllerConnected = true;
+                        log(`✅ 控制器连接验证成功（Connect: ${connectResult}, Start: ${startResult}）`, 'success');
+                    } else if (!controllerConnected) {
+                        // 如果都没有成功，但连接状态正常，可能是事件延迟，再等待一下
+                        log(`⚠️ 等待控制器连接事件...`, 'warning');
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        // 再次检查
+                        if (!controllerConnected && controllerConnection.state === signalR.HubConnectionState.Connected) {
+                            // 如果连接状态正常，即使没有收到事件，也认为连接可用（可能是事件丢失）
+                            controllerConnected = true;
+                            log(`✅ 连接状态正常，假设连接成功（可能事件丢失）`, 'info');
+                        }
+                    }
+                }
+                
+            } catch (error) {
+                log(`❌ SignalR 连接失败: ${error.message}`, 'error');
+                if (controllerConnection) {
+                    try {
+                        // ✅ 只在连接状态不是 Disconnected 时才调用 stop
+                        const currentState = controllerConnection.state;
+                        if (currentState !== signalR.HubConnectionState.Disconnected &&
+                            currentState !== signalR.HubConnectionState.Disconnecting) {
+                            // 如果正在连接，等待一小段时间再停止
+                            if (currentState === signalR.HubConnectionState.Connecting) {
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                            }
+                            if (controllerConnection.state !== signalR.HubConnectionState.Disconnected) {
+                                await controllerConnection.stop();
+                            }
+                        }
+                    } catch (stopError) {
+                        // 忽略停止时的错误（可能已经断开）
+                        log(`⚠️ 停止 SignalR 连接时出错（可忽略）: ${stopError.message}`, 'warning');
+                    }
+                }
+                controllerConnection = null;
+                controllerConnected = false;
+            } finally {
+                isConnecting = false;
+            }
+        }
+        
+        // 断开 SignalR 控制器
+        let isManualDisconnect = false; // 标记是否为手动断开
+        async function disconnectControllerSignalR() {
+            if (controllerConnection) {
+                try {
+                    // ✅ 标记为手动断开，避免自动重连
+                    isManualDisconnect = true;
+                    
+                    // ✅ 检查连接状态，只有在连接时才调用方法
+                    if (controllerConnection.state === signalR.HubConnectionState.Connected) {
+                        if (remotePlaySessionId) {
+                            try {
+                                await controllerConnection.invoke('DisconnectController', remotePlaySessionId);
+                            } catch (invokeError) {
+                                // 忽略调用错误（可能已经断开）
+                                log(`⚠️ DisconnectController 调用失败（可忽略）: ${invokeError.message}`, 'warning');
+                            }
+                        }
+                        if (controllerConnection.state !== signalR.HubConnectionState.Disconnected) {
+                            await controllerConnection.stop();
+                        }
+                    }
+                    log('✅ SignalR 连接已断开', 'info');
+                } catch (error) {
+                    log(`⚠️ 断开 SignalR 连接时出错: ${error.message}`, 'warning');
+                } finally {
+                    controllerConnection = null;
+                    controllerConnected = false;
+                    // 重置手动断开标记（延迟一点，确保 onclose 事件已经处理）
+                    setTimeout(() => {
+                        isManualDisconnect = false;
+                    }, 1000);
+                }
+            }
+        }
+
+        // 优化 SDP 以降低延迟（简化版本，更安全）
+        function optimizeSdpForLowLatency(sdp) {
+            try {
+                if (!sdp || typeof sdp !== 'string' || sdp.length < 10) {
+                    return sdp;
+                }
+                
+                // 检查是否已经包含优化标记（避免重复添加）
+                if (sdp.includes('a=x-google-flag:low-latency') && 
+                    sdp.includes('a=minBufferedPlaybackTime')) {
+                    return sdp; // 已经优化过了
+                }
+                
+                const lines = sdp.split(/\r?\n/);
+                const optimizedLines = [];
+                let foundVideoMedia = false;
+                let foundAudioMedia = false;
+                let videoOptimized = false;
+                let audioOptimized = false;
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    optimizedLines.push(line);
+                    
+                    // 检测媒体行
+                    if (line.trim().startsWith('m=video ')) {
+                        foundVideoMedia = true;
+                        foundAudioMedia = false;
+                        videoOptimized = false;
+                    } else if (line.trim().startsWith('m=audio ')) {
+                        foundAudioMedia = true;
+                        foundVideoMedia = false;
+                        audioOptimized = false;
+                    } else if (line.trim().startsWith('m=')) {
+                        // 其他媒体类型，重置状态
+                        foundVideoMedia = false;
+                        foundAudioMedia = false;
+                    }
+                    
+                    // 在视频媒体部分的第一个属性行后添加优化（确保格式正确）
+                    if (foundVideoMedia && !videoOptimized && line.trim().startsWith('a=') && 
+                        !line.trim().startsWith('a=rtcp:') && 
+                        line.trim().length > 2) {
+                        // 只在第一个有效的属性行后添加
+                        if (!sdp.includes('a=x-google-flag:low-latency')) {
+                            optimizedLines.push('a=x-google-flag:low-latency');
+                        }
+                        if (!sdp.includes('a=minBufferedPlaybackTime')) {
+                            optimizedLines.push('a=minBufferedPlaybackTime:0');
+                        }
+                        videoOptimized = true;
+                    }
+                    
+                    // 在音频媒体部分的第一个属性行后添加优化
+                    if (foundAudioMedia && !audioOptimized && line.trim().startsWith('a=') && 
+                        !line.trim().startsWith('a=rtcp:') && 
+                        line.trim().length > 2) {
+                        if (!sdp.includes('a=minBufferedPlaybackTime')) {
+                            optimizedLines.push('a=minBufferedPlaybackTime:0');
+                        }
+                        audioOptimized = true;
+                    }
+                }
+                
+                const result = optimizedLines.join('\r\n');
+                
+                // 验证结果
+                if (!result || result.length < sdp.length * 0.5) {
+                    // 如果结果明显短于原始 SDP，可能出错了
+                    return sdp;
+                }
+                
+                // 确保 SDP 基本结构完整
+                if (!result.includes('v=0') || !result.includes('m=')) {
+                    return sdp;
+                }
+                
+                return result;
+            } catch (error) {
+                console.error('SDP 优化错误:', error);
+                return sdp; // 出错时返回原始 SDP
+            }
+        }
+        
+        // 页面加载时的初始化
+        window.addEventListener('load', () => {
+            updateAuthTokenStatus();
+            log('WebRTC Player 已就绪', 'success');
+            log('请输入 Host ID 或 Session ID 并点击连接', 'info');
+            
+            // 优化视频元素以降低延迟（零缓冲模式）
+            const video = document.getElementById('remoteVideo');
+            if (video) {
+                // ✅ 零缓冲初始化设置
+                video.preload = 'none'; // 禁用预加载
+                video.autoplay = true; // 自动播放
+                video.playsInline = true; // 内联播放
+                
+                // 设置视频属性以降低延迟
+                video.addEventListener('loadedmetadata', () => {
+                    log('✅ 视频元数据已加载（零缓冲模式）', 'info');
+                    // 确保播放速度正常
+                    video.playbackRate = 1.0;
+                    video.defaultPlaybackRate = 1.0;
+                });
+                
+                // 监听播放事件
+                video.addEventListener('playing', () => {
+                    log('✅ 视频开始播放（零缓冲模式）', 'success');
+                });
+                
+                // 监听等待事件（缓冲不足时）
+                video.addEventListener('waiting', () => {
+                    log('⚠️ 视频等待缓冲（缓冲不足）', 'warning');
+                });
+                
+                // 监听停滞事件
+                video.addEventListener('stalled', () => {
+                    log('⚠️ 视频停滞（可能缓冲不足）', 'warning');
+                });
+            }
+        });
+
+        // 控制器按钮处理函数（使用 SignalR 低延迟）
+        // action: 'press', 'release', 'tap'
+        async function sendControllerButton(buttonName, action = 'tap') {
+            if (!remotePlaySessionId) {
+                log('❌ 没有活动的 Remote Play Session，无法发送控制器命令', 'error');
+                alert('请先连接 Remote Play Session');
+                return;
+            }
+
+            // ✅ 如果正在连接，等待连接完成（最多等待2秒）
+            if (isConnecting) {
+                log('⚠️ SignalR 正在连接中，等待完成...', 'warning');
+                for (let i = 0; i < 20; i++) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    if (!isConnecting) {
+                        break; // 连接完成或失败
+                    }
+                }
+            }
+
+            // 检查 SignalR 连接状态（主要检查连接状态）
+            const isConnected = controllerConnection && 
+                               controllerConnection.state === signalR.HubConnectionState.Connected;
+            
+            // 如果连接状态正常，即使 controllerConnected 为 false，也尝试使用（可能是状态更新延迟）
+            // 只有在连接状态真正断开时才尝试重连
+            if (!isConnected) {
+                // 如果正在连接，再等待一下
+                if (isConnecting) {
+                    log('⚠️ SignalR 连接仍在进行中，等待完成...', 'warning');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                // 再次检查连接状态
+                const stillNotConnected = !controllerConnection || 
+                                        controllerConnection.state !== signalR.HubConnectionState.Connected;
+                
+                if (stillNotConnected && !isConnecting) {
+                    // 只有在不在连接中时才尝试连接
+                    log('⚠️ SignalR 连接断开，尝试重新连接...', 'warning');
+                    await connectControllerSignalR(remotePlaySessionId);
+                    
+                    // 再次检查连接状态
+                    const reconnectSuccess = controllerConnection && 
+                                           controllerConnection.state === signalR.HubConnectionState.Connected;
+                    
+                    if (!reconnectSuccess) {
+                        log('❌ SignalR 重连失败，使用 HTTP API 作为备用', 'error');
+                        // 备用方案：使用 HTTP API
+                        await sendControllerButtonHTTP(buttonName, action);
+                        return;
+                    }
+                } else if (stillNotConnected) {
+                    // 如果还在连接中，使用 HTTP API 作为备用
+                    log('⚠️ SignalR 仍在连接中，使用 HTTP API 作为临时备用', 'warning');
+                    await sendControllerButtonHTTP(buttonName, action);
+                    return;
+                }
+            }
+
+            try {
+                // ✅ 再次检查连接状态，确保在调用前连接可用
+                if (!controllerConnection || 
+                    controllerConnection.state !== signalR.HubConnectionState.Connected) {
+                    throw new Error('SignalR 连接不可用');
+                }
+                
+                const startTime = performance.now();
+                const delayMs = action === 'tap' ? 100 : 0;
+                await controllerConnection.invoke('Button', remotePlaySessionId, buttonName, action, delayMs);
+                const endTime = performance.now();
+                const latency = (endTime - startTime).toFixed(2);
+                log(`✅ 控制器命令已发送 (SignalR): ${buttonName} [${action}] - 延迟: ${latency}ms`, 'success');
+            } catch (error) {
+                log(`❌ SignalR 发送失败: ${error.message}，尝试使用 HTTP API`, 'error');
+                // 备用方案：使用 HTTP API
+                await sendControllerButtonHTTP(buttonName, action);
+            }
+        }
+        
+        // HTTP API 备用方案
+        async function sendControllerButtonHTTP(buttonName, action = 'tap') {
+            try {
+                const response = await authorizedFetch('/api/PlayStation/controller/button', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId: remotePlaySessionId,
+                        button: buttonName,
+                        action: action,
+                        delayMs: action === 'tap' ? 200 : 0
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    log(`✅ 控制器命令已发送 (HTTP): ${buttonName} [${action}]`, 'success');
+                } else {
+                    log(`⚠️ 控制器命令失败: ${result.errorMessage || '未知错误'}`, 'warning');
+                }
+            } catch (error) {
+                log(`❌ HTTP API 发送失败: ${error.message}`, 'error');
+            }
+        }
+        
+        // 跟踪当前按下的按钮（用于长按）
+        const pressedButtons = new Map(); // buttonName -> { pressTimer, releaseTimer }
+
+        // 初始化控制器按钮事件
+        function initControllerButtons() {
+            const controllerButtons = document.querySelectorAll('.controller-btn[data-button]');
+            log(`初始化控制器按钮: 找到 ${controllerButtons.length} 个按钮`, 'info');
+            
+            if (controllerButtons.length === 0) {
+                log(`⚠️ 未找到任何控制器按钮，请检查 HTML 结构`, 'warning');
+                return;
+            }
+            
+            controllerButtons.forEach((btn, index) => {
+                const buttonName = btn.getAttribute('data-button');
+                if (!buttonName) {
+                    log(`⚠️ 按钮 ${index} 没有 data-button 属性`, 'warning');
+                    return;
+                }
+                
+                // 添加点击事件（轻按，快速按下并释放）
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    log(`🎮 点击按钮: ${buttonName}`, 'info');
+                    sendControllerButton(buttonName, 'tap');
+                    
+                    // 添加视觉反馈
+                    const originalTransform = btn.style.transform;
+                    btn.style.transform = 'scale(0.95)';
+                    setTimeout(() => {
+                        btn.style.transform = originalTransform || '';
+                    }, 100);
+                }, false);
+                
+                // 添加鼠标按下事件（长按开始）
+                btn.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    this.style.opacity = '0.7';
+                    this.style.transform = 'scale(0.95)';
+                    
+                    // 如果已经在按下状态，先释放
+                    if (pressedButtons.has(buttonName)) {
+                        const existing = pressedButtons.get(buttonName);
+                        if (existing.pressTimer) {
+                            clearTimeout(existing.pressTimer);
+                        }
+                        if (existing.releaseTimer) {
+                            clearTimeout(existing.releaseTimer);
+                        }
+                        // 先发送释放
+                        sendControllerButton(buttonName, 'release');
+                    }
+                    
+                    // 发送按下事件
+                    sendControllerButton(buttonName, 'press');
+                    
+                    // 记录按下状态
+                    pressedButtons.set(buttonName, {
+                        pressTimer: null,
+                        releaseTimer: null,
+                        button: this
+                    });
+                    
+                    log(`🎮 按钮按下: ${buttonName} (长按模式)`, 'info');
+                }, false);
+                
+                // 添加鼠标释放事件（长按结束）
+                btn.addEventListener('mouseup', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    this.style.opacity = '1';
+                    this.style.transform = '';
+                    
+                    // 如果按钮在按下状态，发送释放
+                    if (pressedButtons.has(buttonName)) {
+                        sendControllerButton(buttonName, 'release');
+                        pressedButtons.delete(buttonName);
+                        log(`🎮 按钮释放: ${buttonName}`, 'info');
+                    }
+                }, false);
+                
+                // 鼠标离开时也释放
+                btn.addEventListener('mouseleave', function(e) {
+                    this.style.opacity = '1';
+                    this.style.transform = '';
+                    
+                    // 如果按钮在按下状态，发送释放
+                    if (pressedButtons.has(buttonName)) {
+                        sendControllerButton(buttonName, 'release');
+                        pressedButtons.delete(buttonName);
+                        log(`🎮 按钮离开释放: ${buttonName}`, 'info');
+                    }
+                }, false);
+                
+                // 触摸事件支持（移动设备）
+                btn.addEventListener('touchstart', function(e) {
+                    e.preventDefault();
+                    this.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                }, false);
+                
+                btn.addEventListener('touchend', function(e) {
+                    e.preventDefault();
+                    this.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                }, false);
+                
+                log(`✅ 已绑定按钮: ${buttonName} (支持长按)`, 'info');
+            });
+            
+            log(`✅ 控制器按钮初始化完成，共绑定 ${controllerButtons.length} 个按钮`, 'success');
+        }
+
+        // 键盘映射配置
+        const keyboardMapping = {
+            // 方向键
+            'KeyW': 'UP',
+            'ArrowUp': 'UP',
+            'KeyS': 'DOWN',
+            'ArrowDown': 'DOWN',
+            'KeyA': 'LEFT',
+            'ArrowLeft': 'LEFT',
+            'KeyD': 'RIGHT',
+            'ArrowRight': 'RIGHT',
+            // 主要按钮
+            'Space': 'CROSS',
+            'Enter': 'CIRCLE',
+            'ShiftLeft': 'SQUARE',
+            'ShiftRight': 'SQUARE',
+            'ControlLeft': 'TRIANGLE',
+            'ControlRight': 'TRIANGLE',
+            // 肩键
+            'KeyQ': 'L1',
+            'KeyE': 'R1',
+            'KeyZ': 'L2',
+            'KeyC': 'R2',
+            // 功能键
+            'Tab': 'OPTIONS',
+            'Backspace': 'SHARE',
+            'Escape': 'PS'
+        };
+
+        // 已按下的键（用于防止重复触发）
+        const pressedKeys = new Set();
+
+        // 键盘事件处理
+        function handleKeyboardEvent(event, isKeyDown) {
+            // 如果焦点在输入框或文本区域，不处理键盘事件（除了 Escape）
+            const activeElement = document.activeElement;
+            const isInputFocused = activeElement && (
+                activeElement.tagName === 'INPUT' ||
+                activeElement.tagName === 'TEXTAREA' ||
+                activeElement.isContentEditable
+            );
+
+            // Escape 键始终处理
+            if (event.key === 'Escape' || event.code === 'Escape') {
+                if (isInputFocused) {
+                    activeElement.blur();
+                }
+            } else if (isInputFocused) {
+                // 其他键在输入框中时不处理
+                return;
+            }
+
+            // 防止默认行为（某些键）
+            // ⚠️ 修复：使用 let 而不是 const，避免在某些情况下出现赋值错误
+            let keyCode = event.code || event.key;
+            if (keyboardMapping[keyCode]) {
+                if (['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(keyCode)) {
+                    event.preventDefault();
+                }
+            }
+
+            // 处理按键
+            let buttonName = keyboardMapping[keyCode];
+            if (buttonName) {
+                if (isKeyDown) {
+                    // 按下时只触发一次
+                    if (!pressedKeys.has(keyCode)) {
+                        pressedKeys.add(keyCode);
+                        
+                        // 高亮对应的按钮
+                        const btn = document.querySelector(`.controller-btn[data-button="${buttonName}"]`);
+                        if (btn) {
+                            btn.style.opacity = '0.7';
+                            btn.style.transform = 'scale(0.95)';
+                        }
+                        
+                        // 发送按下事件（长按模式）
+                        log(`⌨️ 键盘按下: ${keyCode} -> ${buttonName} (长按模式)`, 'info');
+                        sendControllerButton(buttonName, 'press');
+                    }
+                } else {
+                    // 释放时移除标记
+                    if (pressedKeys.has(keyCode)) {
+                        pressedKeys.delete(keyCode);
+                        
+                        // 恢复按钮样式
+                        const btn = document.querySelector(`.controller-btn[data-button="${buttonName}"]`);
+                        if (btn) {
+                            btn.style.opacity = '1';
+                            btn.style.transform = '';
+                        }
+                        
+                        // 发送释放事件
+                        log(`⌨️ 键盘释放: ${keyCode} -> ${buttonName}`, 'info');
+                        sendControllerButton(buttonName, 'release');
+                    }
+                }
+            }
+        }
+
+        // 标记是否已初始化键盘映射（避免重复初始化）
+        let keyboardMappingInitialized = false;
+
+        // 初始化键盘事件监听
+        function initKeyboardMapping() {
+            // 如果已经初始化，跳过
+            if (keyboardMappingInitialized) {
+                log('⚠️ 键盘映射已初始化，跳过重复初始化', 'warning');
+                return;
+            }
+            
+            try {
+                // 监听键盘按下
+                document.addEventListener('keydown', (event) => {
+                    handleKeyboardEvent(event, true);
+                }, false);
+
+                // 监听键盘释放
+                document.addEventListener('keyup', (event) => {
+                    handleKeyboardEvent(event, false);
+                }, false);
+
+                // 页面失去焦点时清除所有按键状态
+                window.addEventListener('blur', () => {
+                    // 释放所有按下的按钮
+                    pressedKeys.forEach(keyCode => {
+                        const buttonName = keyboardMapping[keyCode];
+                        if (buttonName) {
+                            sendControllerButton(buttonName, 'release');
+                        }
+                    });
+                    pressedKeys.clear();
+                    
+                    // 释放所有鼠标按下的按钮
+                    pressedButtons.forEach((value, buttonName) => {
+                        sendControllerButton(buttonName, 'release');
+                    });
+                    pressedButtons.clear();
+                    
+                    // 恢复所有按钮样式
+                    document.querySelectorAll('.controller-btn').forEach(btn => {
+                        btn.style.opacity = '1';
+                        btn.style.transform = '';
+                    });
+                });
+
+                keyboardMappingInitialized = true;
+                log('✅ 键盘映射已初始化', 'success');
+            } catch (error) {
+                log(`❌ 初始化键盘映射失败: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', () => {
+            disconnect();
+        });
+    </script>
+</body>
+</html>
+

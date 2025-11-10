@@ -1,0 +1,37 @@
+stages:
+  - build
+  - push
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  IMAGE_NAME: $CI_REGISTRY_IMAGE/dbtool
+  IMAGE_TAG: $CI_COMMIT_REF_SLUG
+
+# 构建和推送 Docker 镜像
+build-and-push:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - |
+      # 需要从项目根目录构建，因为 Dockerfile 引用了父项目
+      docker build \
+        --tag $IMAGE_NAME:$IMAGE_TAG \
+        --tag $IMAGE_NAME:latest \
+        -f RemotePlay.DBTool/Dockerfile \
+        --build-arg BUILD_CONFIGURATION=Release \
+        .
+    - docker push $IMAGE_NAME:$IMAGE_TAG
+    - docker push $IMAGE_NAME:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      exists:
+        - RemotePlay.DBTool/Dockerfile
+        - RemotePlay.DBTool/RemotePlay.DBTool.csproj
+  tags:
+    - docker
+

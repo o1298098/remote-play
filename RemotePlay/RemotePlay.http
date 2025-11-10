@@ -1,0 +1,6 @@
+@RemotePlay_HostAddress = http://localhost:5094
+
+GET {{RemotePlay_HostAddress}}/api/PlayStation/discover
+Accept: application/json
+
+###

@@ -1,0 +1,71 @@
+name: Build Docker Images
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            display_name: Backend (RemotePlay)
+            dockerfile: RemotePlay/Dockerfile
+            context: RemotePlay
+            image_basename: remoteplay-backend
+          - name: dbtool
+            display_name: DBTool (RemotePlay.DBTool)
+            dockerfile: RemotePlay.DBTool/Dockerfile
+            context: RemotePlay.DBTool
+            image_basename: remoteplay-dbtool
+          - name: web
+            display_name: Web (RemotePlay.Web)
+            dockerfile: RemotePlay.Web/Dockerfile
+            context: RemotePlay.Web
+            image_basename: remoteplay-web
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare registry variables
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="$(echo "${OWNER_LC}" | tr '[:upper:]' '[:lower:]')"
+          echo "OWNER_LC=${OWNER_LC}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.display_name }} image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/${{ matrix.image_basename }}:latest
+            ghcr.io/${{ env.OWNER_LC }}/${{ matrix.image_basename }}:${{ github.sha }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image_basename }}:latest
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image_basename }}:${{ github.sha }}

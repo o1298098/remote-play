@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "RemotePlay.DBTool": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+version: '3.5'
+
+services:
+  remoteplay-web-dev:
+    ports:
+      - 8000:8000
+    build:
+      context: ../
+      dockerfile: Dockerfile.dev
+    container_name: 'remoteplay-web-dev'
+    volumes:
+      - ../src:/usr/src/app/src

@@ -1,0 +1,349 @@
+{
+  "common": {
+    "loading": "加载中...",
+    "confirm": "确认",
+    "cancel": "取消",
+    "submit": "提交",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "search": "搜索",
+    "filter": "筛选",
+    "sort": "排序",
+    "refresh": "刷新",
+    "theme": {
+      "toggle": "切换主题",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "登录",
+      "subtitle": "登录您的账户以开始游戏串流",
+      "usernameOrEmail": "用户名或邮箱",
+      "usernameOrEmailPlaceholder": "username 或 name@example.com",
+      "password": "密码",
+      "passwordPlaceholder": "••••••••",
+      "loginButton": "登录",
+      "loggingIn": "登录中...",
+      "success": "登录成功",
+      "successDescription": "欢迎回来！",
+      "failure": "登录失败",
+      "failureDescription": "用户名或密码错误",
+      "noAccount": "还没有账户？",
+      "registerLink": "立即注册"
+    },
+    "register": {
+      "title": "创建账户",
+      "subtitle": "注册新账户以开始使用 Remote Play",
+      "username": "用户名",
+      "usernamePlaceholder": "username",
+      "usernameHint": "只能包含字母、数字和下划线，至少 3 个字符",
+      "email": "邮箱",
+      "emailPlaceholder": "name@example.com",
+      "password": "密码",
+      "passwordPlaceholder": "••••••••",
+      "passwordHint": "至少需要 8 个字符",
+      "confirmPassword": "确认密码",
+      "confirmPasswordPlaceholder": "••••••••",
+      "registerButton": "注册",
+      "registering": "注册中...",
+      "success": "注册成功",
+      "successDescription": "欢迎加入 Remote Play！",
+      "failure": "注册失败",
+      "failureDescription": "注册失败，请稍后重试",
+      "usernameFormatError": "用户名格式错误",
+      "usernameFormatErrorDescription": "用户名只能包含字母、数字和下划线",
+      "usernameTooShort": "用户名太短",
+      "usernameTooShortDescription": "用户名至少需要 3 个字符",
+      "passwordMismatch": "密码不匹配",
+      "passwordMismatchDescription": "请确保两次输入的密码相同",
+      "passwordTooShort": "密码太短",
+      "passwordTooShortDescription": "密码至少需要 8 个字符",
+      "hasAccount": "已有账户？",
+      "loginLink": "立即登录"
+    },
+    "logout": {
+      "title": "已退出登录",
+      "description": "您已安全退出账户"
+    }
+  },
+  "devices": {
+    "title": "远程游玩你的主机",
+    "header": {
+      "title": "REMOTE PLAY",
+      "myAccount": "我的账户",
+      "settings": "设置",
+      "settingsDescription": "设置功能即将推出",
+      "controllerMapping": "手柄映射",
+      "accountInfo": "账户信息",
+      "accountInfoDescription": "账户信息功能即将推出",
+      "logout": "退出登录",
+      "gamepad": {
+        "menuTitle": "游戏手柄",
+        "notDetected": "未检测到手柄",
+        "enable": "启用手柄",
+        "disable": "禁用手柄",
+        "stats": "{{buttons}} 按钮 · {{axes}} 轴",
+        "disconnectTooltip": "断开连接",
+        "disconnectedToastTitle": "🎮 手柄已断开",
+        "disconnectedToastDescription": "{{name}} 已从应用中断开连接"
+      }
+    },
+    "console": {
+      "status": {
+        "online": "在线",
+        "offline": "离线",
+        "standby": "待机"
+      },
+      "available": "可用：待机开启",
+      "readyToPlay": "可以开玩",
+      "standby": "待机中",
+      "offline": "离线",
+      "notRegistered": "未注册",
+      "connect": "连接",
+      "register": "注册",
+      "addConsole": {
+        "title": "添加主机",
+        "description": "请在主机上启用远程功能后再连接",
+        "button": "添加",
+        "toastTitle": "添加主机",
+        "toastDescription": "请在您的 PlayStation 主机上启用远程游玩功能"
+      },
+      "offlineToastTitle": "主机离线",
+      "offlineToastDescription": "该主机当前不可用",
+      "connectingToastTitle": "正在连接",
+      "connectingToastDescription": "正在连接到 {{name}}..."
+    },
+    "settings": {
+      "title": "设备设置",
+      "description": "为 {{name}} 配置流媒体参数",
+      "resolution": "分辨率",
+      "resolutionHint": "选择视频流的分辨率。更高的分辨率需要更好的网络连接。",
+      "frameRate": "帧率",
+      "frameRateHint": "选择视频流的帧率。更高的帧率提供更流畅的体验，但需要更多带宽。",
+      "bitrate": "码率",
+      "bitrateHint": "选择视频流的码率。更高的码率提供更好的画质，但需要更快的网络速度。",
+      "streamType": "串流编码",
+      "streamTypeHint": "选择使用的串流编码格式。HEVC 编码在高画质下表现更好，但可能不兼容所有设备。",
+      "saveSuccess": "设置已保存",
+      "saveSuccessDescription": "设备设置已成功保存",
+      "saveFailed": "保存失败",
+      "saveFailedDescription": "无法保存设备设置，请稍后重试",
+      "loadFailed": "加载失败",
+      "loadFailedDescription": "无法加载设备设置，请稍后重试",
+      "reset": "重置",
+      "resetDescription": "已重置为默认设置",
+      "options": {
+        "resolution": {
+          "RES_360P": "360p",
+          "RES_540P": "540p",
+          "RES_720P": "720p",
+          "RES_1080P": "1080p"
+        },
+        "frameRate": {
+          "30FPS": "30fps",
+          "60FPS": "60fps"
+        },
+        "bitrate": {
+          "DEFAULT": "自动匹配码率",
+          "VERY_LOW": "非常低画质（约 2Mbps）",
+          "LOW": "低画质（约 4Mbps）",
+          "MEDIUM": "中等画质（约 6Mbps）",
+          "HIGH": "高画质（约 10Mbps）",
+          "VERY_HIGH": "非常高画质（约 15Mbps）"
+        },
+        "streamType": {
+          "H264": "H.264 编码",
+          "HEVC": "HEVC/H.265 编码",
+          "HEVC_HDR": "HEVC/H.265 HDR 编码"
+        }
+      }
+    },
+    "controllerMapping": {
+      "title": "手柄映射设置",
+      "subtitle": "配置键盘和鼠标到手柄按钮的映射",
+      "instructions": {
+        "title": "使用说明",
+        "step1": "点击手柄上的按钮或下方列表中的按钮开始映射",
+        "step2": "按下您想要映射的键盘按键或鼠标按键",
+        "step3": "映射完成后点击保存按钮以保存设置"
+      },
+      "gamepad": {
+        "title": "手柄布局",
+        "description": "点击手柄上的按钮进行映射"
+      },
+      "buttonList": {
+        "title": "按钮列表",
+        "description": "您也可以在此列表中进行映射"
+      },
+      "buttons": {
+        "CROSS": "X",
+        "CIRCLE": "O",
+        "TRIANGLE": "△",
+        "SQUARE": "□",
+        "L1": "L1",
+        "R1": "R1",
+        "L2": "L2",
+        "R2": "R2",
+        "L3": "L3",
+        "R3": "R3",
+        "DPAD_UP": "方向键 上",
+        "DPAD_DOWN": "方向键 下",
+        "DPAD_LEFT": "方向键 左",
+        "DPAD_RIGHT": "方向键 右",
+      "OPTIONS": "选项键",
+      "SHARE": "分享键",
+      "TOUCHPAD": "触摸板",
+      "PS": "PS键"
+    },
+      "mouseButtons": {
+        "0": "鼠标左键",
+        "1": "鼠标中键",
+        "2": "鼠标右键"
+      },
+      "tester": {
+        "title": "手柄测试",
+        "description": "实时查看手柄摇杆与按键的输入状态",
+        "noGamepad": "未检测到手柄，请连接设备后重试。",
+        "selectLabel": "当前手柄",
+        "selectPlaceholder": "请选择一个手柄",
+        "unknownDevice": "未知手柄",
+        "stickTitle": "摇杆状态",
+        "leftStick": "左摇杆",
+        "rightStick": "右摇杆",
+        "stickAxes": "X：{{x}} / Y：{{y}}",
+        "triggerTitle": "扳机压力",
+        "buttonTitle": "按钮状态",
+        "analogValue": "力度：{{value}}",
+        "genericButton": "按钮 {{index}}",
+        "buttonPressed": "按下",
+        "buttonReleased": "未按下"
+      },
+      "mapButton": "点击映射",
+      "listening": "监听中...",
+      "listeningDescription": "请按下要映射到 {button} 的按键",
+      "mappingSet": "映射已设置",
+      "mappingSetDescription": "{button} 已映射到 {key}",
+      "mappingCleared": "映射已清除",
+      "mappingClearedDescription": "{button} 的映射已清除",
+      "saveSuccess": "保存成功",
+      "saveSuccessDescription": "手柄映射设置已保存",
+      "saveFailed": "保存失败",
+      "saveFailedDescription": "无法保存手柄映射设置，请稍后重试",
+      "reset": "重置",
+      "resetDescription": "已重置为默认映射",
+      "notMapped": "未映射"
+    },
+    "bindDevice": {
+      "title": "绑定PS主机",
+      "description": {
+        "discover": "发现并连接到您的PlayStation主机",
+        "bind": "配置设备信息并完成绑定"
+      },
+      "discover": {
+        "scanning": "正在扫描网络中的设备...",
+        "scanningHint": "请稍候，这可能需要几秒钟",
+        "foundDevices": "发现的设备",
+        "rescan": "重新扫描",
+        "noDevices": "未发现设备",
+        "noDevicesHint": "请确保PS主机已开机并连接到同一网络",
+        "manualIp": "手动输入IP地址（可选）",
+        "manualIpPlaceholder": "例如: 192.168.1.100",
+        "manualIpHint": "如果知道设备的IP地址，可以直接输入进行连接",
+        "unknownType": "未知类型"
+      },
+      "bind": {
+        "deviceName": "设备名称",
+        "deviceNamePlaceholder": "为设备起一个名称",
+        "needsRegistration": "需要注册设备（首次绑定需要）",
+        "needsRegistrationHint": "如果这是第一次绑定此设备，需要提供账户ID和PIN码进行注册",
+        "accountId": "账户ID（Base64）",
+        "accountIdPlaceholder": "请输入PSN账户ID或点击按钮获取",
+        "accountIdHint": "这是您的PSN账户ID，通常是Base64编码的8字节数据。点击\"通过PSN登录获取\"按钮可以自动获取。",
+        "getAccountId": "通过PSN登录获取",
+        "gettingAccountId": "获取中...",
+        "gettingAccountIdTitle": "正在获取账户ID...",
+        "gettingAccountIdHint": "请在弹出窗口中完成PSN登录",
+        "pin": "PIN码",
+        "pinPlaceholder": "请输入8位PIN码",
+        "pinHint": "在PS主机上显示的8位数字PIN码",
+        "completeBind": "完成绑定",
+        "binding": "绑定中..."
+      },
+      "oauth": {
+        "loginTitle": "PSN登录",
+        "callbackSteps": {
+          "title": "步骤说明",
+          "step1": "在弹出窗口中完成PSN登录",
+          "step2": "登录成功后，页面会跳转到回调地址（{domain}）",
+          "step3": "系统会自动尝试获取回调URL",
+          "step4": "如果自动获取失败，请复制浏览器地址栏中的完整URL（包含 {codeParam} 参数）并粘贴到下方",
+          "hint": "提示：您可以按 {selectKey1} 或 {selectKey2} 快速选中地址栏，然后按 {copyKey} 复制"
+        },
+        "callbackUrlPlaceholder": "粘贴PSN回调页面的完整URL（以 remoteplay.dl.playstation.net 开头）",
+        "callbackUrlInvalid": "请确保URL包含 \"remoteplay.dl.playstation.net\" 和 \"code=\" 参数",
+        "clipboardRead": "从剪贴板读取URL",
+        "cancelGet": "取消获取",
+        "callbackDetected": "✅ 检测到回调页面",
+        "callbackDetectedHint": "页面已跳转，请复制地址栏中的URL（Ctrl+C），然后点击📋按钮或粘贴到输入框"
+      },
+      "errors": {
+        "discoverFailed": "设备发现失败",
+        "discoverFailedHint": "请稍后重试",
+        "ipRequired": "请输入IP地址",
+        "ipRequiredHint": "请输入PS主机的IP地址",
+        "ipInvalid": "IP地址不能为空",
+        "accountIdAndPinRequired": "请输入账户ID和PIN",
+        "accountIdAndPinRequiredHint": "注册设备需要提供账户ID和PIN码",
+        "bindSuccess": "绑定成功",
+        "bindSuccessHint": "设备已成功绑定到您的账户",
+        "bindFailed": "绑定失败",
+        "bindFailedHint": "请稍后重试",
+        "getLoginUrlFailed": "获取登录URL失败",
+        "cannotOpenWindow": "无法打开登录窗口",
+        "cannotOpenWindowHint": "请允许弹出窗口后重试",
+        "loginFailed": "登录失败",
+        "loginFailedHint": "请稍后重试",
+        "getAccountIdFailed": "获取账户ID失败",
+        "getAccountIdSuccess": "获取账户ID成功",
+        "getAccountIdSuccessHint": "已获取账户: {name}",
+        "callbackUrlRequired": "请输入回调URL",
+        "clipboardInvalid": "剪贴板内容无效",
+        "clipboardInvalidHint": "请确保已复制包含 code= 参数的回调URL",
+        "clipboardReadFailed": "无法读取剪贴板",
+        "clipboardReadFailedHint": "请手动粘贴URL，或授予剪贴板访问权限",
+        "loginHint": "登录提示",
+        "loginHintDescription": "请在弹出窗口中完成PSN登录，登录成功后会自动尝试获取账户ID"
+      }
+    }
+  },
+  "streaming": {
+    "monitor": {
+      "enable": "开启监控",
+      "disable": "关闭监控",
+      "title": "实时监控",
+      "webrtc": "WebRTC",
+      "labels": {
+        "download": "下行速率",
+        "upload": "上行速率",
+        "videoBitrate": "视频码率",
+        "resolution": "分辨率",
+        "latency": "延迟"
+      },
+      "units": {
+        "mbps": "{{value}} Mbps",
+        "kbps": "{{value}} Kbps",
+        "ms": "{{value}} 毫秒",
+        "resolution": "{{width}} × {{height}}"
+      }
+    }
+  }
+}
+

@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>控制器 API 测试 - SignalR</title>
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 { color: #333; }
+        h2 { color: #666; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        input, button, select {
+            padding: 8px 12px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .stick-control {
+            display: inline-block;
+            margin: 10px;
+            text-align: center;
+        }
+        .stick-visual {
+            width: 150px;
+            height: 150px;
+            border: 2px solid #333;
+            border-radius: 50%;
+            position: relative;
+            margin: 10px auto;
+            background: #f0f0f0;
+        }
+        .stick-dot {
+            width: 10px;
+            height: 10px;
+            background: #007bff;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            transition: all 0.05s;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+        .log-entry.error { color: #dc3545; }
+        .log-entry.success { color: #28a745; }
+        .log-entry.info { color: #007bff; }
+    </style>
+</head>
+<body>
+    <h1>🎮 控制器 API 测试 - SignalR</h1>
+    
+    <div class="container">
+        <h2>连接设置</h2>
+        <div>
+            <label>Hub URL: </label>
+            <input type="text" id="hubUrl" value="/hubs/controller" style="width: 300px;">
+            <button onclick="connect()">连接</button>
+            <button onclick="disconnect()">断开</button>
+        </div>
+        <div id="connectionStatus" class="status disconnected">未连接</div>
+    </div>
+
+    <div class="container">
+        <h2>会话控制</h2>
+        <div>
+            <label>Session ID: </label>
+            <input type="text" id="sessionId" placeholder="输入 Session GUID" style="width: 400px;">
+            <button onclick="connectController()">连接控制器</button>
+            <button onclick="startController()">启动控制器</button>
+            <button onclick="stopController()">停止控制器</button>
+            <button onclick="disconnectController()">断开控制器</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>按键操作</h2>
+        <div class="button-group">
+            <button onclick="sendButton('X', 'tap')">X (轻按)</button>
+            <button onclick="sendButton('O', 'tap')">O (轻按)</button>
+            <button onclick="sendButton('TRIANGLE', 'tap')">△ (轻按)</button>
+            <button onclick="sendButton('SQUARE', 'tap')">□ (轻按)</button>
+            <button onclick="sendButton('L1', 'tap')">L1</button>
+            <button onclick="sendButton('R1', 'tap')">R1</button>
+            <button onclick="sendButton('L2', 'tap')">L2</button>
+            <button onclick="sendButton('R2', 'tap')">R2</button>
+            <button onclick="sendButton('OPTIONS', 'tap')">OPTIONS</button>
+            <button onclick="sendButton('SHARE', 'tap')">SHARE</button>
+        </div>
+        <div style="margin-top: 10px;">
+            <label>按键: </label>
+            <select id="buttonSelect">
+                <option value="X">X</option>
+                <option value="O">O</option>
+                <option value="TRIANGLE">TRIANGLE</option>
+                <option value="SQUARE">SQUARE</option>
+                <option value="L1">L1</option>
+                <option value="R1">R1</option>
+                <option value="L2">L2</option>
+                <option value="R2">R2</option>
+                <option value="L3">L3</option>
+                <option value="R3">R3</option>
+                <option value="UP">UP</option>
+                <option value="DOWN">DOWN</option>
+                <option value="LEFT">LEFT</option>
+                <option value="RIGHT">RIGHT</option>
+                <option value="OPTIONS">OPTIONS</option>
+                <option value="SHARE">SHARE</option>
+                <option value="TOUCHPAD">TOUCHPAD</option>
+                <option value="PS">PS</option>
+            </select>
+            <label>动作: </label>
+            <select id="actionSelect">
+                <option value="tap">轻按</option>
+                <option value="press">按下</option>
+                <option value="release">释放</option>
+            </select>
+            <button onclick="sendCustomButton()">发送</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>摇杆控制</h2>
+        <div class="stick-control">
+            <h3>左摇杆</h3>
+            <div class="stick-visual" id="leftStick">
+                <div class="stick-dot" id="leftDot"></div>
+            </div>
+            <div>
+                <label>X: </label>
+                <input type="range" id="leftX" min="-1" max="1" step="0.01" value="0" 
+                       oninput="updateLeftStick(this.value, document.getElementById('leftY').value)">
+                <span id="leftXValue">0.00</span>
+            </div>
+            <div>
+                <label>Y: </label>
+                <input type="range" id="leftY" min="-1" max="1" step="0.01" value="0"
+                       oninput="updateLeftStick(document.getElementById('leftX').value, this.value)">
+                <span id="leftYValue">0.00</span>
+            </div>
+        </div>
+        <div class="stick-control">
+            <h3>右摇杆</h3>
+            <div class="stick-visual" id="rightStick">
+                <div class="stick-dot" id="rightDot"></div>
+            </div>
+            <div>
+                <label>X: </label>
+                <input type="range" id="rightX" min="-1" max="1" step="0.01" value="0"
+                       oninput="updateRightStick(this.value, document.getElementById('rightY').value)">
+                <span id="rightXValue">0.00</span>
+            </div>
+            <div>
+                <label>Y: </label>
+                <input type="range" id="rightY" min="-1" max="1" step="0.01" value="0"
+                       oninput="updateRightStick(document.getElementById('rightX').value, this.value)">
+                <span id="rightYValue">0.00</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>状态查询</h2>
+        <button onclick="getStickState()">获取摇杆状态</button>
+        <button onclick="getControllerStatus()">获取控制器状态</button>
+        <button onclick="getAvailableButtons()">获取可用按键</button>
+    </div>
+
+    <div class="container">
+        <h2>日志</h2>
+        <div class="log" id="log"></div>
+        <button onclick="clearLog()">清空日志</button>
+    </div>
+
+    <script>
+        let connection = null;
+        let updateInterval = null;
+
+        const DEADZONE = 0.12;
+        const STICK_EPSILON = 0.002;
+        const TRIGGER_PRESS_THRESHOLD = 0.35;
+        const TRIGGER_RELEASE_THRESHOLD = 0.2;
+
+        const stickState = {
+            left: { x: 0, y: 0 },
+            right: { x: 0, y: 0 }
+        };
+        let lastSentStick = {
+            left: { x: 0, y: 0 },
+            right: { x: 0, y: 0 }
+        };
+        let stickDirty = false;
+
+        let activeGamepadIndex = null;
+        let gamepadPolling = false;
+        const triggerState = { L2: false, R2: false };
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('connectionStatus');
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = '已连接';
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = '未连接';
+            }
+        }
+
+        function clampStick(value) {
+            if (!Number.isFinite(value)) {
+                return 0;
+            }
+            return Math.max(-1, Math.min(1, value));
+        }
+
+        function approxEqual(a, b, epsilon = STICK_EPSILON) {
+            return Math.abs(a - b) <= epsilon;
+        }
+
+        function sticksApproximatelyEqual(current, previous) {
+            return (
+                approxEqual(current.left.x, previous.left.x) &&
+                approxEqual(current.left.y, previous.left.y) &&
+                approxEqual(current.right.x, previous.right.x) &&
+                approxEqual(current.right.y, previous.right.y)
+            );
+        }
+
+        function roundStick(value) {
+            return Math.max(-1, Math.min(1, Number((value ?? 0).toFixed(4))));
+        }
+
+        function applyDeadzone(value, deadzone = DEADZONE) {
+            if (!Number.isFinite(value)) {
+                return 0;
+            }
+            const magnitude = Math.abs(value);
+            if (magnitude < deadzone) {
+                return 0;
+            }
+            const sign = value >= 0 ? 1 : -1;
+            const adjusted = (magnitude - deadzone) / (1 - deadzone);
+            return clampStick(sign * adjusted);
+        }
+
+        function isConnectionReady() {
+            if (!connection) {
+                return false;
+            }
+            if (connection.state === 'Connected') {
+                return true;
+            }
+            if (typeof signalR !== 'undefined' &&
+                signalR.HubConnectionState &&
+                connection.state === signalR.HubConnectionState.Connected) {
+                return true;
+            }
+            return false;
+        }
+
+        async function connect() {
+            const hubUrl = document.getElementById('hubUrl').value;
+
+            try {
+                connection = new signalR.HubConnectionBuilder()
+                    .withUrl(hubUrl)
+                    .build();
+
+                connection.on("ControllerConnected", (success) => {
+                    log(`控制器已连接: ${success}`, 'success');
+                });
+
+                connection.on("ControllerDisconnected", (success) => {
+                    log(`控制器已断开: ${success}`, 'info');
+                });
+
+                connection.on("ControllerStarted", (success) => {
+                    log(`控制器已启动: ${success}`, 'success');
+                });
+
+                connection.on("ControllerStopped", (success) => {
+                    log(`控制器已停止: ${success}`, 'info');
+                });
+
+                connection.on("ButtonSent", (success) => {
+                    log(`按键已发送: ${success}`, 'success');
+                });
+
+                connection.on("StickSent", () => {
+                    // 静默成功，避免日志过多
+                });
+
+                connection.on("BatchStickSent", () => {
+                    // 静默成功，避免日志过多
+                });
+
+                connection.on("StickState", (state) => {
+                    if (state) {
+                        log(
+                            `摇杆状态 - 左: (${state.left.x.toFixed(2)}, ${state.left.y.toFixed(2)}), 右: (${state.right.x.toFixed(2)}, ${state.right.y.toFixed(2)})`,
+                            'info'
+                        );
+                    } else {
+                        log('摇杆状态: 未连接', 'error');
+                    }
+                });
+
+                connection.on("ControllerStatus", (status) => {
+                    log(`控制器状态 - 运行中: ${status.isRunning}, 就绪: ${status.isReady}`, 'info');
+                });
+
+                connection.on("AvailableButtons", (buttons) => {
+                    log(`可用按键: ${buttons.join(', ')}`, 'info');
+                });
+
+                connection.on("Error", (message) => {
+                    log(`错误: ${message}`, 'error');
+                });
+
+                connection.onclose(() => {
+                    updateStatus(false);
+                    log('连接已关闭', 'info');
+                });
+
+                await connection.start();
+                updateStatus(true);
+                log('SignalR 连接已建立', 'success');
+
+                startStickAutoUpdate();
+            } catch (err) {
+                log(`连接失败: ${err}`, 'error');
+                updateStatus(false);
+            }
+        }
+
+        async function disconnect() {
+            stopStickAutoUpdate();
+            if (connection) {
+                await connection.stop();
+                connection = null;
+                updateStatus(false);
+                log('已断开连接', 'info');
+            }
+        }
+
+        function getSessionId() {
+            return document.getElementById('sessionId').value;
+        }
+
+        async function connectController() {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            try {
+                await connection.invoke("ConnectController", sessionId);
+            } catch (err) {
+                log(`连接控制器失败: ${err}`, 'error');
+            }
+        }
+
+        async function startController() {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            try {
+                await connection.invoke("StartController", sessionId);
+            } catch (err) {
+                log(`启动控制器失败: ${err}`, 'error');
+            }
+        }
+
+        async function stopController() {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            try {
+                await connection.invoke("StopController", sessionId);
+            } catch (err) {
+                log(`停止控制器失败: ${err}`, 'error');
+            }
+        }
+
+        async function disconnectController() {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            try {
+                await connection.invoke("DisconnectController", sessionId);
+            } catch (err) {
+                log(`断开控制器失败: ${err}`, 'error');
+            }
+        }
+
+        async function sendButton(button, action = 'tap') {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            if (!isConnectionReady()) {
+                log('SignalR 尚未连接', 'error');
+                return;
+            }
+            try {
+                const startTime = performance.now();
+                await connection.invoke("Button", sessionId, button, action, 100);
+                const endTime = performance.now();
+                log(`按键 ${button} (${action}) - 延迟: ${(endTime - startTime).toFixed(2)}ms`, 'success');
+            } catch (err) {
+                log(`发送按键失败: ${err}`, 'error');
+            }
+        }
+
+        async function sendCustomButton() {
+            const button = document.getElementById('buttonSelect').value;
+            const action = document.getElementById('actionSelect').value;
+            await sendButton(button, action);
+        }
+
+        function updateLeftStick(x, y, options = {}) {
+            const xVal = clampStick(typeof x === 'number' ? x : parseFloat(x));
+            const yVal = clampStick(typeof y === 'number' ? y : parseFloat(y));
+
+            const prevX = stickState.left.x;
+            const prevY = stickState.left.y;
+            stickState.left.x = xVal;
+            stickState.left.y = yVal;
+
+            if (!approxEqual(prevX, xVal) || !approxEqual(prevY, yVal)) {
+                stickDirty = true;
+            }
+
+            if (!options.skipInputUpdate) {
+                document.getElementById('leftX').value = xVal;
+                document.getElementById('leftY').value = yVal;
+            }
+
+            document.getElementById('leftXValue').textContent = xVal.toFixed(2);
+            document.getElementById('leftYValue').textContent = yVal.toFixed(2);
+
+            const dot = document.getElementById('leftDot');
+            const stick = document.getElementById('leftStick');
+            const radius = stick.offsetWidth / 2 - 5;
+            dot.style.left = `${stick.offsetWidth / 2 + xVal * radius}px`;
+            dot.style.top = `${stick.offsetHeight / 2 - yVal * radius}px`;
+        }
+
+        function updateRightStick(x, y, options = {}) {
+            const xVal = clampStick(typeof x === 'number' ? x : parseFloat(x));
+            const yVal = clampStick(typeof y === 'number' ? y : parseFloat(y));
+
+            const prevX = stickState.right.x;
+            const prevY = stickState.right.y;
+            stickState.right.x = xVal;
+            stickState.right.y = yVal;
+
+            if (!approxEqual(prevX, xVal) || !approxEqual(prevY, yVal)) {
+                stickDirty = true;
+            }
+
+            if (!options.skipInputUpdate) {
+                document.getElementById('rightX').value = xVal;
+                document.getElementById('rightY').value = yVal;
+            }
+
+            document.getElementById('rightXValue').textContent = xVal.toFixed(2);
+            document.getElementById('rightYValue').textContent = yVal.toFixed(2);
+
+            const dot = document.getElementById('rightDot');
+            const stick = document.getElementById('rightStick');
+            const radius = stick.offsetWidth / 2 - 5;
+            dot.style.left = `${stick.offsetWidth / 2 + xVal * radius}px`;
+            dot.style.top = `${stick.offsetHeight / 2 - yVal * radius}px`;
+        }
+
+        function startStickAutoUpdate() {
+            if (updateInterval) return;
+            updateInterval = setInterval(() => {
+                if (!isConnectionReady()) {
+                    return;
+                }
+                const sessionId = getSessionId();
+                if (!sessionId) {
+                    return;
+                }
+
+                if (!stickDirty && sticksApproximatelyEqual(stickState, lastSentStick)) {
+                    return;
+                }
+
+                const payload = {
+                    leftX: roundStick(stickState.left.x),
+                    leftY: roundStick(stickState.left.y),
+                    rightX: roundStick(stickState.right.x),
+                    rightY: roundStick(stickState.right.y)
+                };
+
+                lastSentStick = {
+                    left: { x: payload.leftX, y: payload.leftY },
+                    right: { x: payload.rightX, y: payload.rightY }
+                };
+                stickDirty = false;
+
+                connection.invoke("SetSticks", sessionId, payload.leftX, payload.leftY, payload.rightX, payload.rightY)
+                    .catch(err => console.error('更新摇杆失败:', err));
+            }, 16);
+        }
+
+        function stopStickAutoUpdate() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            lastSentStick = {
+                left: { x: 0, y: 0 },
+                right: { x: 0, y: 0 }
+            };
+        }
+
+        function getTriggerValue(gamepad, buttonIndex, axisIndex) {
+            let value = 0;
+            if (gamepad.buttons && gamepad.buttons.length > buttonIndex) {
+                const btn = gamepad.buttons[buttonIndex];
+                if (btn) {
+                    if (typeof btn.value === 'number') {
+                        value = btn.value;
+                    } else if (btn.pressed) {
+                        value = 1;
+                    }
+                }
+            }
+            if ((!value || value === 0) && gamepad.axes && gamepad.axes.length > axisIndex) {
+                const axisValue = gamepad.axes[axisIndex];
+                if (Number.isFinite(axisValue)) {
+                    value = Math.max(0, Math.min(1, (axisValue + 1) / 2));
+                }
+            }
+            if (!Number.isFinite(value)) {
+                return 0;
+            }
+            return Math.max(0, Math.min(1, value));
+        }
+
+        function sendButtonImmediate(button, action) {
+            if (!isConnectionReady()) {
+                return;
+            }
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                return;
+            }
+            connection.invoke("Button", sessionId, button, action, 0)
+                .catch(() => { /* 静默失败，避免干扰 */ });
+        }
+
+        function processTrigger(buttonName, value) {
+            const pressed = triggerState[buttonName];
+            if (!pressed && value >= TRIGGER_PRESS_THRESHOLD) {
+                triggerState[buttonName] = true;
+                sendButtonImmediate(buttonName, 'press');
+            } else if (pressed && value <= TRIGGER_RELEASE_THRESHOLD) {
+                triggerState[buttonName] = false;
+                sendButtonImmediate(buttonName, 'release');
+            }
+        }
+
+        function pollGamepadFrame() {
+            if (!gamepadPolling) {
+                return;
+            }
+            const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+            let pad = null;
+            if (activeGamepadIndex !== null && pads[activeGamepadIndex]) {
+                pad = pads[activeGamepadIndex];
+            }
+            if (!pad) {
+                for (const candidate of pads) {
+                    if (candidate) {
+                        pad = candidate;
+                        activeGamepadIndex = candidate.index;
+                        break;
+                    }
+                }
+            }
+
+            if (pad) {
+                const leftX = applyDeadzone(pad.axes?.[0] ?? 0);
+                const leftY = applyDeadzone(pad.axes?.[1] ?? 0);
+                const rightX = applyDeadzone(pad.axes?.[2] ?? pad.axes?.[4] ?? 0);
+                const rightY = applyDeadzone(pad.axes?.[3] ?? pad.axes?.[5] ?? 0);
+
+                updateLeftStick(leftX, leftY);
+                updateRightStick(rightX, rightY);
+
+                processTrigger('L2', getTriggerValue(pad, 6, 2));
+                processTrigger('R2', getTriggerValue(pad, 7, 5));
+            }
+
+            requestAnimationFrame(pollGamepadFrame);
+        }
+
+        function startGamepadLoop() {
+            if (gamepadPolling) {
+                return;
+            }
+            gamepadPolling = true;
+            requestAnimationFrame(pollGamepadFrame);
+        }
+
+        function handleGamepadConnected(event) {
+            activeGamepadIndex = event.gamepad.index;
+            log(`检测到手柄: ${event.gamepad.id}`, 'success');
+            startGamepadLoop();
+        }
+
+        function handleGamepadDisconnected(event) {
+            if (event.gamepad.index === activeGamepadIndex) {
+                activeGamepadIndex = null;
+                triggerState.L2 = false;
+                triggerState.R2 = false;
+            }
+            const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+            if (pads.length === 0) {
+                gamepadPolling = false;
+                log(`手柄已断开: ${event.gamepad.id}`, 'info');
+            }
+        }
+
+        async function getStickState() {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            try {
+                await connection.invoke("GetStickState", sessionId);
+            } catch (err) {
+                log(`获取摇杆状态失败: ${err}`, 'error');
+            }
+        }
+
+        async function getControllerStatus() {
+            const sessionId = getSessionId();
+            if (!sessionId) {
+                log('请输入 Session ID', 'error');
+                return;
+            }
+            try {
+                await connection.invoke("GetControllerStatus", sessionId);
+            } catch (err) {
+                log(`获取控制器状态失败: ${err}`, 'error');
+            }
+        }
+
+        async function getAvailableButtons() {
+            try {
+                await connection.invoke("GetAvailableButtons");
+            } catch (err) {
+                log(`获取可用按键失败: ${err}`, 'error');
+            }
+        }
+
+        function initGamepadSupport() {
+            if (!navigator.getGamepads) {
+                log('当前浏览器不支持 Gamepad API，无法自动采集手柄输入', 'error');
+                return;
+            }
+
+            const pads = navigator.getGamepads();
+            for (const pad of pads) {
+                if (pad) {
+                    activeGamepadIndex = pad.index;
+                    log(`检测到手柄: ${pad.id}`, 'info');
+                    startGamepadLoop();
+                    break;
+                }
+            }
+        }
+
+        window.addEventListener('gamepadconnected', handleGamepadConnected);
+        window.addEventListener('gamepaddisconnected', handleGamepadDisconnected);
+
+        // 初始化
+        updateStatus(false);
+        initGamepadSupport();
+    </script>
+</body>
+</html>
+

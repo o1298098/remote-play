@@ -1,0 +1,349 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "submit": "Submit",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "refresh": "Refresh",
+    "theme": {
+      "toggle": "Toggle theme",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Login",
+      "subtitle": "Sign in to your account to start game streaming",
+      "usernameOrEmail": "Username or Email",
+      "usernameOrEmailPlaceholder": "username or name@example.com",
+      "password": "Password",
+      "passwordPlaceholder": "••••••••",
+      "loginButton": "Login",
+      "loggingIn": "Logging in...",
+      "success": "Login Successful",
+      "successDescription": "Welcome back!",
+      "failure": "Login Failed",
+      "failureDescription": "Incorrect username or password",
+      "noAccount": "Don't have an account?",
+      "registerLink": "Sign up now"
+    },
+    "register": {
+      "title": "Create Account",
+      "subtitle": "Register a new account to start using Remote Play",
+      "username": "Username",
+      "usernamePlaceholder": "username",
+      "usernameHint": "Only letters, numbers, and underscores. At least 3 characters.",
+      "email": "Email",
+      "emailPlaceholder": "name@example.com",
+      "password": "Password",
+      "passwordPlaceholder": "••••••••",
+      "passwordHint": "At least 8 characters required",
+      "confirmPassword": "Confirm Password",
+      "confirmPasswordPlaceholder": "••••••••",
+      "registerButton": "Register",
+      "registering": "Registering...",
+      "success": "Registration Successful",
+      "successDescription": "Welcome to Remote Play!",
+      "failure": "Registration Failed",
+      "failureDescription": "Registration failed, please try again later",
+      "usernameFormatError": "Invalid Username Format",
+      "usernameFormatErrorDescription": "Username can only contain letters, numbers, and underscores",
+      "usernameTooShort": "Username Too Short",
+      "usernameTooShortDescription": "Username must be at least 3 characters",
+      "passwordMismatch": "Password Mismatch",
+      "passwordMismatchDescription": "Please ensure both passwords match",
+      "passwordTooShort": "Password Too Short",
+      "passwordTooShortDescription": "Password must be at least 8 characters",
+      "hasAccount": "Already have an account?",
+      "loginLink": "Sign in now"
+    },
+    "logout": {
+      "title": "Logged Out",
+      "description": "You have safely logged out of your account"
+    }
+  },
+  "devices": {
+    "title": "Play your console remotely",
+    "header": {
+      "title": "REMOTE PLAY",
+      "myAccount": "My Account",
+      "settings": "Settings",
+      "settingsDescription": "Settings feature coming soon",
+      "controllerMapping": "Controller Mapping",
+      "accountInfo": "Account Info",
+      "accountInfoDescription": "Account info feature coming soon",
+      "logout": "Logout",
+      "gamepad": {
+        "menuTitle": "Controllers",
+        "notDetected": "No controllers detected",
+        "enable": "Enable controller",
+        "disable": "Disable controller",
+        "stats": "{{buttons}} buttons · {{axes}} axes",
+        "disconnectTooltip": "Disconnect",
+        "disconnectedToastTitle": "🎮 Controller disconnected",
+        "disconnectedToastDescription": "{{name}} has been disconnected from the app"
+      }
+    },
+    "console": {
+      "status": {
+        "online": "Online",
+        "offline": "Offline",
+        "standby": "Standby"
+      },
+      "available": "Available: standby on",
+      "readyToPlay": "Ready to play",
+      "standby": "Standby",
+      "offline": "Offline",
+      "notRegistered": "Not Registered",
+      "connect": "CONNECT",
+      "register": "Register",
+      "addConsole": {
+        "title": "Add a console",
+        "description": "Enable remote features on your console to connect",
+        "button": "ADD",
+        "toastTitle": "Add Console",
+        "toastDescription": "Please enable remote play features on your PlayStation console"
+      },
+      "offlineToastTitle": "Console Offline",
+      "offlineToastDescription": "This console is currently unavailable",
+      "connectingToastTitle": "Connecting",
+      "connectingToastDescription": "Connecting to {{name}}..."
+    },
+    "settings": {
+      "title": "Device Settings",
+      "description": "Configure streaming parameters for {{name}}",
+      "resolution": "Resolution",
+      "resolutionHint": "Select the resolution for the video stream. Higher resolutions require better network connections.",
+      "frameRate": "Frame Rate",
+      "frameRateHint": "Select the frame rate for the video stream. Higher frame rates provide smoother experience but require more bandwidth.",
+      "bitrate": "Bitrate",
+      "bitrateHint": "Select the bitrate for the video stream. Higher bitrates provide better quality but require faster network speeds.",
+      "streamType": "Stream Codec",
+      "streamTypeHint": "Choose the codec used for streaming. HEVC delivers better quality at lower bitrates but may not be supported on all devices.",
+      "saveSuccess": "Settings Saved",
+      "saveSuccessDescription": "Device settings have been saved successfully",
+      "saveFailed": "Save Failed",
+      "saveFailedDescription": "Unable to save device settings, please try again later",
+      "loadFailed": "Load Failed",
+      "loadFailedDescription": "Unable to load device settings, please try again later",
+      "reset": "Reset",
+      "resetDescription": "Settings have been reset to defaults",
+      "options": {
+        "resolution": {
+          "RES_360P": "360p",
+          "RES_540P": "540p",
+          "RES_720P": "720p",
+          "RES_1080P": "1080p"
+        },
+        "frameRate": {
+          "30FPS": "30fps",
+          "60FPS": "60fps"
+        },
+        "bitrate": {
+          "DEFAULT": "Auto match bitrate",
+          "VERY_LOW": "Very low quality (~2 Mbps)",
+          "LOW": "Low quality (~4 Mbps)",
+          "MEDIUM": "Medium quality (~6 Mbps)",
+          "HIGH": "High quality (~10 Mbps)",
+          "VERY_HIGH": "Very high quality (~15 Mbps)"
+        },
+        "streamType": {
+          "H264": "H.264 codec",
+          "HEVC": "HEVC/H.265 codec",
+          "HEVC_HDR": "HEVC/H.265 HDR codec"
+        }
+      }
+    },
+    "controllerMapping": {
+      "title": "Controller Mapping",
+      "subtitle": "Configure keyboard and mouse to controller button mappings",
+      "instructions": {
+        "title": "Instructions",
+        "step1": "Click a button on the controller or in the list below to start mapping",
+        "step2": "Press the keyboard key or mouse button you want to map",
+        "step3": "Click the Save button to save your mappings after completing them"
+      },
+      "gamepad": {
+        "title": "Controller Layout",
+        "description": "Click buttons on the controller to map them"
+      },
+      "buttonList": {
+        "title": "Button List",
+        "description": "You can also map buttons from this list"
+      },
+      "buttons": {
+        "CROSS": "X",
+        "CIRCLE": "O",
+        "TRIANGLE": "△",
+        "SQUARE": "□",
+        "L1": "L1",
+        "R1": "R1",
+        "L2": "L2",
+        "R2": "R2",
+        "L3": "L3",
+        "R3": "R3",
+        "DPAD_UP": "D-Pad Up",
+        "DPAD_DOWN": "D-Pad Down",
+        "DPAD_LEFT": "D-Pad Left",
+        "DPAD_RIGHT": "D-Pad Right",
+      "OPTIONS": "Options",
+      "SHARE": "Share",
+      "TOUCHPAD": "Touchpad",
+      "PS": "PS Button"
+    },
+      "mouseButtons": {
+        "0": "Left Mouse",
+        "1": "Middle Mouse",
+        "2": "Right Mouse"
+      },
+      "tester": {
+        "title": "Controller Tester",
+        "description": "Monitor live input from sticks and buttons.",
+        "noGamepad": "No controller detected. Please connect one and try again.",
+        "selectLabel": "Active controller",
+        "selectPlaceholder": "Select a controller",
+        "unknownDevice": "Unknown controller",
+        "stickTitle": "Stick status",
+        "leftStick": "Left stick",
+        "rightStick": "Right stick",
+        "stickAxes": "X: {{x}} / Y: {{y}}",
+        "triggerTitle": "Trigger pressure",
+        "buttonTitle": "Button status",
+        "analogValue": "Value: {{value}}",
+        "genericButton": "Button {{index}}",
+        "buttonPressed": "Pressed",
+        "buttonReleased": "Released"
+      },
+      "mapButton": "Click to Map",
+      "listening": "Listening...",
+      "listeningDescription": "Please press the key you want to map to {button}",
+      "mappingSet": "Mapping Set",
+      "mappingSetDescription": "{button} has been mapped to {key}",
+      "mappingCleared": "Mapping Cleared",
+      "mappingClearedDescription": "Mapping for {button} has been cleared",
+      "saveSuccess": "Saved Successfully",
+      "saveSuccessDescription": "Controller mapping settings have been saved",
+      "saveFailed": "Save Failed",
+      "saveFailedDescription": "Unable to save controller mapping settings, please try again later",
+      "reset": "Reset",
+      "resetDescription": "Mappings have been reset to defaults",
+      "notMapped": "Not Mapped"
+    },
+    "bindDevice": {
+      "title": "Bind PS Console",
+      "description": {
+        "discover": "Discover and connect to your PlayStation console",
+        "bind": "Configure device information and complete binding"
+      },
+      "discover": {
+        "scanning": "Scanning for devices on the network...",
+        "scanningHint": "Please wait, this may take a few seconds",
+        "foundDevices": "Found Devices",
+        "rescan": "Rescan",
+        "noDevices": "No devices found",
+        "noDevicesHint": "Please ensure your PS console is powered on and connected to the same network",
+        "manualIp": "Manual IP Address (Optional)",
+        "manualIpPlaceholder": "e.g., 192.168.1.100",
+        "manualIpHint": "If you know the device IP address, you can enter it directly to connect",
+        "unknownType": "Unknown Type"
+      },
+      "bind": {
+        "deviceName": "Device Name",
+        "deviceNamePlaceholder": "Give your device a name",
+        "needsRegistration": "Device Registration Required (for first-time binding)",
+        "needsRegistrationHint": "If this is the first time binding this device, you need to provide Account ID and PIN for registration",
+        "accountId": "Account ID (Base64)",
+        "accountIdPlaceholder": "Enter PSN account ID or click the button to get it",
+        "accountIdHint": "This is your PSN account ID, usually Base64-encoded 8-byte data. Click the \"Get via PSN Login\" button to automatically obtain it.",
+        "getAccountId": "Get via PSN Login",
+        "gettingAccountId": "Getting...",
+        "gettingAccountIdTitle": "Getting Account ID...",
+        "gettingAccountIdHint": "Please complete PSN login in the popup window",
+        "pin": "PIN Code",
+        "pinPlaceholder": "Enter 8-digit PIN code",
+        "pinHint": "The 8-digit PIN code displayed on your PS console",
+        "completeBind": "Complete Binding",
+        "binding": "Binding..."
+      },
+      "oauth": {
+        "loginTitle": "PSN Login",
+        "callbackSteps": {
+          "title": "Instructions",
+          "step1": "Complete PSN login in the popup window",
+          "step2": "After successful login, the page will redirect to callback address ({domain})",
+          "step3": "The system will automatically try to get the callback URL",
+          "step4": "If automatic retrieval fails, copy the full URL from the browser address bar (containing {codeParam} parameter) and paste it below",
+          "hint": "Tip: You can press {selectKey1} or {selectKey2} to quickly select the address bar, then press {copyKey} to copy"
+        },
+        "callbackUrlPlaceholder": "Paste the full URL of the PSN callback page (starting with remoteplay.dl.playstation.net)",
+        "callbackUrlInvalid": "Please ensure the URL contains \"remoteplay.dl.playstation.net\" and \"code=\" parameter",
+        "clipboardRead": "Read URL from Clipboard",
+        "cancelGet": "Cancel Get",
+        "callbackDetected": "✅ Callback Page Detected",
+        "callbackDetectedHint": "Page has redirected, please copy the URL from the address bar (Ctrl+C), then click the 📋 button or paste into the input field"
+      },
+      "errors": {
+        "discoverFailed": "Device Discovery Failed",
+        "discoverFailedHint": "Please try again later",
+        "ipRequired": "IP Address Required",
+        "ipRequiredHint": "Please enter the IP address of the PS console",
+        "ipInvalid": "IP address cannot be empty",
+        "accountIdAndPinRequired": "Account ID and PIN Required",
+        "accountIdAndPinRequiredHint": "Device registration requires Account ID and PIN code",
+        "bindSuccess": "Binding Successful",
+        "bindSuccessHint": "Device has been successfully bound to your account",
+        "bindFailed": "Binding Failed",
+        "bindFailedHint": "Please try again later",
+        "getLoginUrlFailed": "Failed to Get Login URL",
+        "cannotOpenWindow": "Cannot Open Login Window",
+        "cannotOpenWindowHint": "Please allow popup windows and try again",
+        "loginFailed": "Login Failed",
+        "loginFailedHint": "Please try again later",
+        "getAccountIdFailed": "Failed to Get Account ID",
+        "getAccountIdSuccess": "Account ID Retrieved Successfully",
+        "getAccountIdSuccessHint": "Account retrieved: {name}",
+        "callbackUrlRequired": "Callback URL Required",
+        "clipboardInvalid": "Invalid Clipboard Content",
+        "clipboardInvalidHint": "Please ensure you have copied the callback URL containing the code= parameter",
+        "clipboardReadFailed": "Cannot Read Clipboard",
+        "clipboardReadFailedHint": "Please manually paste the URL, or grant clipboard access permission",
+        "loginHint": "Login Instructions",
+        "loginHintDescription": "Please complete PSN login in the popup window, the account ID will be automatically retrieved after successful login"
+      }
+    }
+  },
+  "streaming": {
+    "monitor": {
+      "enable": "Enable monitoring",
+      "disable": "Disable monitoring",
+      "title": "Live Monitoring",
+      "webrtc": "WebRTC",
+      "labels": {
+        "download": "Download rate",
+        "upload": "Upload rate",
+        "videoBitrate": "Video bitrate",
+        "resolution": "Resolution",
+        "latency": "Latency"
+      },
+      "units": {
+        "mbps": "{{value}} Mbps",
+        "kbps": "{{value}} Kbps",
+        "ms": "{{value}} ms",
+        "resolution": "{{width}} × {{height}}"
+      }
+    }
+  }
+}
+

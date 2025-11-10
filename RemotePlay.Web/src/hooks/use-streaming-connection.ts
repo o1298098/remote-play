@@ -1,0 +1,1333 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useGamepadInput, useGamepad } from '@/hooks/use-gamepad'
+import { streamingService } from '@/service/streaming.service'
+import { controllerService } from '@/service/controller.service'
+import { playStationService } from '@/service/playstation.service'
+import { apiRequest } from '@/service/api-client'
+import { optimizeSdpForLowLatency, optimizeVideoForLowLatency } from '@/utils/webrtc-optimization'
+import { createKeyboardHandler } from '@/utils/keyboard-mapping'
+import { GamepadButton, PS5_BUTTON_MAP, type GamepadInputEvent } from '@/service/gamepad.service'
+import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS } from './use-streaming-connection/constants'
+import { useStickInputState } from './use-streaming-connection/stick-input-state'
+import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
+
+type ToastFn = (props: { title?: string; description?: string; variant?: 'default' | 'destructive'; [key: string]: any }) => void
+
+interface UseStreamingConnectionParams {
+  hostId: string | null
+  deviceName: string
+  isLikelyLan: boolean
+  videoRef: React.RefObject<HTMLVideoElement>
+  toast: ToastFn
+}
+
+export interface StreamingMonitorStats {
+  downloadKbps: number | null
+  uploadKbps: number | null
+  videoBitrateKbps: number | null
+  resolution: { width: number; height: number } | null
+  latencyMs: number | null
+}
+
+export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoRef, toast }: UseStreamingConnectionParams) {
+  const [isConnected, setIsConnected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [connectionState, setConnectionState] = useState<string>('未连接')
+  const [webrtcSessionId, setWebrtcSessionId] = useState<string | null>(null)
+  const [remotePlaySessionId, setRemotePlaySessionId] = useState<string | null>(null)
+  const [connectionStats, setConnectionStats] = useState<StreamingMonitorStats | null>(null)
+  const [isStatsEnabled, setIsStatsEnabled] = useState(false)
+
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
+  const videoOptimizeCleanupRef = useRef<(() => void) | null>(null)
+  const keyboardCleanupRef = useRef<(() => void) | null>(null)
+  const gamepadEnabledRef = useRef<boolean>(false)
+  const isConnectedRef = useRef<boolean>(false)
+  const hasAttemptedInitialConnectRef = useRef<boolean>(false)
+
+  const {
+    getNormalizedState,
+    snapshotGamepadAxes,
+    handleGamepadAxis,
+    setPointerLock,
+    setMouseVelocity,
+    reset: resetStickInput,
+  } = useStickInputState()
+
+  const { setup: setupMouseRightStick, tearDown: tearDownMouseRightStick } = useMouseRightStick({
+    videoRef,
+    onPointerLockChange: setPointerLock,
+    onMouseMove: setMouseVelocity,
+  })
+
+  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; timestamp: number }>({
+    leftX: 0,
+    leftY: 0,
+    rightX: 0,
+    rightY: 0,
+    timestamp: 0,
+  })
+
+  const stickProcessingActiveRef = useRef<boolean>(false)
+  const stickIntervalRef = useRef<number | null>(null)
+  const { isEnabled: isGamepadEnabled } = useGamepad()
+  const statsIntervalRef = useRef<number | null>(null)
+  const isStatsEnabledRef = useRef<boolean>(false)
+  const previousStatsRef = useRef<{
+    timestamp: number
+    bytesReceived: number
+    bytesSent: number
+    videoBytesReceived: number
+  } | null>(null)
+
+  const applyReceiverLatencyHints = useCallback((receiver: RTCRtpReceiver) => {
+    const anyReceiver = receiver as any
+    try {
+      if (typeof anyReceiver?.playoutDelayHint === 'number') {
+        anyReceiver.playoutDelayHint = 0
+      }
+      if (typeof anyReceiver?.jitterBufferDelayHint === 'number') {
+        anyReceiver.jitterBufferDelayHint = 0
+      }
+    } catch (error) {
+      console.warn('⚠️ 设置接收器延迟提示失败:', error)
+    }
+  }, [])
+
+  const reinforceLatencyHints = useCallback(
+    (pc: RTCPeerConnection | null) => {
+      if (!pc) return
+      try {
+        pc.getReceivers().forEach((receiver) => applyReceiverLatencyHints(receiver))
+      } catch (error) {
+        console.warn('⚠️ 刷新接收器延迟提示失败:', error)
+      }
+    },
+    [applyReceiverLatencyHints]
+  )
+
+  const stopStickProcessing = useCallback(() => {
+    if (stickIntervalRef.current !== null) {
+      clearInterval(stickIntervalRef.current)
+      stickIntervalRef.current = null
+    }
+    stickProcessingActiveRef.current = false
+    resetStickInput()
+    lastSentRef.current = { leftX: 0, leftY: 0, rightX: 0, rightY: 0, timestamp: 0 }
+  }, [resetStickInput])
+
+  const collectConnectionStats = useCallback(async () => {
+    if (!isStatsEnabledRef.current) {
+      return
+    }
+
+    const peerConnection = peerConnectionRef.current
+    if (!peerConnection) {
+      return
+    }
+
+    try {
+      const statsReport = await peerConnection.getStats()
+
+      let totalInboundBytes = 0
+      let totalOutboundBytes = 0
+      let videoInboundBytes = 0
+      let frameWidth: number | null = null
+      let frameHeight: number | null = null
+      let latencyMs: number | null = null
+
+      statsReport.forEach((report) => {
+        const anyReport = report as any
+
+        if (report.type === 'inbound-rtp' && !report.isRemote) {
+          const bytesReceived = typeof anyReport.bytesReceived === 'number' ? anyReport.bytesReceived : 0
+          totalInboundBytes += bytesReceived
+
+          if (anyReport.kind === 'video') {
+            videoInboundBytes += bytesReceived
+            if (typeof anyReport.frameWidth === 'number') {
+              frameWidth = anyReport.frameWidth
+            }
+            if (typeof anyReport.frameHeight === 'number') {
+              frameHeight = anyReport.frameHeight
+            }
+          }
+        }
+
+        if (report.type === 'outbound-rtp' && !report.isRemote) {
+          const bytesSent = typeof anyReport.bytesSent === 'number' ? anyReport.bytesSent : 0
+          totalOutboundBytes += bytesSent
+        }
+
+        if (report.type === 'candidate-pair' && anyReport.state === 'succeeded' && anyReport.nominated) {
+          if (typeof anyReport.currentRoundTripTime === 'number') {
+            latencyMs = anyReport.currentRoundTripTime * 1000
+          }
+        }
+      })
+
+      const now = performance.now()
+      const previous = previousStatsRef.current
+
+      if (!previous) {
+        previousStatsRef.current = {
+          timestamp: now,
+          bytesReceived: totalInboundBytes,
+          bytesSent: totalOutboundBytes,
+          videoBytesReceived: videoInboundBytes,
+        }
+
+        setConnectionStats((prev) => ({
+          downloadKbps: prev?.downloadKbps ?? null,
+          uploadKbps: prev?.uploadKbps ?? null,
+          videoBitrateKbps: prev?.videoBitrateKbps ?? null,
+          resolution:
+            frameWidth !== null && frameHeight !== null
+              ? { width: frameWidth, height: frameHeight }
+              : prev?.resolution ?? null,
+          latencyMs: latencyMs ?? prev?.latencyMs ?? null,
+        }))
+
+        return
+      }
+
+      const elapsedSeconds = (now - previous.timestamp) / 1000
+      if (elapsedSeconds <= 0) {
+        return
+      }
+
+      const downloadDiff = Math.max(0, totalInboundBytes - previous.bytesReceived)
+      const uploadDiff = Math.max(0, totalOutboundBytes - previous.bytesSent)
+      const videoDiff = Math.max(0, videoInboundBytes - previous.videoBytesReceived)
+
+      const downloadKbps = downloadDiff > 0 ? (downloadDiff * 8) / elapsedSeconds / 1000 : 0
+      const uploadKbps = uploadDiff > 0 ? (uploadDiff * 8) / elapsedSeconds / 1000 : 0
+      const videoBitrateKbps = videoDiff > 0 ? (videoDiff * 8) / elapsedSeconds / 1000 : 0
+
+      previousStatsRef.current = {
+        timestamp: now,
+        bytesReceived: totalInboundBytes,
+        bytesSent: totalOutboundBytes,
+        videoBytesReceived: videoInboundBytes,
+      }
+
+      setConnectionStats((prev) => ({
+        downloadKbps: Number.isFinite(downloadKbps) ? downloadKbps : prev?.downloadKbps ?? null,
+        uploadKbps: Number.isFinite(uploadKbps) ? uploadKbps : prev?.uploadKbps ?? null,
+        videoBitrateKbps: Number.isFinite(videoBitrateKbps) ? videoBitrateKbps : prev?.videoBitrateKbps ?? null,
+        resolution:
+          frameWidth !== null && frameHeight !== null
+            ? { width: frameWidth, height: frameHeight }
+            : prev?.resolution ?? null,
+        latencyMs: latencyMs ?? prev?.latencyMs ?? null,
+      }))
+    } catch (error) {
+      console.warn('获取 WebRTC 统计信息失败:', error)
+    }
+  }, [])
+
+  const prepareDevice = useCallback(async (): Promise<boolean> => {
+    if (!hostId) {
+      return false
+    }
+
+    try {
+      setConnectionState('正在获取设备信息...')
+      const devicesResponse = await playStationService.getMyDevices()
+      if (!devicesResponse.success || !devicesResponse.result) {
+        throw new Error('无法获取设备信息')
+      }
+
+      const device = devicesResponse.result.find((d) => d.hostId === hostId)
+      if (!device) {
+        throw new Error('未找到设备信息')
+      }
+
+      if (!device.ipAddress) {
+        throw new Error('设备 IP 地址未设置')
+      }
+
+      const deviceIp = device.ipAddress
+
+      setConnectionState('正在查询设备状态...')
+      let firstStatusCheck = await playStationService.discoverDevice(deviceIp, 5000).catch(() => {
+        console.warn('首次状态查询失败，将在等待循环中继续查询...')
+        return { success: false, result: null }
+      })
+
+      if (!firstStatusCheck.success || !firstStatusCheck.result) {
+        console.warn('首次状态查询失败，重试一次...')
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        firstStatusCheck = await playStationService.discoverDevice(deviceIp, 5000).catch(() => {
+          console.warn('首次状态查询重试也失败，将在等待循环中继续查询...')
+          return { success: false, result: null }
+        })
+      }
+
+      let needWaitForReady = false
+      if (firstStatusCheck.success && firstStatusCheck.result) {
+        const deviceStatus = firstStatusCheck.result.status?.toUpperCase() || ''
+        console.log('设备当前状态:', deviceStatus)
+
+        if (deviceStatus.includes('STANDBY')) {
+          setConnectionState('设备处于待机状态，正在唤醒...')
+          toast({
+            title: '正在唤醒设备',
+            description: '设备处于待机状态，正在唤醒...',
+          })
+
+          const wakeResponse = await playStationService.wakeUpConsole(hostId)
+          if (!wakeResponse.success || !wakeResponse.result) {
+            throw new Error('唤醒设备失败')
+          }
+
+          console.log('✅ 设备唤醒命令已发送，等待设备就绪...')
+          needWaitForReady = true
+        } else if (deviceStatus === 'OK' || deviceStatus.includes('READY') || deviceStatus.includes('AVAILABLE')) {
+          console.log('✅ 设备已就绪，状态:', deviceStatus)
+          return true
+        } else {
+          console.log('⚠️ 设备状态:', deviceStatus, '，等待设备就绪...')
+          needWaitForReady = true
+        }
+      } else {
+        console.log('⚠️ 首次状态查询失败，等待设备就绪...')
+        needWaitForReady = true
+      }
+
+      if (needWaitForReady) {
+        setConnectionState('等待设备就绪...')
+        const timeout = 30000
+        const checkInterval = 1000
+        const startTime = Date.now()
+
+        console.log('🔄 开始主动查询设备状态...')
+
+        while (Date.now() - startTime < timeout) {
+          try {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000)
+            console.log(`📡 主动查询设备状态... (${elapsed}s)`)
+            const statusResponse = (await Promise.race([
+              playStationService.discoverDevice(deviceIp, 5000),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('查询超时')), 6000)),
+            ]).catch((error) => {
+              console.log(`⚠️ 设备状态查询超时或失败 (${elapsed}s):`, error)
+              return { success: false, result: null }
+            })) as any
+
+            if (statusResponse.success && statusResponse.result) {
+              const currentStatus = statusResponse.result.status?.toUpperCase() || ''
+              console.log(`✅ 设备状态检查 (${elapsed}s):`, currentStatus)
+
+              if (currentStatus === 'OK' || currentStatus.includes('READY') || currentStatus.includes('AVAILABLE')) {
+                console.log('✅ 设备已就绪，状态:', currentStatus)
+                return true
+              } else {
+                console.log(`⏳ 设备尚未就绪，当前状态: ${currentStatus}，继续等待...`)
+              }
+            } else {
+              console.log(`⚠️ 设备状态查询失败 (${elapsed}s)，继续尝试...`)
+            }
+          } catch (queryError) {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000)
+            console.log(`⚠️ 设备状态查询异常 (${elapsed}s):`, queryError, '，继续尝试...')
+          }
+
+          const elapsed = Math.floor((Date.now() - startTime) / 1000)
+          setConnectionState(`等待设备就绪... (${elapsed}s)`)
+
+          if (Date.now() - startTime >= timeout) {
+            break
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, checkInterval))
+        }
+
+        const finalElapsed = Math.floor((Date.now() - startTime) / 1000)
+        console.error(`❌ 设备就绪超时（${finalElapsed}秒）`)
+        throw new Error(`设备就绪超时（${finalElapsed}秒）`)
+      }
+
+      return false
+    } catch (error) {
+      console.error('设备准备失败:', error)
+      const errorMessage = error instanceof Error ? error.message : '未知错误'
+      if (errorMessage.includes('超时') || errorMessage.includes('就绪超时')) {
+        toast({
+          title: '设备准备失败',
+          description: errorMessage,
+          variant: 'destructive',
+        })
+      } else {
+        console.warn('设备准备遇到错误，但继续等待:', errorMessage)
+      }
+      return false
+    }
+  }, [hostId, toast])
+
+  const setupKeyboardControl = useCallback(() => {
+    if (keyboardCleanupRef.current) {
+      keyboardCleanupRef.current()
+      keyboardCleanupRef.current = null
+    }
+
+    const cleanup = createKeyboardHandler(async (buttonName: string, action: 'press' | 'release') => {
+      console.log('🎮 键盘控制触发:', buttonName, action, {
+        isConnected: controllerService.isConnected(),
+        buttonName,
+        action,
+      })
+
+      try {
+        let retries = 0
+        const maxRetries = 10
+        while (!controllerService.isConnected() && retries < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          retries++
+        }
+
+        if (!controllerService.isConnected()) {
+          console.warn('⚠️ 控制器未就绪，但尝试发送按键:', buttonName, action)
+        }
+
+        console.log('📤 发送按钮命令:', buttonName, action)
+        if (action === 'press') {
+          await controllerService.sendButton(buttonName, 'press')
+          console.log('✅ 按钮命令发送成功:', buttonName, 'press')
+        } else {
+          await controllerService.sendButton(buttonName, 'release')
+          console.log('✅ 按钮命令发送成功:', buttonName, 'release')
+        }
+      } catch (error) {
+        console.error('❌ 键盘控制失败:', error, '按钮:', buttonName, '动作:', action)
+      }
+    })
+
+    keyboardCleanupRef.current = cleanup
+    console.log('✅ 键盘控制已启用')
+  }, [])
+
+  const connectController = useCallback(
+    async (sessionId: string) => {
+      try {
+        const stateUnsubscribe = controllerService.onStateChange((state) => {
+          if (state.isConnected && !state.isConnecting) {
+            console.log('✅ 控制器状态：已连接且就绪')
+            if (!keyboardCleanupRef.current) {
+              setupKeyboardControl()
+            }
+            stateUnsubscribe()
+          }
+        })
+
+        await controllerService.connect(sessionId)
+        console.log('✅ 控制器连接成功')
+
+        if (controllerService.isConnected()) {
+          console.log('✅ 控制器已就绪，立即启用键盘控制')
+          setupKeyboardControl()
+          stateUnsubscribe()
+        } else {
+          let waitCount = 0
+          const maxWait = 20
+          while (!controllerService.isConnected() && waitCount < maxWait) {
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            waitCount++
+          }
+
+          if (controllerService.isConnected()) {
+            console.log('✅ 控制器已就绪，启用键盘控制')
+            setupKeyboardControl()
+            stateUnsubscribe()
+          } else {
+            console.warn('⚠️ 控制器未完全就绪，但仍启用键盘控制（将自动重试）')
+            setupKeyboardControl()
+          }
+        }
+      } catch (error) {
+        console.error('❌ 控制器连接失败:', error)
+        toast({
+          title: '控制器连接失败',
+          description: error instanceof Error ? error.message : '未知错误',
+          variant: 'destructive',
+        })
+        setupKeyboardControl()
+      }
+    },
+    [setupKeyboardControl, toast]
+  )
+
+  const startStickProcessing = useCallback(() => {
+    if (stickProcessingActiveRef.current) {
+      return
+    }
+
+    stickProcessingActiveRef.current = true
+    lastSentRef.current.timestamp = 0
+
+    const readGamepadAxes = () => {
+      try {
+        const gamepads = navigator.getGamepads?.()
+        if (!gamepads) {
+          return
+        }
+
+        for (let i = 0; i < gamepads.length; i++) {
+          const gamepad = gamepads[i]
+          if (!gamepad) {
+            continue
+          }
+
+          snapshotGamepadAxes(gamepad)
+          break
+        }
+      } catch (error) {
+        console.warn('⚠️ 读取手柄状态失败:', error)
+      }
+    }
+
+    const sendLatest = () => {
+      if (!isConnectedRef.current || !controllerService.isConnected() || !gamepadEnabledRef.current || !isGamepadEnabled) {
+        return
+      }
+
+      readGamepadAxes()
+
+      const now = performance.now()
+      const normalized = getNormalizedState()
+      const lastSent = lastSentRef.current
+      const diff =
+        Math.abs(normalized.leftX - lastSent.leftX) +
+        Math.abs(normalized.leftY - lastSent.leftY) +
+        Math.abs(normalized.rightX - lastSent.rightX) +
+        Math.abs(normalized.rightY - lastSent.rightY)
+
+      if (diff > AXIS_DEADZONE || now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS) {
+        controllerService.sendSticks(normalized.leftX, normalized.leftY, normalized.rightX, normalized.rightY).catch((error) => {
+          console.error('❌ 发送摇杆输入失败:', error)
+        })
+        lastSentRef.current = { ...normalized, timestamp: now }
+      }
+    }
+
+    sendLatest()
+    stickIntervalRef.current = window.setInterval(sendLatest, SEND_INTERVAL_MS)
+  }, [getNormalizedState, isGamepadEnabled])
+
+  const handleGamepadInput = useCallback(
+    async (event: GamepadInputEvent) => {
+      if (!isConnectedRef.current || !controllerService.isConnected() || !gamepadEnabledRef.current || !isGamepadEnabled) {
+        return
+      }
+
+      try {
+        if (event.buttonIndex !== undefined && event.buttonState) {
+          const buttonIndex = event.buttonIndex
+          const buttonState = event.buttonState
+          const isPressed = buttonState.pressed
+          const psButtonName = PS5_BUTTON_MAP[buttonIndex as GamepadButton]
+
+          if (psButtonName) {
+            const action = isPressed ? 'press' : 'release'
+            console.log('🎮 手柄按钮输入:', {
+              buttonIndex,
+              psButtonName,
+              action,
+              value: buttonState.value,
+            })
+            await controllerService.sendButton(psButtonName, action)
+          } else if (buttonIndex >= 12 && buttonIndex <= 15) {
+            const dpadMap: Record<number, string> = {
+              12: 'up',
+              13: 'down',
+              14: 'left',
+              15: 'right',
+            }
+            const dpadButton = dpadMap[buttonIndex]
+            if (dpadButton) {
+              const action = isPressed ? 'press' : 'release'
+              await controllerService.sendButton(dpadButton, action)
+            }
+          }
+        }
+
+        if (event.axisIndex !== undefined && event.axisValue !== undefined) {
+          handleGamepadAxis(event.axisIndex, event.axisValue)
+
+          const now = performance.now()
+          const normalized = getNormalizedState()
+          const lastSent = lastSentRef.current
+          const diff =
+            Math.abs(normalized.leftX - lastSent.leftX) +
+            Math.abs(normalized.leftY - lastSent.leftY) +
+            Math.abs(normalized.rightX - lastSent.rightX) +
+            Math.abs(normalized.rightY - lastSent.rightY)
+
+          if (diff > AXIS_DEADZONE || now - lastSent.timestamp >= SEND_INTERVAL_MS) {
+            controllerService.sendSticks(normalized.leftX, normalized.leftY, normalized.rightX, normalized.rightY).catch((error) => {
+              console.error('❌ 发送摇杆输入失败:', error)
+            })
+            lastSentRef.current = { ...normalized, timestamp: now }
+          }
+        }
+      } catch (error) {
+        console.error('❌ 手柄输入处理失败:', error)
+      }
+    },
+    [getNormalizedState, isGamepadEnabled]
+  )
+
+  const disconnect = useCallback(() => {
+    stopStickProcessing()
+    gamepadEnabledRef.current = false
+    tearDownMouseRightStick()
+
+    if (videoOptimizeCleanupRef.current) {
+      videoOptimizeCleanupRef.current()
+      videoOptimizeCleanupRef.current = null
+    }
+
+    if (keyboardCleanupRef.current) {
+      keyboardCleanupRef.current()
+      keyboardCleanupRef.current = null
+    }
+
+    controllerService.disconnect().catch(() => {})
+
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close()
+      peerConnectionRef.current = null
+    }
+
+    previousStatsRef.current = null
+    setConnectionStats(null)
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+
+    const currentWebrtcSessionId = webrtcSessionId
+    if (currentWebrtcSessionId) {
+      setWebrtcSessionId(null)
+      streamingService
+        .deleteSession(currentWebrtcSessionId)
+        .then(() => {
+          console.log('✅ WebRTC Session 已关闭')
+        })
+        .catch((error) => {
+          console.error('❌ 关闭 WebRTC Session 失败:', error)
+        })
+    }
+
+    const currentRemotePlaySessionId = remotePlaySessionId
+    if (currentRemotePlaySessionId) {
+      setRemotePlaySessionId(null)
+      apiRequest(`/playstation/stop-session?sessionId=${encodeURIComponent(currentRemotePlaySessionId)}`, {
+        method: 'POST',
+      })
+        .then(() => {
+          console.log('✅ Remote Play Session 已关闭')
+        })
+        .catch((error) => {
+          console.error('❌ 关闭 Remote Play Session 失败:', error)
+        })
+    }
+
+    setIsConnected(false)
+    isConnectedRef.current = false
+    setIsConnecting(false)
+    setConnectionState('未连接')
+  }, [remotePlaySessionId, stopStickProcessing, videoRef, webrtcSessionId])
+
+  const connect = useCallback(async () => {
+    if (!hostId) {
+      toast({
+        title: '错误',
+        description: '缺少设备信息',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (isConnecting || isConnected) {
+      return
+    }
+
+    if (!hasAttemptedInitialConnectRef.current) {
+      hasAttemptedInitialConnectRef.current = true
+    }
+
+    setIsConnecting(true)
+    setConnectionState('正在连接...')
+
+    try {
+      const deviceReady = await prepareDevice()
+      if (!deviceReady) {
+        throw new Error('设备未就绪')
+      }
+
+      setConnectionState('正在创建会话...')
+      toast({
+        title: '正在连接',
+        description: `正在连接到 ${deviceName}...`,
+      })
+
+      const sessionResponse = await streamingService.startSession(hostId)
+      console.log('会话创建响应:', sessionResponse)
+      console.log('响应数据字段:', {
+        success: sessionResponse.success,
+        hasData: !!sessionResponse.data,
+        hasResult: !!sessionResponse.result,
+        data: sessionResponse.data,
+        result: sessionResponse.result,
+      })
+
+      if (!sessionResponse.success) {
+        throw new Error(sessionResponse.errorMessage || sessionResponse.message || '创建会话失败')
+      }
+
+      const sessionData = sessionResponse.data || sessionResponse.result
+      if (!sessionData) {
+        console.error('会话响应中没有 data 或 result 字段:', sessionResponse)
+        throw new Error('会话响应格式错误：缺少数据')
+      }
+
+      const sessionId = sessionData.id || sessionData.Id || sessionData.sessionId || sessionData.session_id
+
+      console.log('提取的 Session ID:', sessionId, '完整数据:', sessionData)
+
+      setRemotePlaySessionId(sessionId)
+
+      if (!sessionId) {
+        console.error('无法从响应中提取 Session ID，可用字段:', Object.keys(sessionData))
+        throw new Error('无法获取会话 ID')
+      }
+
+      const offerResponse = await streamingService.createOffer({
+        remotePlaySessionId: sessionId,
+        preferLanCandidates: isLikelyLan,
+      })
+      console.log('Offer 响应:', offerResponse)
+
+      if (!offerResponse.success) {
+        throw new Error(offerResponse.errorMessage || offerResponse.message || '创建 WebRTC Offer 失败')
+      }
+
+      const offerData = offerResponse.data || offerResponse.result
+      if (!offerData) {
+        console.error('Offer 响应中没有 data 或 result 字段:', offerResponse)
+        throw new Error('Offer 响应格式错误：缺少数据')
+      }
+
+      const { sessionId: webrtcSessionIdValue, sdp: offerSdp } = offerData
+      setWebrtcSessionId(webrtcSessionIdValue)
+
+      const iceServers: RTCIceServer[] = [
+        { urls: 'stun:stun.qcloudtrtc.com:8000' },
+        { urls: 'stun:stun.alibabacloud.com:3478' },
+        { urls: 'stun:stun.agora.io:3478' },
+        { urls: 'stun:stun.l.google.com:19302' },
+      ]
+
+      const peerConnection = new RTCPeerConnection({
+        iceServers,
+        iceCandidatePoolSize: isLikelyLan ? 1 : 4,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+      })
+
+      try {
+        const currentConfig = peerConnection.getConfiguration()
+        peerConnection.setConfiguration({
+          ...currentConfig,
+          sdpSemantics: 'unified-plan',
+        } as RTCConfiguration)
+      } catch (configError) {
+        console.debug('⚠️ 设置 sdpSemantics 失败，使用默认值', configError)
+      }
+
+      peerConnectionRef.current = peerConnection
+      reinforceLatencyHints(peerConnection)
+
+      const receivedTracks: { video?: MediaStreamTrack; audio?: MediaStreamTrack } = {}
+      let mediaStream: MediaStream | null = null
+
+      peerConnection.ontrack = (event) => {
+        console.log('📺 收到媒体轨道:', event.track.kind, event.streams)
+        console.log('📺 轨道详情:', {
+          kind: event.track.kind,
+          id: event.track.id,
+          enabled: event.track.enabled,
+          readyState: event.track.readyState,
+          streamsCount: event.streams?.length || 0,
+          receiver: event.receiver,
+        })
+
+        applyReceiverLatencyHints(event.receiver)
+        reinforceLatencyHints(peerConnection)
+
+        if (event.track.kind === 'video') {
+          receivedTracks.video = event.track
+        } else if (event.track.kind === 'audio') {
+          receivedTracks.audio = event.track
+        }
+
+        if (!mediaStream) {
+          mediaStream = new MediaStream()
+          console.log('🎬 创建新的媒体流')
+        }
+
+        if (event.track && !mediaStream.getTracks().find((t) => t.id === event.track.id)) {
+          mediaStream.addTrack(event.track)
+          console.log(`✅ 已添加 ${event.track.kind} 轨道到流，当前轨道数: ${mediaStream.getTracks().length}`)
+        }
+
+        const setupVideoStream = () => {
+          if (videoRef.current) {
+            const video = videoRef.current
+
+            console.log('🎥 设置视频流:', {
+              videoElement: video,
+              streamId: mediaStream?.id,
+              tracks: mediaStream?.getTracks().map((t) => ({
+                kind: t.kind,
+                id: t.id,
+                enabled: t.enabled,
+                readyState: t.readyState,
+              })),
+              hasVideo: !!receivedTracks.video,
+              hasAudio: !!receivedTracks.audio,
+            })
+
+            if (video.srcObject !== mediaStream) {
+              video.srcObject = mediaStream
+              console.log('✅ 视频源已设置')
+            }
+
+            return true
+          }
+          return false
+        }
+
+        const processVideoStream = (video: HTMLVideoElement) => {
+          if (!mediaStream) {
+            console.error('❌ 媒体流不存在')
+            return
+          }
+
+          const audioTracks = mediaStream.getAudioTracks()
+          const videoTracks = mediaStream.getVideoTracks()
+          console.log('🎵 音频轨道:', audioTracks.length, audioTracks.map((t) => ({ id: t.id, enabled: t.enabled, readyState: t.readyState })))
+          console.log('🎥 视频轨道:', videoTracks.length, videoTracks.map((t) => ({ id: t.id, enabled: t.enabled, readyState: t.readyState })))
+
+          audioTracks.forEach((track) => {
+            if (!track.enabled) {
+              track.enabled = true
+              console.log('✅ 已启用音频轨道:', track.id)
+            }
+          })
+          videoTracks.forEach((track) => {
+            if (!track.enabled) {
+              track.enabled = true
+              console.log('✅ 已启用视频轨道:', track.id)
+            }
+          })
+
+          video.style.backgroundColor = '#000000'
+          video.style.background = '#000000'
+          video.style.display = 'block'
+          video.style.visibility = 'visible'
+          video.style.opacity = '1'
+
+          console.log('🎥 视频元素样式已设置:', {
+            display: video.style.display,
+            visibility: video.style.visibility,
+            opacity: video.style.opacity,
+            computedDisplay: window.getComputedStyle(video).display,
+            computedVisibility: window.getComputedStyle(video).visibility,
+            computedOpacity: window.getComputedStyle(video).opacity,
+          })
+
+          video.muted = true
+          video.autoplay = true
+          video.playsInline = true
+
+          console.log('🎥 视频播放属性设置:', {
+            muted: video.muted,
+            autoplay: video.autoplay,
+            playsInline: video.playsInline,
+            paused: video.paused,
+            readyState: video.readyState,
+          })
+
+          let hasStartedPlaying = false
+          const handlePlaying = () => {
+            if (!hasStartedPlaying) {
+              hasStartedPlaying = true
+              console.log('✅ 视频开始播放，取消静音')
+              setTimeout(() => {
+                video.muted = false
+                console.log('🔊 已取消静音，音频已启用')
+              }, 200)
+            }
+          }
+          video.addEventListener('playing', handlePlaying, { once: true })
+
+          const handleLoadedMetadata = () => {
+            console.log('✅ 视频元数据已加载，开始播放')
+            if (!video.muted) {
+              video.muted = true
+            }
+            video
+              .play()
+              .then(() => {
+                console.log('✅ 视频播放成功（静音模式）')
+              })
+              .catch((error) => {
+                console.error('❌ 视频播放失败:', error)
+                console.log('⚠️ 播放失败，将在 canplay 事件时重试')
+              })
+            video.removeEventListener('loadedmetadata', handleLoadedMetadata)
+          }
+
+          video.addEventListener('loadedmetadata', handleLoadedMetadata)
+
+          if (video.readyState >= 1) {
+            handleLoadedMetadata()
+          }
+
+          console.log('🎥 视频流已设置，等待元数据加载后播放')
+
+          if (event.track.kind === 'video' && receivedTracks.video) {
+            if (videoOptimizeCleanupRef.current) {
+              videoOptimizeCleanupRef.current()
+            }
+            videoOptimizeCleanupRef.current = optimizeVideoForLowLatency(video)
+
+            video.playbackRate = 1.0
+            video.defaultPlaybackRate = 1.0
+            const videoAny = video as any
+            if (typeof videoAny?.latencyHint !== 'undefined') {
+              try {
+                videoAny.latencyHint = 'interactive'
+                console.log('✅ 视频 latencyHint 已设置为 interactive')
+              } catch (latencyError) {
+                console.warn('⚠️ 设置视频 latencyHint 失败:', latencyError)
+              }
+            }
+
+            console.log('✅ 视频轨道已连接，已优化低延迟播放')
+          }
+
+          if (event.track.kind === 'audio' && receivedTracks.audio) {
+            console.log('🎵 音频轨道已连接')
+          }
+
+          if (!video.dataset.listenersSetup) {
+            video.dataset.listenersSetup = 'true'
+
+            video.addEventListener('loadedmetadata', () => {
+              console.log('✅ 视频元数据已加载，尺寸:', video.videoWidth, 'x', video.videoHeight)
+              const computedStyle = window.getComputedStyle(video)
+              console.log('✅ 视频状态:', {
+                readyState: video.readyState,
+                paused: video.paused,
+                muted: video.muted,
+                currentTime: video.currentTime,
+                srcObject: !!video.srcObject,
+                display: computedStyle.display,
+                visibility: computedStyle.visibility,
+                opacity: computedStyle.opacity,
+                width: video.videoWidth,
+                height: video.videoHeight,
+              })
+
+              if (computedStyle.display === 'none') {
+                console.warn('⚠️ 视频元素被隐藏，强制显示')
+                video.style.display = 'block'
+              }
+              if (computedStyle.visibility === 'hidden') {
+                console.warn('⚠️ 视频元素不可见，强制显示')
+                video.style.visibility = 'visible'
+              }
+            })
+
+            video.addEventListener('loadeddata', () => {
+              console.log('✅ 视频数据已加载')
+            })
+
+            video.addEventListener('canplay', () => {
+              console.log('✅ 视频可以播放')
+              if (video.paused) {
+                console.log('⚠️ 视频暂停中，尝试播放')
+                video
+                  .play()
+                  .then(() => {
+                    console.log('✅ canplay 事件后播放成功')
+                  })
+                  .catch((err) => {
+                    console.error('❌ 自动播放失败:', err)
+                  })
+              }
+            })
+
+            video.addEventListener('canplaythrough', () => {
+              console.log('✅ 视频可以流畅播放')
+              if (video.paused) {
+                console.log('⚠️ 视频暂停中，尝试播放（canplaythrough）')
+                video
+                  .play()
+                  .then(() => {
+                    console.log('✅ canplaythrough 事件后播放成功')
+                  })
+                  .catch((err) => {
+                    console.error('❌ canplaythrough 播放失败:', err)
+                  })
+              }
+            })
+
+            video.addEventListener('playing', () => {
+              console.log('✅ 视频开始播放')
+              console.log('✅ 播放状态:', {
+                paused: video.paused,
+                currentTime: video.currentTime,
+                duration: video.duration,
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight,
+                srcObject: !!video.srcObject,
+                display: window.getComputedStyle(video).display,
+                visibility: window.getComputedStyle(video).visibility,
+                opacity: window.getComputedStyle(video).opacity,
+              })
+              setIsConnecting(false)
+              setIsConnected(true)
+              isConnectedRef.current = true
+              setConnectionState('已连接')
+              toast({
+                title: '连接成功',
+                description: '视频流已连接',
+              })
+            })
+
+            video.addEventListener('pause', () => {
+              console.warn('⚠️ 视频已暂停')
+            })
+
+            video.addEventListener('waiting', () => {
+              console.warn('⚠️ 视频等待缓冲')
+              if (video.paused) {
+                console.log('🔄 视频暂停中，尝试恢复播放')
+                video.play().catch((err) => {
+                  console.error('❌ 恢复播放失败:', err)
+                })
+              }
+            })
+
+            video.addEventListener('stalled', () => {
+              console.warn('⚠️ 视频加载停滞')
+              if (video.paused) {
+                console.log('🔄 视频停滞，尝试恢复播放')
+                video.play().catch((err) => {
+                  console.error('❌ 恢复播放失败:', err)
+                })
+              }
+            })
+
+            video.addEventListener('progress', () => {
+              if (video.paused && video.readyState >= 2) {
+                console.log('🔄 检测到缓冲数据，尝试播放')
+                video.play().catch((err) => {
+                  console.error('❌ 播放失败:', err)
+                })
+              }
+            })
+
+            video.addEventListener('error', (e) => {
+              console.error('❌ 视频播放错误:', e, video.error)
+              if (video.error) {
+                console.error('❌ 视频错误详情:', {
+                  code: video.error.code,
+                  message: video.error.message,
+                })
+              }
+            })
+          }
+        }
+
+        if (setupVideoStream()) {
+          const video = videoRef.current!
+          processVideoStream(video)
+        } else {
+          console.warn('⚠️ 视频元素尚未渲染，等待渲染...')
+          let attempts = 0
+          const maxAttempts = 20
+          const checkInterval = setInterval(() => {
+            attempts++
+            if (setupVideoStream()) {
+              clearInterval(checkInterval)
+              const video = videoRef.current!
+              processVideoStream(video)
+            } else if (attempts >= maxAttempts) {
+              clearInterval(checkInterval)
+              console.error('❌ 等待视频元素超时')
+            }
+          }, 100)
+        }
+      }
+
+      peerConnection.onicecandidate = async (event) => {
+        if (event.candidate && webrtcSessionIdValue) {
+          await streamingService.sendICECandidate({
+            sessionId: webrtcSessionIdValue,
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+          })
+        }
+      }
+
+      peerConnection.onconnectionstatechange = () => {
+        const state = peerConnection.connectionState
+        console.log('🔌 WebRTC 连接状态变化:', state)
+        setConnectionState(state)
+        if (state === 'connected') {
+          console.log('✅ WebRTC 连接已建立')
+          reinforceLatencyHints(peerConnection)
+          setIsConnecting(false)
+          setIsConnected(true)
+          isConnectedRef.current = true
+
+          const playCheckInterval = setInterval(() => {
+            if (videoRef.current && videoRef.current.paused && videoRef.current.srcObject) {
+              const video = videoRef.current
+              const stream = video.srcObject as MediaStream
+              if (stream && stream.getTracks().length > 0 && video.readyState >= 2) {
+                console.log('🔄 定期检查：视频暂停，尝试播放')
+                video.muted = true
+                video
+                  .play()
+                  .then(() => {
+                    console.log('✅ 定期检查播放成功')
+                    clearInterval(playCheckInterval)
+                    setTimeout(() => {
+                      video.muted = false
+                      console.log('🔊 已取消静音（定期检查）')
+                    }, 300)
+                  })
+                  .catch((err) => {
+                    console.warn('⚠️ 定期检查播放失败:', err)
+                  })
+              }
+            } else if (videoRef.current && !videoRef.current.paused) {
+              clearInterval(playCheckInterval)
+            }
+          }, 1000)
+
+          setTimeout(() => {
+            clearInterval(playCheckInterval)
+          }, 10000)
+
+          if (videoRef.current && videoRef.current.srcObject) {
+            const video = videoRef.current
+            const stream = video.srcObject as MediaStream
+            console.log('📹 连接建立后检查视频状态:', {
+              hasStream: !!stream,
+              tracks: stream?.getTracks().length || 0,
+              videoTracks: stream?.getVideoTracks().length || 0,
+              audioTracks: stream?.getAudioTracks().length || 0,
+              paused: video.paused,
+              readyState: video.readyState,
+            })
+
+            if (video.paused && stream && stream.getTracks().length > 0) {
+              console.log('⚠️ 视频暂停中，尝试播放')
+
+              if (!video.muted) {
+                video.muted = true
+              }
+
+              if (video.readyState >= 2) {
+                video
+                  .play()
+                  .then(() => {
+                    console.log('✅ 连接建立后播放成功')
+                    setTimeout(() => {
+                      video.muted = false
+                      console.log('🔊 已取消静音')
+                    }, 300)
+                  })
+                  .catch((err) => {
+                    console.error('❌ 连接建立后播放失败:', err)
+                  })
+              } else {
+                console.log('⚠️ 视频未准备好，等待 readyState >= 2 (当前:', video.readyState, ')')
+              }
+            }
+          }
+        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          console.warn('⚠️ WebRTC 连接断开或失败:', state)
+          setIsConnected(false)
+          isConnectedRef.current = false
+          setIsConnecting(false)
+        }
+      }
+
+      peerConnection.oniceconnectionstatechange = () => {
+        const state = peerConnection.iceConnectionState
+        console.log('🧊 ICE 连接状态:', state)
+        if (state === 'connected' || state === 'completed') {
+          reinforceLatencyHints(peerConnection)
+        }
+      }
+
+      peerConnection.onicegatheringstatechange = () => {
+        const state = peerConnection.iceGatheringState
+        console.log('🧊 ICE 收集状态:', state)
+      }
+
+      await peerConnection.setRemoteDescription({
+        type: 'offer',
+        sdp: offerSdp,
+      })
+
+      const answer = await peerConnection.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      })
+
+      if (answer.sdp) {
+        try {
+          const optimizedSdp = optimizeSdpForLowLatency(answer.sdp, {
+            preferLanCandidates: isLikelyLan,
+          })
+          if (optimizedSdp && optimizedSdp.length > 10) {
+            answer.sdp = optimizedSdp
+          }
+        } catch (sdpError) {
+          console.warn('SDP 优化出错，使用原始 SDP:', sdpError)
+        }
+      }
+
+      await peerConnection.setLocalDescription(answer)
+      reinforceLatencyHints(peerConnection)
+
+      await streamingService.sendAnswer({
+        sessionId: webrtcSessionIdValue,
+        sdp: answer.sdp || '',
+        type: 'answer',
+      })
+
+      await streamingService.connectToRemotePlaySession(webrtcSessionIdValue, sessionId)
+
+      console.log('🎮 准备连接控制器，Session ID:', sessionId)
+      await connectController(sessionId)
+
+      gamepadEnabledRef.current = true
+      console.log('✅ 手柄输入已启用')
+
+      setIsConnected(true)
+      isConnectedRef.current = true
+      setIsConnecting(false)
+      setConnectionState('已连接')
+      console.log('✅ 连接状态已设置为已连接')
+
+      startStickProcessing()
+    } catch (error) {
+      console.error('连接失败:', error)
+      toast({
+        title: '连接失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+      setConnectionState('连接失败')
+      disconnect()
+    } finally {
+      setIsConnecting(false)
+    }
+  }, [connectController, deviceName, disconnect, hostId, isConnected, isConnecting, isLikelyLan, prepareDevice, reinforceLatencyHints, startStickProcessing, toast])
+
+  useEffect(() => {
+    if (!isConnected) {
+      tearDownMouseRightStick()
+      return
+    }
+
+    setupMouseRightStick()
+    return () => {
+      tearDownMouseRightStick()
+    }
+  }, [isConnected, setupMouseRightStick, tearDownMouseRightStick])
+
+  useGamepadInput(handleGamepadInput, isConnected && gamepadEnabledRef.current && isGamepadEnabled)
+
+  useEffect(() => {
+    isStatsEnabledRef.current = isStatsEnabled
+
+    if (!isStatsEnabled) {
+      if (statsIntervalRef.current !== null) {
+        window.clearInterval(statsIntervalRef.current)
+        statsIntervalRef.current = null
+      }
+      previousStatsRef.current = null
+      return
+    }
+
+    const tick = () => {
+      collectConnectionStats().catch((error) => {
+        console.warn('更新 WebRTC 统计信息失败:', error)
+      })
+    }
+
+    tick()
+    statsIntervalRef.current = window.setInterval(tick, 1000)
+
+    return () => {
+      if (statsIntervalRef.current !== null) {
+        window.clearInterval(statsIntervalRef.current)
+        statsIntervalRef.current = null
+      }
+    }
+  }, [collectConnectionStats, isStatsEnabled])
+
+  const disconnectRef = useRef(disconnect)
+  useEffect(() => {
+    disconnectRef.current = disconnect
+  }, [disconnect])
+
+  useEffect(() => {
+    hasAttemptedInitialConnectRef.current = false
+  }, [hostId])
+
+  useEffect(() => {
+    if (hostId && !isConnected && !isConnecting && !hasAttemptedInitialConnectRef.current) {
+      hasAttemptedInitialConnectRef.current = true
+      const timer = setTimeout(() => {
+        connect()
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+    return undefined
+  }, [connect, hostId, isConnected, isConnecting])
+
+  useEffect(() => {
+    return () => {
+      disconnectRef.current()
+    }
+  }, [])
+
+  const setStatsMonitoring = useCallback((enabled: boolean) => {
+    setIsStatsEnabled(enabled)
+  }, [])
+
+  return {
+    isConnected,
+    isConnecting,
+    connectionState,
+    connect,
+    disconnect,
+    connectionStats,
+    isStatsMonitoringEnabled: isStatsEnabled,
+    setStatsMonitoring,
+  }
+}
+

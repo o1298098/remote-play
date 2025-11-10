@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="RemotePlay.DBTool/RemotePlay.DBTool.csproj" Id="936b77cb-24f3-4e53-a71c-c38c93abf783" />
+  <Project Path="RemotePlay/RemotePlay.csproj" />
+</Solution>
