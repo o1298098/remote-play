@@ -97,7 +97,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   frontend:
-    image: registry.o1298098.xyz/o1298098/remote-play/web
+    image: ghcr.io/o1298098/remote-play/web
     container_name: web
     restart: unless-stopped
     environment:
@@ -108,7 +108,7 @@ services:
       - default
 
   backend:
-    image: registry.o1298098.xyz/o1298098/remote-play/server
+    image: ghcr.io/o1298098/remote-play/server
     container_name: server
     restart: unless-stopped
     environment:
@@ -140,7 +140,7 @@ services:
       default:
 
   dbtool:
-    image: registry.o1298098.xyz/o1298098/remote-play/dbtool
+    image: ghcr.io/o1298098/remote-play/dbtool
     container_name: dbtool
     restart: "no"
     environment:

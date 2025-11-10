@@ -8,6 +8,7 @@ import {
   MOUSE_DECAY_HALF_LIFE_MS,
   MOUSE_IDLE_THRESHOLD,
   clamp,
+  clamp01,
   getTimestamp,
 } from './constants'
 
@@ -19,6 +20,11 @@ interface StickVector {
 interface StickState {
   leftStick: StickVector
   rightStick: StickVector
+}
+
+interface TriggerState {
+  l2: number
+  r2: number
 }
 
 interface HoldAxisState {
@@ -49,6 +55,8 @@ export interface NormalizedStickState {
   leftY: number
   rightX: number
   rightY: number
+  l2: number
+  r2: number
 }
 
 const createStickHoldState = (): StickHoldState => ({
@@ -68,6 +76,10 @@ export const useStickInputState = () => {
     rightStick: { x: 0, y: 0 },
   })
   const stickHoldRef = useRef<StickHoldState>(createStickHoldState())
+  const triggerStateRef = useRef<TriggerState>({
+    l2: 0,
+    r2: 0,
+  })
   const mouseStateRef = useRef<MouseState>({
     isPointerLocked: false,
     velocityX: 0,
@@ -92,8 +104,6 @@ export const useStickInputState = () => {
     if (!mouseState.isPointerLocked) {
       mouseState.velocityX = 0
       mouseState.velocityY = 0
-      stickStateRef.current.rightStick.x = 0
-      stickStateRef.current.rightStick.y = 0
       mouseState.lastUpdateTime = now
       return
     }
@@ -110,8 +120,6 @@ export const useStickInputState = () => {
       mouseState.velocityY = 0
     }
 
-    stickStateRef.current.rightStick.x = mouseState.velocityX
-    stickStateRef.current.rightStick.y = mouseState.velocityY
     mouseState.lastUpdateTime = now
   }, [])
 
@@ -157,16 +165,25 @@ export const useStickInputState = () => {
   const getNormalizedState = useCallback((): NormalizedStickState => {
     applyMouseDecay()
     const { leftStick, rightStick } = stickStateRef.current
+    const mouseState = mouseStateRef.current
+    const triggerState = triggerStateRef.current
     const now = getTimestamp()
 
     const leftRaw = {
       x: clamp(leftStick.x),
       y: clamp(leftStick.y),
     }
-    const rightRaw = {
+    const rightGamepadRaw = {
       x: clamp(rightStick.x),
       y: clamp(rightStick.y),
     }
+    const hasMouseInput = mouseState.isPointerLocked || mouseState.velocityX !== 0 || mouseState.velocityY !== 0
+    const rightRaw = hasMouseInput
+      ? {
+          x: clamp(rightGamepadRaw.x + mouseState.velocityX),
+          y: clamp(rightGamepadRaw.y + mouseState.velocityY),
+        }
+      : rightGamepadRaw
 
     const leftDeadzone = applyRadialDeadzone(leftRaw.x, leftRaw.y)
     const rightDeadzone = applyRadialDeadzone(rightRaw.x, rightRaw.y)
@@ -176,6 +193,8 @@ export const useStickInputState = () => {
       leftY: applyHold('left', 'y', leftDeadzone.y, now),
       rightX: applyHold('right', 'x', rightDeadzone.x, now),
       rightY: applyHold('right', 'y', rightDeadzone.y, now),
+      l2: clamp01(triggerState.l2),
+      r2: clamp01(triggerState.r2),
     }
   }, [applyHold, applyMouseDecay, applyRadialDeadzone])
 
@@ -185,7 +204,7 @@ export const useStickInputState = () => {
       stickStateRef.current.leftStick.y = clamp(gamepad.axes[GamepadAxis.LeftStickY] ?? 0)
     }
 
-    if (gamepad.axes.length >= 4 && !mouseStateRef.current.isPointerLocked) {
+    if (gamepad.axes.length >= 4) {
       stickStateRef.current.rightStick.x = clamp(gamepad.axes[GamepadAxis.RightStickX] ?? 0)
       stickStateRef.current.rightStick.y = clamp(gamepad.axes[GamepadAxis.RightStickY] ?? 0)
     }
@@ -198,13 +217,9 @@ export const useStickInputState = () => {
     } else if (axisIndex === GamepadAxis.LeftStickY) {
       stickStateRef.current.leftStick.y = value
     } else if (axisIndex === GamepadAxis.RightStickX) {
-      if (!mouseStateRef.current.isPointerLocked) {
-        stickStateRef.current.rightStick.x = value
-      }
+      stickStateRef.current.rightStick.x = value
     } else if (axisIndex === GamepadAxis.RightStickY) {
-      if (!mouseStateRef.current.isPointerLocked) {
-        stickStateRef.current.rightStick.y = value
-      }
+      stickStateRef.current.rightStick.y = value
     }
   }, [])
 
@@ -215,18 +230,19 @@ export const useStickInputState = () => {
     mouseState.velocityY = 0
     mouseState.lastUpdateTime = getTimestamp()
 
-    stickStateRef.current.rightStick.x = 0
-    stickStateRef.current.rightStick.y = 0
   }, [])
 
   const setMouseVelocity = useCallback((x: number, y: number, timestamp?: number) => {
     const mouseState = mouseStateRef.current
-    mouseState.velocityX = x
-    mouseState.velocityY = y
+    mouseState.velocityX = clamp(x)
+    mouseState.velocityY = clamp(y)
     mouseState.lastUpdateTime = timestamp ?? getTimestamp()
+  }, [])
 
-    stickStateRef.current.rightStick.x = x
-    stickStateRef.current.rightStick.y = y
+  const setTriggerPressure = useCallback((trigger: 'l2' | 'r2', value: number) => {
+    const clamped = clamp01(value)
+    const triggerState = triggerStateRef.current
+    triggerState[trigger] = clamped
   }, [])
 
   const isPointerLocked = useCallback(() => mouseStateRef.current.isPointerLocked, [])
@@ -244,6 +260,9 @@ export const useStickInputState = () => {
     mouseState.velocityX = 0
     mouseState.velocityY = 0
     mouseState.lastUpdateTime = getTimestamp()
+
+    triggerStateRef.current.l2 = 0
+    triggerStateRef.current.r2 = 0
   }, [])
 
   return {
@@ -253,6 +272,7 @@ export const useStickInputState = () => {
     handleGamepadAxis,
     setPointerLock,
     setMouseVelocity,
+    setTriggerPressure,
     isPointerLocked,
     reset,
   }

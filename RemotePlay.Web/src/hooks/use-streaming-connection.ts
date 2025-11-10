@@ -7,7 +7,7 @@ import { apiRequest } from '@/service/api-client'
 import { optimizeSdpForLowLatency, optimizeVideoForLowLatency } from '@/utils/webrtc-optimization'
 import { createKeyboardHandler } from '@/utils/keyboard-mapping'
 import { GamepadButton, PS5_BUTTON_MAP, type GamepadInputEvent } from '@/service/gamepad.service'
-import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS } from './use-streaming-connection/constants'
+import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
 import { useStickInputState } from './use-streaming-connection/stick-input-state'
 import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
 
@@ -51,6 +51,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     handleGamepadAxis,
     setPointerLock,
     setMouseVelocity,
+    setTriggerPressure,
     reset: resetStickInput,
   } = useStickInputState()
 
@@ -60,11 +61,13 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     onMouseMove: setMouseVelocity,
   })
 
-  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; timestamp: number }>({
+  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; l2: number; r2: number; timestamp: number }>({
     leftX: 0,
     leftY: 0,
     rightX: 0,
     rightY: 0,
+    l2: 0,
+    r2: 0,
     timestamp: 0,
   })
 
@@ -113,7 +116,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
     stickProcessingActiveRef.current = false
     resetStickInput()
-    lastSentRef.current = { leftX: 0, leftY: 0, rightX: 0, rightY: 0, timestamp: 0 }
+    lastSentRef.current = { leftX: 0, leftY: 0, rightX: 0, rightY: 0, l2: 0, r2: 0, timestamp: 0 }
   }, [resetStickInput])
 
   const collectConnectionStats = useCallback(async () => {
@@ -496,16 +499,29 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       const now = performance.now()
       const normalized = getNormalizedState()
       const lastSent = lastSentRef.current
-      const diff =
+      const stickDiff =
         Math.abs(normalized.leftX - lastSent.leftX) +
         Math.abs(normalized.leftY - lastSent.leftY) +
         Math.abs(normalized.rightX - lastSent.rightX) +
         Math.abs(normalized.rightY - lastSent.rightY)
+      const triggerDiff = Math.abs(normalized.l2 - lastSent.l2) + Math.abs(normalized.r2 - lastSent.r2)
+      const shouldHeartbeat = now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS
+      const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
+      const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
-      if (diff > AXIS_DEADZONE || now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS) {
+      if (shouldSendSticks) {
         controllerService.sendSticks(normalized.leftX, normalized.leftY, normalized.rightX, normalized.rightY).catch((error) => {
           console.error('❌ 发送摇杆输入失败:', error)
         })
+      }
+
+      if (shouldSendTriggers) {
+        controllerService.sendTriggers(normalized.l2, normalized.r2).catch((error) => {
+          console.error('❌ 发送扳机压力失败:', error)
+        })
+      }
+
+      if (shouldSendSticks || shouldSendTriggers) {
         lastSentRef.current = { ...normalized, timestamp: now }
       }
     }
@@ -526,6 +542,12 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           const buttonState = event.buttonState
           const isPressed = buttonState.pressed
           const psButtonName = PS5_BUTTON_MAP[buttonIndex as GamepadButton]
+
+          if (buttonIndex === GamepadButton.LeftTrigger) {
+            setTriggerPressure('l2', buttonState.value ?? 0)
+          } else if (buttonIndex === GamepadButton.RightTrigger) {
+            setTriggerPressure('r2', buttonState.value ?? 0)
+          }
 
           if (psButtonName) {
             const action = isPressed ? 'press' : 'release'
@@ -557,16 +579,29 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           const now = performance.now()
           const normalized = getNormalizedState()
           const lastSent = lastSentRef.current
-          const diff =
+          const stickDiff =
             Math.abs(normalized.leftX - lastSent.leftX) +
             Math.abs(normalized.leftY - lastSent.leftY) +
             Math.abs(normalized.rightX - lastSent.rightX) +
             Math.abs(normalized.rightY - lastSent.rightY)
+          const triggerDiff = Math.abs(normalized.l2 - lastSent.l2) + Math.abs(normalized.r2 - lastSent.r2)
+          const shouldHeartbeat = now - lastSent.timestamp >= SEND_INTERVAL_MS
+          const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
+          const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
-          if (diff > AXIS_DEADZONE || now - lastSent.timestamp >= SEND_INTERVAL_MS) {
+          if (shouldSendSticks) {
             controllerService.sendSticks(normalized.leftX, normalized.leftY, normalized.rightX, normalized.rightY).catch((error) => {
               console.error('❌ 发送摇杆输入失败:', error)
             })
+          }
+
+          if (shouldSendTriggers) {
+            controllerService.sendTriggers(normalized.l2, normalized.r2).catch((error) => {
+              console.error('❌ 发送扳机压力失败:', error)
+            })
+          }
+
+          if (shouldSendSticks || shouldSendTriggers) {
             lastSentRef.current = { ...normalized, timestamp: now }
           }
         }
@@ -574,7 +609,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         console.error('❌ 手柄输入处理失败:', error)
       }
     },
-    [getNormalizedState, isGamepadEnabled]
+    [getNormalizedState, isGamepadEnabled, setTriggerPressure]
   )
 
   const disconnect = useCallback(() => {

@@ -60,6 +60,15 @@ namespace RemotePlay.Contracts.Services
             CancellationToken ct = default);
 
         /// <summary>
+        /// 设置扳机压力（0 到 1）
+        /// </summary>
+        Task SetTriggersAsync(
+            Guid sessionId,
+            float? l2 = null,
+            float? r2 = null,
+            CancellationToken ct = default);
+
+        /// <summary>
         /// 手动更新摇杆状态（如果未启动自动发送）
         /// </summary>
         Task UpdateSticksAsync(Guid sessionId, CancellationToken ct = default);

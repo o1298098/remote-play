@@ -564,6 +564,71 @@ export class ControllerService {
   }
 
   /**
+   * 发送扳机压力（L2/R2）
+   */
+  async sendTriggers(l2: number, r2: number): Promise<void> {
+    if (!this.sessionId) {
+      throw new Error('没有活动的 Remote Play Session')
+    }
+
+    if (!this.connection) {
+      return
+    }
+
+    const connectionState = this.connection.state
+    if (
+      connectionState === signalR.HubConnectionState.Disconnected ||
+      connectionState === signalR.HubConnectionState.Disconnecting
+    ) {
+      return
+    }
+
+    if (this.isConnecting) {
+      console.warn('⚠️ SignalR 正在连接中，等待完成...')
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        if (!this.isConnecting) {
+          break
+        }
+      }
+    }
+
+    if (
+      !this.connection ||
+      this.connection.state !== signalR.HubConnectionState.Connected ||
+      !this.sessionId
+    ) {
+      return
+    }
+
+    const clampedL2 = Math.max(0, Math.min(1, l2))
+    const clampedR2 = Math.max(0, Math.min(1, r2))
+
+    try {
+      await this.connection.invoke('SetTriggers', this.sessionId, clampedL2, clampedR2)
+    } catch (error: any) {
+      if (
+        error?.message?.includes('connection being closed') ||
+        error?.message?.includes('connection closed') ||
+        error?.message?.includes('Invocation canceled')
+      ) {
+        return
+      }
+
+      console.error('❌ SignalR SetTriggers 调用失败:', error)
+      if (this.connection && this.connection.state === signalR.HubConnectionState.Connected && this.sessionId) {
+        console.log('🔄 尝试使用 HTTP Trigger 备用方案...')
+        try {
+          await sendControllerTriggersHTTP(this.sessionId, clampedL2, clampedR2)
+          console.log('✅ HTTP Trigger 调用成功')
+        } catch (httpError) {
+          console.error('❌ HTTP Trigger 调用也失败:', httpError)
+        }
+      }
+    }
+  }
+
+  /**
    * 检查连接状态
    */
   isConnected(): boolean {
@@ -698,5 +763,51 @@ export async function sendControllerStickHTTP(
 
   // 如果所有端点都失败，抛出最后一个错误
   throw lastError || new Error('所有 HTTP Stick API 端点都失败')
+}
+
+/**
+ * HTTP API 备用方案：发送扳机压力
+ */
+export async function sendControllerTriggersHTTP(
+  sessionId: string,
+  l2?: number,
+  r2?: number
+): Promise<void> {
+  if (typeof l2 !== 'number' && typeof r2 !== 'number') {
+    return
+  }
+
+  const token = localStorage.getItem('auth_token')
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const payload: Record<string, unknown> = {
+    sessionId,
+  }
+  if (typeof l2 === 'number') {
+    payload.l2 = Math.max(0, Math.min(1, l2))
+  }
+  if (typeof r2 === 'number') {
+    payload.r2 = Math.max(0, Math.min(1, r2))
+  }
+
+  const response = await fetch(`${API_BASE_URL}/playstation/controller/trigger`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+
+  const result = await response.json()
+  if (!result.success) {
+    throw new Error(result.errorMessage || result.message || '未知错误')
+  }
 }
 

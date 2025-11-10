@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Services.Streaming;
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
@@ -115,6 +116,22 @@ namespace RemotePlay.Services
             }
 
             controller.SetStick(stickName, axis, value, point);
+            return Task.CompletedTask;
+        }
+
+        public Task SetTriggersAsync(
+            Guid sessionId,
+            float? l2 = null,
+            float? r2 = null,
+            CancellationToken ct = default)
+        {
+            if (!_controllers.TryGetValue(sessionId, out var controller))
+            {
+                _logger.LogWarning("会话 {SessionId} 没有连接的控制器", sessionId);
+                return Task.CompletedTask;
+            }
+
+            controller.SetTriggers(l2, r2);
             return Task.CompletedTask;
         }
 
@@ -345,6 +362,36 @@ namespace RemotePlay.Services
                 _shouldSend.Release();
             }
 
+        public void SetTriggers(float? l2, float? r2)
+        {
+            bool changed = false;
+
+            if (l2.HasValue)
+            {
+                var value = NormalizeTrigger(l2.Value);
+                if (_stickState.L2State != value)
+                {
+                    _stickState.L2State = value;
+                    changed = true;
+                }
+            }
+
+            if (r2.HasValue)
+            {
+                var value = NormalizeTrigger(r2.Value);
+                if (_stickState.R2State != value)
+                {
+                    _stickState.R2State = value;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                _shouldSend.Release();
+            }
+        }
+
             public void UpdateSticks()
             {
                 if (!CheckSession())
@@ -435,6 +482,13 @@ namespace RemotePlay.Services
 
                 return true;
             }
+        }
+
+        private static byte NormalizeTrigger(float value)
+        {
+            var clamped = Math.Clamp(value, 0f, 1f);
+            var scaled = (int)Math.Round(clamped * 255f);
+            return (byte)Math.Clamp(scaled, 0, 255);
         }
     }
 }

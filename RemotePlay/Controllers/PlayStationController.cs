@@ -8,6 +8,7 @@ using RemotePlay.Models.Context;
 using RemotePlay.Models.PlayStation;
 using RemotePlay.Services;
 using RemotePlay.Services.Streaming.Receiver;
+using RemotePlay.Utils;
 using System;
 using System.Linq;
 using System.Security.Claims;
@@ -29,6 +30,7 @@ namespace RemotePlay.Controllers
         private readonly RPContext _rpContext;
         private readonly IWebHostEnvironment _env;
         private readonly IDeviceSettingsService _deviceSettingsService;
+        private readonly IdGenerator _idGenerator;
 
         public PlayStationController(
             IRegisterService registeredServices,
@@ -50,6 +52,7 @@ namespace RemotePlay.Controllers
             _controllerService = controllerService;
             _logger = logger;
             _loggerFactory = loggerFactory;
+            _idGenerator = new IdGenerator(0,0);
             _env = env;
             _deviceSettingsService = deviceSettingsService;
         }
@@ -833,6 +836,32 @@ namespace RemotePlay.Controllers
         }
 
         /// <summary>
+        /// 设置扳机压力
+        /// </summary>
+        [HttpPost("controller/trigger")]
+        public async Task<ActionResult> ControllerTrigger(
+            [FromBody] ControllerTriggerRequest request)
+        {
+            if (request == null || (!request.L2.HasValue && !request.R2.HasValue))
+            {
+                return BadRequest(new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "必须至少提供 L2 或 R2 的数值"
+                });
+            }
+
+            await _controllerService.SetTriggersAsync(request.SessionId, request.L2, request.R2);
+
+            return Ok(new ApiSuccessResponse<bool>
+            {
+                Success = true,
+                Data = true,
+                Message = "扳机压力设置成功"
+            });
+        }
+
+        /// <summary>
         /// 获取当前摇杆状态
         /// </summary>
         [HttpGet("controller/state")]
@@ -854,7 +883,8 @@ namespace RemotePlay.Controllers
                 Data = new
                 {
                     left = new { x = state.Left.X, y = state.Left.Y },
-                    right = new { x = state.Right.X, y = state.Right.Y }
+                    right = new { x = state.Right.X, y = state.Right.Y },
+                    triggers = new { l2 = state.L2State / 255f, r2 = state.R2State / 255f }
                 },
                 Message = "获取控制器状态成功"
             });
@@ -997,8 +1027,8 @@ namespace RemotePlay.Controllers
                     // 创建新设备
                     device = new Models.DB.PlayStation.Device
                     {
-                        Id = Guid.NewGuid().ToString(),
-                        uuid = Guid.Parse(deviceInfo.Uuid),
+                        Id = _idGenerator.NextStringId(),
+                        uuid = Guid.NewGuid(),
                         HostId = deviceInfo.Uuid,
                         HostName = deviceInfo.Name,
                         HostType = deviceInfo.HostType,

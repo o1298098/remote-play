@@ -72,9 +72,9 @@ export enum GamepadAxis {
 
 // PlayStation 按钮名称映射
 export const PS5_BUTTON_MAP: Record<number, string> = {
-  [GamepadButton.X]: 'cross', // A/X 按钮
+  [GamepadButton.A]: 'cross', // A/X 按钮
   [GamepadButton.Y]: 'triangle', // Y/Triangle 按钮
-  [GamepadButton.A]: 'square', // B/Square 按钮
+  [GamepadButton.X]: 'square', // B/Square 按钮
   [GamepadButton.B]: 'circle', // A/Circle 按钮
   [GamepadButton.LeftShoulder]: 'l1',
   [GamepadButton.RightShoulder]: 'r1',

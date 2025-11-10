@@ -188,6 +188,22 @@ namespace RemotePlay.Hubs
         }
 
         /// <summary>
+        /// 设置扳机压力
+        /// </summary>
+        public async Task SetTriggers(Guid sessionId, float? l2 = null, float? r2 = null)
+        {
+            try
+            {
+                await _controllerService.SetTriggersAsync(sessionId, l2, r2);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "设置扳机时出错: SessionId={SessionId}", sessionId);
+                await Clients.Caller.SendAsync("Error", ex.Message);
+            }
+        }
+
+        /// <summary>
         /// 获取当前摇杆状态
         /// </summary>
         public async Task GetStickState(Guid sessionId)

@@ -1,5 +1,7 @@
+using Microsoft.EntityFrameworkCore;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.PlayStation;
+using RemotePlay.Models.Context;
 using RemotePlay.Services.Streaming;
 using RemotePlay.Services.Streaming.Receiver;
 using System.Collections.Concurrent;
@@ -107,14 +109,49 @@ namespace RemotePlay.Services
             {
                 using var scope = _serviceProvider.CreateScope();
                 var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<DeviceStatusHub>>();
-                
-                // 发送断开连接通知给所有客户端
-                await hubContext.Clients.All.SendAsync("SessionDisconnected", new
+                var dbContext = scope.ServiceProvider.GetRequiredService<RPContext>();
+
+                var session = await _sessionService.GetSessionAsync(sessionId);
+                if (session == null)
+                {
+                    _logger.LogWarning("无法通知客户端：未找到会话 {SessionId}", sessionId);
+                    return;
+                }
+
+                if (string.IsNullOrEmpty(session.HostId))
+                {
+                    _logger.LogWarning("无法通知客户端：会话 {SessionId} 的 HostId 为空", sessionId);
+                    return;
+                }
+
+                var userIds = await dbContext.UserDevices
+                    .Where(ud => ud.IsActive
+                                 && ud.Device != null
+                                 && ud.Device.HostId == session.HostId
+                                 && !string.IsNullOrEmpty(ud.UserId))
+                    .Select(ud => ud.UserId!)
+                    .Distinct()
+                    .ToListAsync();
+
+                if (userIds.Count == 0)
+                {
+                    _logger.LogWarning("未找到绑定主机 {HostId} 的用户，跳过断开通知：SessionId={SessionId}", session.HostId, sessionId);
+                    return;
+                }
+
+                var payload = new
                 {
                     sessionId = sessionId,
                     reason = "PS5主动断开连接",
                     timestamp = DateTime.UtcNow
-                });
+                };
+                
+                foreach (var userId in userIds)
+                {
+                    var groupName = DeviceStatusHub.GetUserGroupName(userId);
+                    await hubContext.Clients.Group(groupName).SendAsync("SessionDisconnected", payload);
+                    _logger.LogDebug("已向用户组 {GroupName} 发送断开通知：SessionId={SessionId}", groupName, sessionId);
+                }
                 
                 _logger.LogInformation("Disconnect notification sent to clients for session {SessionId}", sessionId);
             }
