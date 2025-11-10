@@ -22,7 +22,7 @@ jobs:
           - name: dbtool
             display_name: DBTool (RemotePlay.DBTool)
             dockerfile: RemotePlay.DBTool/Dockerfile
-            context: RemotePlay.DBTool
+            context: .
             image_basename: remoteplay-dbtool
           - name: web
             display_name: Web (RemotePlay.Web)
