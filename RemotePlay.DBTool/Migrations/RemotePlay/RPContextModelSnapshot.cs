@@ -142,7 +142,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                     b.HasIndex("EnumType", "EnumKey")
                         .IsUnique();
 
-                    b.ToTable("t_enum", (string)null);
+                    b.ToTable("t_base_enum", (string)null);
 
                     b.HasData(
                         new
@@ -397,7 +397,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
 
                     b.HasIndex("Level", "CreatedAt");
 
-                    b.ToTable("t_log", (string)null);
+                    b.ToTable("t_base_log", (string)null);
                 });
 
             modelBuilder.Entity("RemotePlay.Models.DB.Base.Settings", b =>
@@ -588,7 +588,9 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DeviceId", "ConfigKey")
+                    b.HasIndex("DeviceId");
+
+                    b.HasIndex("UserId", "DeviceId", "ConfigKey")
                         .IsUnique();
 
                     b.ToTable("t_device_config", (string)null);
@@ -657,7 +659,8 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         .WithMany()
                         .HasForeignKey("DeviceId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("foreign_k_userdevice_k");
 
                     b.HasOne("RemotePlay.Models.DB.User", "User")
                         .WithMany()

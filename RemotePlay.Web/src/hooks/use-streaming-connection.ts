@@ -85,12 +85,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
   const applyReceiverLatencyHints = useCallback((receiver: RTCRtpReceiver) => {
     const anyReceiver = receiver as any
+    const trackKind = receiver.track?.kind
+    const isAudioTrack = trackKind === 'audio'
+    const preferredDelay = isAudioTrack ? 0.12 : 0
     try {
       if (typeof anyReceiver?.playoutDelayHint === 'number') {
-        anyReceiver.playoutDelayHint = 0
+        anyReceiver.playoutDelayHint = preferredDelay
       }
       if (typeof anyReceiver?.jitterBufferDelayHint === 'number') {
-        anyReceiver.jitterBufferDelayHint = 0
+        anyReceiver.jitterBufferDelayHint = preferredDelay
       }
     } catch (error) {
       console.warn('⚠️ 设置接收器延迟提示失败:', error)
@@ -883,7 +886,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             computedOpacity: window.getComputedStyle(video).opacity,
           })
 
+          const originalVolume = video.volume
           video.muted = true
+          video.volume = 0
           video.autoplay = true
           video.playsInline = true
 
@@ -899,11 +904,25 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           const handlePlaying = () => {
             if (!hasStartedPlaying) {
               hasStartedPlaying = true
-              console.log('✅ 视频开始播放，取消静音')
-              setTimeout(() => {
-                video.muted = false
-                console.log('🔊 已取消静音，音频已启用')
-              }, 200)
+              console.log('✅ 视频开始播放，开始淡入音量')
+              const fadeDurationMs = 500
+              const targetVolume = originalVolume > 0 ? originalVolume : 1
+              const startTime = performance.now()
+              video.muted = false
+
+              const fadeIn = (timestamp: number) => {
+                const elapsed = timestamp - startTime
+                const progress = Math.min(1, elapsed / fadeDurationMs)
+                video.volume = targetVolume * progress
+                if (progress < 1) {
+                  requestAnimationFrame(fadeIn)
+                } else {
+                  video.volume = targetVolume
+                  console.log('🔊 音量淡入完成，音频已启用')
+                }
+              }
+
+              requestAnimationFrame(fadeIn)
             }
           }
           video.addEventListener('playing', handlePlaying, { once: true })

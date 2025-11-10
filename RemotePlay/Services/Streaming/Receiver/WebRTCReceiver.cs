@@ -1,10 +1,12 @@
 using RemotePlay.Models.PlayStation;
 using SIPSorcery.Media;
 using SIPSorcery.Net;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Concentus;
+using Concentus.Enums;
 using Concentus.Structs;
 using RemotePlay.Services;
 
@@ -64,6 +66,12 @@ namespace RemotePlay.Services.Streaming.Receiver
         private int _audioChannels = 2; // 默认 2 声道
         private int _audioFrameSize = 480; // 默认帧大小（10ms @ 48kHz）
         private int _audioSampleRate = 48000;
+        private int _sendingAudioChannels = 2; // 实际发送到浏览器的声道数
+        private bool _forceStereoDownmix = false;
+        private readonly object _opusEncoderLock = new object();
+        private OpusEncoder? _stereoOpusEncoder;
+        private int _stereoEncoderSampleRate = 48000;
+        private byte[] _opusEncodeBuffer = new byte[4096];
         
         // ✅ 音频编解码器选择检测
         private bool _useOpusDirect = true; // 默认尝试直接发送 Opus
@@ -488,12 +496,13 @@ namespace RemotePlay.Services.Streaming.Receiver
             // ✅ 优化：优先使用 Opus，获得最高音质（48kHz，高质量编码）
             // Opus 是 WebRTC 标准编解码器，所有现代浏览器都支持
             // 提供 PCMU 作为备用以确保兼容性，但优先使用 Opus
+            var initialAudioChannels = Math.Max(1, _sendingAudioChannels);
             var opusFormat = new SDPAudioVideoMediaFormat(
                 SDPMediaTypesEnum.audio,
                 111,
                 "opus",
                 48000,
-                2
+                initialAudioChannels
             );
             
             // 提供 PCMU 作为备用（兼容性，但会降低音质）
@@ -607,7 +616,30 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         _audioFrameSize = frameSize;
                     }
-                    
+                    int previousSourceChannels = _audioChannels;
+
+                    if (channels > 0)
+                    {
+                        if (channels != 2)
+                        {
+                            if (!_forceStereoDownmix || previousSourceChannels != channels)
+                            {
+                                _logger.LogWarning("⚠️ 检测到 {Channels} 声道音频，将在服务端下混为立体声发送", channels);
+                            }
+                            _forceStereoDownmix = true;
+                            _sendingAudioChannels = 2;
+                        }
+                        else
+                        {
+                            if (_forceStereoDownmix)
+                            {
+                                _logger.LogInformation("🎧 音频声道恢复为 2 声道，恢复直接透传");
+                            }
+                            _forceStereoDownmix = false;
+                            _sendingAudioChannels = 2;
+                        }
+                    }
+
                     // 初始化 Opus 解码器（参照 FfmpegMuxReceiver）
                     if (rate > 0 && channels > 0)
                     {
@@ -752,7 +784,14 @@ namespace RemotePlay.Services.Streaming.Receiver
                     
                     // ✅ 优化音质：优先使用 Opus，即使浏览器选择了 PCMU 也尝试发送 Opus
                     // 现代浏览器通常都能处理 Opus，即使 SDP 中也选择了 PCMU 作为备用
-                    if (_useOpusDirect)
+                    if (_forceStereoDownmix)
+                    {
+                        if (!TrySendOpusDownmixedToStereo(opusFrame))
+                        {
+                            SendAudioOpusDirect(opusFrame);
+                        }
+                    }
+                    else if (_useOpusDirect)
                     {
                         // 直接发送 Opus RTP 包，无需转码（最高音质）
                         SendAudioOpusDirect(opusFrame);
@@ -2397,7 +2436,165 @@ namespace RemotePlay.Services.Streaming.Receiver
         /// <summary>
         /// 直接发送 Opus 数据（直接发送 Opus RTP 包，不转码）
         /// </summary>
-        private void SendAudioOpusDirect(byte[] opusFrame)
+        private bool TrySendOpusDownmixedToStereo(byte[] opusFrame)
+        {
+            try
+            {
+                if (opusFrame == null || opusFrame.Length == 0)
+                {
+                    return false;
+                }
+
+                if (_audioFrameSize <= 0 || _audioSampleRate <= 0 || _audioChannels <= 0)
+                {
+                    return false;
+                }
+
+                float[] pcmBufferFloat = new float[_audioChannels * _audioFrameSize];
+                int samplesDecoded;
+
+                lock (_opusDecoderLock)
+                {
+                    if (_opusDecoder == null)
+                    {
+                        _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
+                        _logger.LogInformation("✅ 下混音频：初始化 Opus 解码器 {Rate}Hz / {Channels}ch", _audioSampleRate, _audioChannels);
+                    }
+
+                    samplesDecoded = _opusDecoder.Decode(opusFrame.AsSpan(), pcmBufferFloat.AsSpan(), _audioFrameSize, false);
+                }
+
+                if (samplesDecoded <= 0)
+                {
+                    if (_audioPacketCount < 5)
+                    {
+                        _logger.LogWarning("⚠️ 下混音频：解码返回 0 个样本");
+                    }
+                    return false;
+                }
+
+                int stereoSamples = samplesDecoded;
+                short[] stereoSamplesBuffer = ArrayPool<short>.Shared.Rent(stereoSamples * 2);
+
+                try
+                {
+                    var floatSpan = pcmBufferFloat.AsSpan();
+                    var stereoSpan = stereoSamplesBuffer.AsSpan(0, stereoSamples * 2);
+
+                    for (int sample = 0; sample < stereoSamples; sample++)
+                    {
+                        int baseIndex = sample * _audioChannels;
+                        float leftSum = 0f;
+                        float rightSum = 0f;
+                        int leftCount = 0;
+                        int rightCount = 0;
+
+                        for (int ch = 0; ch < _audioChannels; ch++)
+                        {
+                            float value = floatSpan[baseIndex + ch];
+
+                            if (ch == 0)
+                            {
+                                leftSum += value;
+                                leftCount++;
+                                continue;
+                            }
+
+                            if (ch == 1)
+                            {
+                                rightSum += value;
+                                rightCount++;
+                                continue;
+                            }
+
+                            if ((ch & 1) == 0)
+                            {
+                                leftSum += value;
+                                leftCount++;
+                            }
+                            else
+                            {
+                                rightSum += value;
+                                rightCount++;
+                            }
+                        }
+
+                        if (leftCount == 0)
+                        {
+                            leftSum = 0f;
+                            leftCount = 1;
+                        }
+
+                        if (rightCount == 0)
+                        {
+                            rightSum = leftSum;
+                            rightCount = leftCount;
+                        }
+
+                        float leftValue = leftSum / leftCount;
+                        float rightValue = rightSum / rightCount;
+
+                        leftValue = Math.Clamp(leftValue, -1f, 1f);
+                        rightValue = Math.Clamp(rightValue, -1f, 1f);
+
+                        stereoSpan[sample * 2] = (short)Math.Round(leftValue * 32767f);
+                        stereoSpan[sample * 2 + 1] = (short)Math.Round(rightValue * 32767f);
+                    }
+
+                    byte[] encodeBuffer = ArrayPool<byte>.Shared.Rent(_opusEncodeBuffer.Length);
+
+                    try
+                    {
+                        int encodedBytes;
+                        lock (_opusEncoderLock)
+                        {
+                            if (_stereoOpusEncoder == null || _stereoEncoderSampleRate != _audioSampleRate)
+                            {
+                                _stereoOpusEncoder?.Dispose();
+                                _stereoOpusEncoder = new OpusEncoder(_audioSampleRate, 2, OpusApplication.OPUS_APPLICATION_AUDIO);
+                                _stereoEncoderSampleRate = _audioSampleRate;
+                                _stereoOpusEncoder.Bitrate = Math.Min(256000, _audioSampleRate * 4);
+                                _logger.LogInformation("✅ 下混音频：初始化立体声 Opus 编码器 {Rate}Hz / 2ch", _audioSampleRate);
+                            }
+
+                            encodedBytes = _stereoOpusEncoder.Encode(stereoSamplesBuffer, 0, stereoSamples, encodeBuffer, 0, encodeBuffer.Length);
+                        }
+
+                        if (encodedBytes <= 0)
+                        {
+                            if (_audioPacketCount < 5)
+                            {
+                                _logger.LogWarning("⚠️ 下混音频：Opus 编码失败，返回 {Bytes} 字节", encodedBytes);
+                            }
+                            return false;
+                        }
+
+                        var downmixedFrame = new byte[encodedBytes];
+                        Buffer.BlockCopy(encodeBuffer, 0, downmixedFrame, 0, encodedBytes);
+                        SendAudioOpusDirect(downmixedFrame, stereoSamples);
+                        return true;
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(encodeBuffer);
+                    }
+                }
+                finally
+                {
+                    ArrayPool<short>.Shared.Return(stereoSamplesBuffer);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (_audioPacketCount < 5 || _audioPacketCount % 100 == 0)
+                {
+                    _logger.LogWarning(ex, "⚠️ 下混音频失败，将回退发送原始音频");
+                }
+                return false;
+            }
+        }
+
+        private void SendAudioOpusDirect(byte[] opusFrame, int? samplesPerFrameOverride = null)
         {
             try
             {
@@ -2431,7 +2628,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 // ✅ Opus 时间戳：基于 48000Hz 采样率
                 // 每帧通常是 480 个样本（10ms @ 48kHz）
-                int samplesPerFrame = _audioFrameSize; // 通常是 480
+                int samplesPerFrame = samplesPerFrameOverride ?? _audioFrameSize; // 通常是 480
+                if (samplesPerFrame <= 0)
+                {
+                    samplesPerFrame = _audioFrameSize > 0 ? _audioFrameSize : 480;
+                }
                 uint currentTimestamp = _audioTimestamp;
                 _audioTimestamp += (uint)samplesPerFrame;
                 
@@ -3041,6 +3242,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     _opusDecoder?.Dispose();
                     _opusDecoder = null;
+                }
+                
+                lock (_opusEncoderLock)
+                {
+                    _stereoOpusEncoder?.Dispose();
+                    _stereoOpusEncoder = null;
                 }
                 
                 _peerConnection?.close();

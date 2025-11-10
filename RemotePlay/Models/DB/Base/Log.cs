@@ -7,7 +7,6 @@ namespace RemotePlay.Models.DB.Base
     /// <summary>
     /// 日志记录实体
     /// </summary>
-    [Table("t_log")]
     public class Log
     {
         [Key]

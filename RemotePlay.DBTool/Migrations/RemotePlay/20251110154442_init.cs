@@ -15,7 +15,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "t_enum",
+                name: "t_base_enum",
                 columns: table => new
                 {
                     id = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
@@ -31,11 +31,11 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_t_enum", x => x.id);
+                    table.PrimaryKey("PK_t_base_enum", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
-                name: "t_log",
+                name: "t_base_log",
                 columns: table => new
                 {
                     id = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
@@ -53,7 +53,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_t_log", x => x.id);
+                    table.PrimaryKey("PK_t_base_log", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
@@ -168,21 +168,21 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                 {
                     table.PrimaryKey("PK_t_user_device", x => x.id);
                     table.ForeignKey(
-                        name: "FK_t_user_device_t_playstation_device_device_id",
-                        column: x => x.device_id,
-                        principalTable: "t_playstation_device",
-                        principalColumn: "id",
-                        onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
                         name: "FK_t_user_device_t_user_user_id",
                         column: x => x.user_id,
                         principalTable: "t_user",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "foreign_k_userdevice_k",
+                        column: x => x.device_id,
+                        principalTable: "t_playstation_device",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.InsertData(
-                table: "t_enum",
+                table: "t_base_enum",
                 columns: new[] { "id", "created_at", "description", "enum_code", "enum_key", "enum_type", "enum_value", "is_active", "sort_order", "updated_at" },
                 values: new object[,]
                 {
@@ -204,46 +204,51 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_device_config_device_id_config_key",
-                table: "t_device_config",
-                columns: new[] { "device_id", "config_key" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_t_enum_enum_type",
-                table: "t_enum",
+                name: "IX_t_base_enum_enum_type",
+                table: "t_base_enum",
                 column: "enum_type");
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_enum_enum_type_enum_key",
-                table: "t_enum",
+                name: "IX_t_base_enum_enum_type_enum_key",
+                table: "t_base_enum",
                 columns: new[] { "enum_type", "enum_key" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_enum_sort_order",
-                table: "t_enum",
+                name: "IX_t_base_enum_sort_order",
+                table: "t_base_enum",
                 column: "sort_order");
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_log_created_at",
-                table: "t_log",
+                name: "IX_t_base_log_created_at",
+                table: "t_base_log",
                 column: "created_at");
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_log_device_id",
-                table: "t_log",
+                name: "IX_t_base_log_device_id",
+                table: "t_base_log",
                 column: "device_id");
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_log_level_created_at",
-                table: "t_log",
+                name: "IX_t_base_log_level_created_at",
+                table: "t_base_log",
                 columns: new[] { "level", "created_at" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_t_log_user_id",
-                table: "t_log",
+                name: "IX_t_base_log_user_id",
+                table: "t_base_log",
                 column: "user_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_t_device_config_device_id",
+                table: "t_device_config",
+                column: "device_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_t_device_config_user_id_device_id_config_key",
+                table: "t_device_config",
+                columns: new[] { "user_id", "device_id", "config_key" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_t_settings_key",
@@ -279,13 +284,13 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
+                name: "t_base_enum");
+
+            migrationBuilder.DropTable(
+                name: "t_base_log");
+
+            migrationBuilder.DropTable(
                 name: "t_device_config");
-
-            migrationBuilder.DropTable(
-                name: "t_enum");
-
-            migrationBuilder.DropTable(
-                name: "t_log");
 
             migrationBuilder.DropTable(
                 name: "t_settings");
@@ -294,10 +299,10 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                 name: "t_user_device");
 
             migrationBuilder.DropTable(
-                name: "t_playstation_device");
+                name: "t_user");
 
             migrationBuilder.DropTable(
-                name: "t_user");
+                name: "t_playstation_device");
         }
     }
 }

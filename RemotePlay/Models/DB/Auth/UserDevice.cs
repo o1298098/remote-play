@@ -6,7 +6,6 @@ namespace RemotePlay.Models.DB.Auth
     /// <summary>
     /// 用户设备关联实体
     /// </summary>
-    [Table("t_user_device")]
     public class UserDevice
     {
         [Key]

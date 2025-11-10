@@ -7,7 +7,6 @@ namespace RemotePlay.Models.DB.Base
     /// <summary>
     /// 系统设置实体
     /// </summary>
-    [Table("t_settings")]
     public class Settings
     {
         [Key]

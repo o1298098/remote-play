@@ -6,7 +6,6 @@ namespace RemotePlay.Models.DB
     /// <summary>
     /// 用户实体，用于认证和授权
     /// </summary>
-    [Table("t_user")]
     public class User
     {
         [Key]

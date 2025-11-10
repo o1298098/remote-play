@@ -7,7 +7,6 @@ namespace RemotePlay.Models.DB.PlayStation
     /// <summary>
     /// 设备配置实体
     /// </summary>
-    [Table("t_device_config")]
     public class DeviceConfig
     {
         [Key]

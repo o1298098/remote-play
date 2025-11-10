@@ -6,7 +6,6 @@ namespace RemotePlay.Models.DB.Base
     /// <summary>
     /// 系统枚举字典实体
     /// </summary>
-    [Table("t_enum")]
     public class Enum
     {
         [Key]

@@ -58,6 +58,7 @@ namespace RemotePlay.Models.Context
                 entity.HasOne(d => d.Device)
                     .WithMany()
                     .HasForeignKey(d => d.DeviceId)
+                    .HasConstraintName("foreign_k_userdevice_k")
                     .OnDelete(DeleteBehavior.Cascade);
             });
             #endregion
@@ -71,7 +72,7 @@ namespace RemotePlay.Models.Context
 
             modelBuilder.Entity<Models.DB.Base.Log>(entity =>
             {
-                entity.ToTable("t_log");
+                entity.ToTable("t_base_log");
                 entity.HasIndex(e => e.CreatedAt);
                 entity.HasIndex(e => new { e.Level, e.CreatedAt });
                 entity.HasIndex(e => e.UserId);
@@ -80,7 +81,7 @@ namespace RemotePlay.Models.Context
 
             modelBuilder.Entity<Models.DB.Base.Enum>(entity =>
             {
-                entity.ToTable("t_enum");
+                entity.ToTable("t_base_enum");
                 entity.HasIndex(e => new { e.EnumType, e.EnumKey }).IsUnique();
                 entity.HasIndex(e => e.EnumType);
                 entity.HasIndex(e => e.SortOrder);
