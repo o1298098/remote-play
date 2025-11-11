@@ -130,5 +130,14 @@ export const streamingService = {
       method: 'DELETE',
     })
   },
+
+  /**
+   * 主动请求关键帧
+   */
+  requestKeyframe: async (sessionId: string): Promise<ApiResponse<boolean>> => {
+    return apiRequest<boolean>(`/webrtc/session/${encodeURIComponent(sessionId)}/keyframe`, {
+      method: 'POST',
+    })
+  },
 }
 

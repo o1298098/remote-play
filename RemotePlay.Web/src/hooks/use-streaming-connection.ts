@@ -82,6 +82,12 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     bytesSent: number
     videoBytesReceived: number
   } | null>(null)
+  const webrtcSessionIdRef = useRef<string | null>(null)
+  const keyframeMonitorIntervalRef = useRef<number | null>(null)
+  const lastVideoActivityRef = useRef<number>(0)
+  const lastDecodedFrameCountRef = useRef<number | null>(null)
+  const lastPlaybackPositionRef = useRef<number | null>(null)
+  const lastKeyframeRequestRef = useRef<number>(0)
 
   const applyReceiverLatencyHints = useCallback((receiver: RTCRtpReceiver) => {
     const anyReceiver = receiver as any
@@ -625,6 +631,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       videoOptimizeCleanupRef.current = null
     }
 
+    if (keyframeMonitorIntervalRef.current !== null) {
+      window.clearInterval(keyframeMonitorIntervalRef.current)
+      keyframeMonitorIntervalRef.current = null
+    }
+    lastVideoActivityRef.current = 0
+    lastDecodedFrameCountRef.current = null
+    lastPlaybackPositionRef.current = null
+    lastKeyframeRequestRef.current = 0
+
     if (keyboardCleanupRef.current) {
       keyboardCleanupRef.current()
       keyboardCleanupRef.current = null
@@ -647,6 +662,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     const currentWebrtcSessionId = webrtcSessionId
     if (currentWebrtcSessionId) {
       setWebrtcSessionId(null)
+      webrtcSessionIdRef.current = null
       streamingService
         .deleteSession(currentWebrtcSessionId)
         .then(() => {
@@ -759,6 +775,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       const { sessionId: webrtcSessionIdValue, sdp: offerSdp } = offerData
       setWebrtcSessionId(webrtcSessionIdValue)
+      webrtcSessionIdRef.current = webrtcSessionIdValue
 
       const iceServers: RTCIceServer[] = [
         { urls: 'stun:stun.qcloudtrtc.com:8000' },
@@ -1313,6 +1330,146 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   }, [isConnected, setupMouseRightStick, tearDownMouseRightStick])
 
   useGamepadInput(handleGamepadInput, isConnected && gamepadEnabledRef.current && isGamepadEnabled)
+
+  useEffect(() => {
+    webrtcSessionIdRef.current = webrtcSessionId
+  }, [webrtcSessionId])
+
+  useEffect(() => {
+    if (keyframeMonitorIntervalRef.current !== null) {
+      window.clearInterval(keyframeMonitorIntervalRef.current)
+      keyframeMonitorIntervalRef.current = null
+    }
+
+    if (!isConnected) {
+      return
+    }
+
+    const maybeEnsureSessionId = () => {
+      if (!webrtcSessionIdRef.current) {
+        webrtcSessionIdRef.current = webrtcSessionId
+      }
+      return webrtcSessionIdRef.current
+    }
+
+    if (!maybeEnsureSessionId()) {
+      return
+    }
+
+    const STALL_THRESHOLD_MS = 3000
+    const REQUEST_COOLDOWN_MS = 8000
+    const POSITION_EPSILON = 0.03
+
+    lastVideoActivityRef.current = Date.now()
+    lastDecodedFrameCountRef.current = null
+    lastPlaybackPositionRef.current = null
+
+    const getDecodedFrameCount = (video: HTMLVideoElement): number | null => {
+      try {
+        if (typeof video.getVideoPlaybackQuality === 'function') {
+          const quality = video.getVideoPlaybackQuality()
+          if (quality && typeof quality.totalVideoFrames === 'number' && quality.totalVideoFrames >= 0) {
+            return quality.totalVideoFrames
+          }
+          if (quality && typeof (quality as any).presentedFrames === 'number') {
+            return (quality as any).presentedFrames
+          }
+        }
+      } catch (error) {
+        console.debug('⚠️ 读取视频播放质量失败:', error)
+      }
+
+      const videoAny = video as any
+      if (typeof videoAny?.webkitDecodedFrameCount === 'number') {
+        return videoAny.webkitDecodedFrameCount
+      }
+      if (typeof videoAny?.mozParsedFrames === 'number') {
+        return videoAny.mozParsedFrames
+      }
+
+      return null
+    }
+
+    const checkStall = () => {
+      const video = videoRef.current
+      if (!video || !isConnectedRef.current) {
+        return
+      }
+
+      const now = Date.now()
+      if (video.paused || video.readyState < 2 || !video.srcObject) {
+        lastVideoActivityRef.current = now
+        lastDecodedFrameCountRef.current = null
+        lastPlaybackPositionRef.current = null
+        return
+      }
+
+      const decodedFrames = getDecodedFrameCount(video)
+      if (decodedFrames !== null) {
+        if (lastDecodedFrameCountRef.current === null || decodedFrames > lastDecodedFrameCountRef.current) {
+          lastDecodedFrameCountRef.current = decodedFrames
+          lastVideoActivityRef.current = now
+          return
+        }
+      } else {
+        const currentPosition = video.currentTime
+        if (
+          lastPlaybackPositionRef.current === null ||
+          Math.abs(currentPosition - lastPlaybackPositionRef.current) > POSITION_EPSILON
+        ) {
+          lastPlaybackPositionRef.current = currentPosition
+          lastVideoActivityRef.current = now
+          return
+        }
+      }
+
+      const inactivity = now - lastVideoActivityRef.current
+      if (inactivity < STALL_THRESHOLD_MS) {
+        return
+      }
+
+      if (now - lastKeyframeRequestRef.current < REQUEST_COOLDOWN_MS) {
+        return
+      }
+
+      const sessionId = maybeEnsureSessionId()
+      if (!sessionId) {
+        return
+      }
+
+      lastKeyframeRequestRef.current = now
+      lastVideoActivityRef.current = now
+      console.warn('⚠️ 检测到视频播放停滞，自动请求关键帧', {
+        inactivityMs: inactivity,
+        sessionId,
+      })
+
+      streamingService
+        .requestKeyframe(sessionId)
+        .then((response) => {
+          if (response.success) {
+            console.log('🎯 自动关键帧请求已发送')
+          } else {
+            console.warn('⚠️ 自动关键帧请求失败', {
+              message: response.message,
+              error: response.errorMessage,
+            })
+          }
+        })
+        .catch((error) => {
+          console.error('❌ 自动请求关键帧异常:', error)
+        })
+    }
+
+    keyframeMonitorIntervalRef.current = window.setInterval(checkStall, 1000)
+
+    return () => {
+      if (keyframeMonitorIntervalRef.current !== null) {
+        window.clearInterval(keyframeMonitorIntervalRef.current)
+        keyframeMonitorIntervalRef.current = null
+      }
+    }
+  }, [isConnected, webrtcSessionId, videoRef])
 
   useEffect(() => {
     isStatsEnabledRef.current = isStatsEnabled

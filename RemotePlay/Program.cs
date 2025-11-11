@@ -6,6 +6,7 @@ using RemotePlay.Models.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using RemotePlay.Hubs;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -306,9 +307,12 @@ app.UseAuthorization();
 app.MapControllers();
 
 // 映射SignalR Hub（用于低延迟控制器输入）
-app.MapHub<RemotePlay.Hubs.ControllerHub>("/hubs/controller");
+app.MapHub<ControllerHub>("/hubs/controller");
 
 // 映射SignalR Hub（用于设备状态更新）
-app.MapHub<RemotePlay.Hubs.DeviceStatusHub>("/hubs/device-status");
+app.MapHub<DeviceStatusHub>("/hubs/device-status");
+
+// 映射SignalR Hub（用于流媒体控制）
+app.MapHub<StreamingHub>("/hubs/streaming");
 
 app.Run();
