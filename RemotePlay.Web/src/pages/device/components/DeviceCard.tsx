@@ -1,23 +1,99 @@
+import type { DragEvent } from 'react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Settings as SettingsIcon, ChevronDown } from 'lucide-react'
 import { PS4Icon } from '@/components/icons/PS4Icon'
 import { PS5Icon } from '@/components/icons/PS5Icon'
+import { cn } from '@/lib/utils'
 import type { Console } from '@/types/device'
+
+type DragHandler = (event: DragEvent<HTMLDivElement>, consoleItem: Console) => void
 
 interface DeviceCardProps {
   consoleItem: Console
   onConnect: (console: Console) => void
   onRegister: (console: Console) => void
   onSettings: (deviceId: string, deviceName: string) => void
+  onDragStart?: DragHandler
+  onDragEnter?: DragHandler
+  onDragOver?: DragHandler
+  onDragLeave?: DragHandler
+  onDrop?: DragHandler
+  onDragEnd?: DragHandler
+  isDragging?: boolean
+  isDragOver?: boolean
+  isReorderMode?: boolean
 }
 
-export function DeviceCard({ consoleItem, onConnect, onRegister, onSettings }: DeviceCardProps) {
+export function DeviceCard({
+  consoleItem,
+  onConnect,
+  onRegister,
+  onSettings,
+  onDragStart,
+  onDragEnter,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
+  isDragging = false,
+  isDragOver = false,
+  isReorderMode = false,
+}: DeviceCardProps) {
   const { t } = useTranslation()
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const dragPreviewRef = useRef<HTMLDivElement | null>(null)
   const isOffline = consoleItem.status === 'offline'
   const isRegistered = consoleItem.isRegistered
   const isActionDisabled = isRegistered && isOffline
+
+  useEffect(() => {
+    return () => {
+      if (dragPreviewRef.current) {
+        dragPreviewRef.current.remove()
+        dragPreviewRef.current = null
+      }
+    }
+  }, [])
+
+  const createDragPreview = () => {
+    if (!cardRef.current) {
+      return null
+    }
+    const source = cardRef.current
+    const rect = source.getBoundingClientRect()
+    const preview = source.cloneNode(true) as HTMLDivElement
+    preview.style.position = 'fixed'
+    preview.style.top = '-1000px'
+    preview.style.left = '-1000px'
+    preview.style.width = `${rect.width}px`
+    preview.style.height = `${rect.height}px`
+    preview.style.pointerEvents = 'none'
+    preview.style.opacity = '1'
+    preview.style.transform = 'scale(1)'
+    const computed = window.getComputedStyle(source)
+    preview.style.background = computed.background
+    preview.style.backgroundColor = computed.backgroundColor
+    preview.style.borderRadius = computed.borderRadius || '24px'
+    preview.style.border = computed.border
+    preview.style.color = computed.color
+    preview.style.filter = 'none'
+    preview.style.boxShadow =
+      '0 25px 50px -12px rgba(30, 64, 175, 0.55), 0 20px 40px -20px rgba(37, 99, 235, 0.45)'
+    preview.style.borderRadius = '24px'
+    document.body.appendChild(preview)
+    dragPreviewRef.current = preview
+    return preview
+  }
+
+  const cleanupDragPreview = () => {
+    if (dragPreviewRef.current) {
+      dragPreviewRef.current.remove()
+      dragPreviewRef.current = null
+    }
+  }
 
   const getConsoleIcon = (type: Console['type']) => {
     return type === 'PS5' ? (
@@ -27,9 +103,57 @@ export function DeviceCard({ consoleItem, onConnect, onRegister, onSettings }: D
     )
   }
 
+  const cardClassName = cn(
+    'group w-[280px] min-h-[420px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-blue-50 dark:hover:from-blue-900/20 hover:to-indigo-50 dark:hover:to-indigo-900/20 rounded-2xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl transition-all transition-transform duration-300 overflow-hidden relative flex flex-col select-none',
+    onDragStart && isReorderMode && 'cursor-grab active:cursor-grabbing',
+    isDragging && 'opacity-0 border-blue-400 dark:border-blue-500 border-dashed',
+    isDragOver && !isDragging && 'border-blue-500 dark:border-blue-400 ring-2 ring-blue-200 dark:ring-blue-700'
+  )
+
   return (
     <Card
-      className="group w-[280px] min-h-[420px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-blue-50 dark:hover:from-blue-900/20 hover:to-indigo-50 dark:hover:to-indigo-900/20 rounded-2xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden relative flex flex-col"
+      ref={cardRef}
+      className={cardClassName}
+      draggable={Boolean(onDragStart && isReorderMode)}
+      onDragStart={(event) => {
+        event.stopPropagation()
+        const preview = createDragPreview()
+        if (preview && event.dataTransfer) {
+          event.dataTransfer.setDragImage(preview, preview.offsetWidth / 2, preview.offsetHeight / 2)
+        }
+        onDragStart?.(event, consoleItem)
+      }}
+      onDragEnter={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onDragEnter?.(event, consoleItem)
+      }}
+      onDragOver={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onDragOver?.(event, consoleItem)
+      }}
+      onDragLeave={(event) => {
+        event.stopPropagation()
+        onDragLeave?.(event, consoleItem)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onDrop?.(event, consoleItem)
+      }}
+      onDragEnd={(event) => {
+        event.stopPropagation()
+        cleanupDragPreview()
+        onDragEnd?.(event, consoleItem)
+      }}
+      style={{
+        transform: isDragging
+          ? 'scale(0.96) rotate(-1deg)'
+          : isDragOver
+          ? 'scale(1.02)'
+          : undefined,
+      }}
     >
       {/* 装饰性渐变背景 */}
       <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 dark:from-blue-500/10 via-transparent to-indigo-500/5 dark:to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -46,6 +170,7 @@ export function DeviceCard({ consoleItem, onConnect, onRegister, onSettings }: D
               e.stopPropagation()
               onSettings(consoleItem.id, consoleItem.name)
             }}
+            aria-label={t('devices.console.openSettings')}
           >
             <SettingsIcon className="h-4 w-4" />
           </Button>

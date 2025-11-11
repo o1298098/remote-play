@@ -1012,7 +1012,7 @@ namespace RemotePlay.Controllers
                         device.APBssid = registerResult?.RegistData?.GetValueOrDefault("AP-Bssid");
                         device.RegistData = JObject.FromObject(registerResult?.RegistData ?? new() { });
                         device.RegistKey = registerResult?.RegistData?.FirstOrDefault(x => x.Key.Contains("RegistKey")).Value;
-                        device.MacAddress = device.HostId;
+                        device.MacAddress = registerResult?.RegistData?.FirstOrDefault(x => x.Key.Contains("Mac")).Value;
                         device.RPKeyType = registerResult?.RegistData?.GetValueOrDefault("RP-KeyType");
                         device.RPKey = registerResult?.RegistData?.GetValueOrDefault("RP-Key");
                     }

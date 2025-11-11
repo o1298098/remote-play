@@ -119,7 +119,15 @@
       "offlineToastTitle": "Console Offline",
       "offlineToastDescription": "This console is currently unavailable",
       "connectingToastTitle": "Connecting",
-      "connectingToastDescription": "Connecting to {{name}}..."
+      "connectingToastDescription": "Connecting to {{name}}...",
+      "openSettings": "Open settings",
+      "delete": "Remove console",
+      "deleteConfirm": "Are you sure you want to remove the bound console {{name}}? This will not affect the console itself.",
+      "deleteSuccessTitle": "Removed",
+      "deleteSuccessDescription": "{{name}} has been removed from your bound devices.",
+      "deleteFailedTitle": "Remove Failed",
+      "deleteFailedDescription": "Unable to remove the console right now. Please try again later.",
+      "deleteInvalidId": "Missing binding information, unable to remove."
     },
     "settings": {
       "title": "Device Settings",
@@ -140,6 +148,12 @@
       "loadFailedDescription": "Unable to load device settings, please try again later",
       "reset": "Reset",
       "resetDescription": "Settings have been reset to defaults",
+      "deleteSection": {
+        "title": "Remove device binding",
+        "description": "Remove this console from your account. The console itself will not be affected.",
+        "action": "Remove binding",
+        "loading": "Removing..."
+      },
       "options": {
         "resolution": {
           "RES_360P": "360p",

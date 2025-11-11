@@ -3,7 +3,10 @@ using SIPSorcery.Media;
 using SIPSorcery.Net;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Concentus;
 using Concentus.Enums;
@@ -107,6 +110,12 @@ namespace RemotePlay.Services.Streaming.Receiver
         private RTCSignalingState? _cachedSignalingState;
         private DateTime _lastStateCheckTime = DateTime.MinValue;
         private const int STATE_CACHE_MS = 50; // 状态缓存50ms（视频60fps时每帧16ms）
+        private readonly List<(object target, EventInfo @event, Delegate handler)> _rtcpFeedbackSubscriptions = new();
+        private readonly HashSet<string> _rtcpSubscribedEventKeys = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _rtcpFeedbackLock = new();
+        private bool _rtcpFeedbackSubscribed;
+        private DateTime _lastKeyframeRequestTime = DateTime.MinValue;
+        private static readonly TimeSpan KEYFRAME_REQUEST_COOLDOWN = TimeSpan.FromMilliseconds(500);
         
         public WebRTCReceiver(
             string sessionId,
@@ -210,34 +219,18 @@ namespace RemotePlay.Services.Streaming.Receiver
             try
             {
                 if (_peerConnection == null) return;
-                
-                // SIPSorcery 的 RTCPeerConnection 可能通过 MediaStreamTrack 或 RTP 会话接收 RTCP 反馈
-                // 尝试通过反射查找 RTCP 相关的事件或方法
-                var peerConnectionType = _peerConnection.GetType();
-                
-                // 查找 RTCP 相关的事件或回调
-                var rtcpEvents = peerConnectionType.GetEvents(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                    .Where(e => e.Name.ToLowerInvariant().Contains("rtcp") || 
-                               e.Name.ToLowerInvariant().Contains("feedback") ||
-                               e.Name.ToLowerInvariant().Contains("pli") ||
-                               e.Name.ToLowerInvariant().Contains("fir"))
-                    .ToList();
-                
-                if (rtcpEvents.Count > 0)
+
+                var attached = TryAttachRtcpFeedbackHandlers(_peerConnection, "RTCPeerConnection");
+                if (attached)
                 {
-                    _logger.LogInformation("✅ 找到 {Count} 个 RTCP 相关事件", rtcpEvents.Count);
-                    foreach (var evt in rtcpEvents)
-                    {
-                        _logger.LogDebug("  - {EventName}", evt.Name);
-                    }
+                    _logger.LogInformation("✅ 已在 RTCPeerConnection 上订阅 RTCP 反馈事件");
                 }
-                
-                // ✅ 尝试通过 MediaStreamTrack 监听 RTCP 反馈
-                // 注意：SIPSorcery 可能需要在轨道创建后才能监听
-                // 这个方法会在 InitializeTracks() 之后被调用，但此时轨道可能还未完全初始化
-                // 我们将在连接建立后（InitializeRtpChannels）再次尝试监听
-                
-                _logger.LogInformation("📡 RTCP 反馈监听已初始化（将在连接建立后激活）");
+                else
+                {
+                    _logger.LogDebug("ℹ️ 未在 RTCPeerConnection 上找到可用的 RTCP 反馈事件，将在 RTP 会话准备后继续尝试");
+                }
+
+                _logger.LogInformation("📡 RTCP 反馈监听初始化完成（等待 RTP 会话就绪）");
             }
             catch (Exception ex)
             {
@@ -272,65 +265,377 @@ namespace RemotePlay.Services.Streaming.Receiver
         {
             try
             {
-                if (_peerConnection == null || _videoTrack == null) return;
-                
-                // ✅ 尝试通过 MediaStreamTrack 获取 RTP 会话并监听 RTCP 反馈
-                var trackType = _videoTrack.GetType();
-                var trackProperties = trackType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                    .Where(p => p.Name.ToLowerInvariant().Contains("rtp") || 
-                               p.Name.ToLowerInvariant().Contains("session"))
-                    .ToList();
-                
-                if (trackProperties.Count > 0)
+                if (_peerConnection == null) return;
+
+                var attachedAny = false;
+
+                if (_videoTrack != null)
                 {
-                    _logger.LogDebug("✅ 找到 {Count} 个可能的 RTP 会话属性", trackProperties.Count);
-                    foreach (var prop in trackProperties)
-                    {
-                        try
-                        {
-                            var rtpSession = prop.GetValue(_videoTrack);
-                            if (rtpSession != null)
-                            {
-                                _logger.LogInformation("✅ 找到 RTP 会话: {Type}", rtpSession.GetType().Name);
-                                
-                                // 尝试查找 RTCP 反馈事件
-                                var rtpSessionType = rtpSession.GetType();
-                                var rtcpEvents = rtpSessionType.GetEvents(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                    .Where(e => e.Name.ToLowerInvariant().Contains("rtcp") || 
-                                               e.Name.ToLowerInvariant().Contains("feedback") ||
-                                               e.Name.ToLowerInvariant().Contains("pli") ||
-                                               e.Name.ToLowerInvariant().Contains("fir"))
-                                    .ToList();
-                                
-                                if (rtcpEvents.Count > 0)
-                                {
-                                    _logger.LogInformation("✅ 找到 {Count} 个 RTCP 反馈事件", rtcpEvents.Count);
-                                    // 这里可以订阅事件，但需要知道具体的委托类型
-                                    // 暂时记录日志，后续根据实际 API 调整
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug("⚠️ 无法访问 RTP 会话属性 {Prop}: {Ex}", prop.Name, ex.Message);
-                        }
-                    }
+                    attachedAny |= TryAttachRtcpFeedbackFromTrack(_videoTrack, "VideoTrack");
                 }
-                
-                // ✅ 注意：SIPSorcery 可能不直接暴露 RTCP 反馈事件
-                // 作为替代方案，我们可以：
-                // 1. 定期检查连接状态（当检测到连接问题时请求关键帧）
-                // 2. 监听 WebRTC 统计信息（通过 getStats API）
-                // 3. 在收到连接恢复事件时请求关键帧
-                
-                // ✅ 临时方案：监听连接状态恢复，在恢复时请求关键帧
-                // 这可以处理常见的丢包场景
-                _logger.LogInformation("📡 RTCP 反馈监听已激活（使用连接状态监控作为备用方案）");
+
+                if (!attachedAny)
+                {
+                    // 如果在 VideoTrack 上未找到，则尝试通过 peerConnection 的内部字段/属性
+                    attachedAny |= TryAttachRtcpFeedbackFromPeerConnectionInternals();
+                }
+
+                if (attachedAny)
+                {
+                    lock (_rtcpFeedbackLock)
+                    {
+                        _rtcpFeedbackSubscribed = true;
+                    }
+                    _logger.LogInformation("📡 RTCP 反馈监听已激活（将自动响应浏览器 PLI/FIR）");
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ 未找到可订阅的 RTCP 反馈事件，将继续依赖连接状态作为备用方案");
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "⚠️ 激活 RTCP 反馈监听失败");
             }
+        }
+
+        private bool TryAttachRtcpFeedbackFromTrack(MediaStreamTrack track, string sourceLabel)
+        {
+            var bindingFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var trackType = track.GetType();
+            var attached = false;
+
+            var properties = trackType.GetProperties(bindingFlags)
+                .Where(p => p.GetIndexParameters().Length == 0 && IsPotentialRtpContainer(p.PropertyType, p.Name))
+                .ToList();
+
+            foreach (var property in properties)
+            {
+                try
+                {
+                    var value = property.GetValue(track);
+                    attached |= AttachToValue(value, $"{sourceLabel}.{property.Name}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("⚠️ 无法访问 {Source}.{Property}: {Message}", sourceLabel, property.Name, ex.Message);
+                }
+            }
+
+            var fields = trackType.GetFields(bindingFlags)
+                .Where(f => IsPotentialRtpContainer(f.FieldType, f.Name))
+                .ToList();
+
+            foreach (var field in fields)
+            {
+                try
+                {
+                    var value = field.GetValue(track);
+                    attached |= AttachToValue(value, $"{sourceLabel}.{field.Name}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("⚠️ 无法访问 {Source}.{Field}: {Message}", sourceLabel, field.Name, ex.Message);
+                }
+            }
+
+            return attached;
+        }
+
+        private bool TryAttachRtcpFeedbackFromPeerConnectionInternals()
+        {
+            if (_peerConnection == null) return false;
+
+            var bindingFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var peerType = _peerConnection.GetType();
+            var attached = false;
+
+            var properties = peerType.GetProperties(bindingFlags)
+                .Where(p => p.GetIndexParameters().Length == 0 && IsPotentialRtpContainer(p.PropertyType, p.Name))
+                .ToList();
+
+            foreach (var property in properties)
+            {
+                try
+                {
+                    var value = property.GetValue(_peerConnection);
+                    attached |= AttachToValue(value, $"RTCPeerConnection.{property.Name}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("⚠️ 无法访问 RTCPeerConnection.{Property}: {Message}", property.Name, ex.Message);
+                }
+            }
+
+            var fields = peerType.GetFields(bindingFlags)
+                .Where(f => IsPotentialRtpContainer(f.FieldType, f.Name))
+                .ToList();
+
+            foreach (var field in fields)
+            {
+                try
+                {
+                    var value = field.GetValue(_peerConnection);
+                    attached |= AttachToValue(value, $"RTCPeerConnection.{field.Name}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("⚠️ 无法访问 RTCPeerConnection.{Field}: {Message}", field.Name, ex.Message);
+                }
+            }
+
+            return attached;
+        }
+
+        private bool AttachToValue(object? value, string label)
+        {
+            if (value == null) return false;
+
+            var attached = false;
+
+            attached |= TryAttachRtcpFeedbackHandlers(value, label);
+
+            if (!attached && value is System.Collections.IEnumerable enumerable && value is not string)
+            {
+                foreach (var item in enumerable)
+                {
+                    if (item == null) continue;
+                    attached |= TryAttachRtcpFeedbackHandlers(item, $"{label}[]");
+                }
+            }
+
+            return attached;
+        }
+
+        private bool TryAttachRtcpFeedbackHandlers(object target, string source)
+        {
+            if (target == null) return false;
+
+            var targetType = target.GetType();
+            var events = targetType.GetEvents(BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic)
+                .Where(e => IsRtcpFeedbackEvent(e.Name))
+                .ToList();
+
+            if (events.Count == 0)
+            {
+                return false;
+            }
+
+            var attached = false;
+
+            foreach (var evt in events)
+            {
+                var key = $"{targetType.FullName}.{evt.Name}";
+                lock (_rtcpFeedbackLock)
+                {
+                    if (_rtcpSubscribedEventKeys.Contains(key))
+                    {
+                        continue;
+                    }
+                }
+
+                try
+                {
+                    var handler = CreateRtcpFeedbackDelegate(evt, $"{source}.{evt.Name}");
+                    if (handler == null)
+                    {
+                        continue;
+                    }
+
+                    evt.AddEventHandler(target, handler);
+
+                    lock (_rtcpFeedbackLock)
+                    {
+                        _rtcpSubscribedEventKeys.Add(key);
+                        _rtcpFeedbackSubscriptions.Add((target, evt, handler));
+                    }
+
+                    _logger.LogInformation("✅ 已订阅 RTCP 反馈事件: {Source}", $"{source}.{evt.Name}");
+                    attached = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "⚠️ 订阅 RTCP 反馈事件失败: {Source}", $"{source}.{evt.Name}");
+                }
+            }
+
+            return attached;
+        }
+
+        private Delegate? CreateRtcpFeedbackDelegate(EventInfo eventInfo, string sourceTag)
+        {
+            var handlerType = eventInfo.EventHandlerType;
+            if (handlerType == null) return null;
+
+            var invokeMethod = handlerType.GetMethod("Invoke");
+            if (invokeMethod == null) return null;
+
+            var parameters = invokeMethod.GetParameters()
+                .Select(p => Expression.Parameter(p.ParameterType, p.Name))
+                .ToArray();
+
+            var argsArray = Expression.NewArrayInit(typeof(object),
+                parameters.Select(p => Expression.Convert(p, typeof(object))));
+
+            var callbackMethod = typeof(WebRTCReceiver).GetMethod(nameof(HandleRtcpFeedback), BindingFlags.Instance | BindingFlags.NonPublic);
+            if (callbackMethod == null)
+            {
+                return null;
+            }
+
+            var callExpression = Expression.Call(
+                Expression.Constant(this),
+                callbackMethod,
+                Expression.Constant(sourceTag, typeof(string)),
+                argsArray);
+
+            return Expression.Lambda(handlerType, callExpression, parameters).Compile();
+        }
+
+        private static bool IsRtcpFeedbackEvent(string? eventName)
+        {
+            if (string.IsNullOrWhiteSpace(eventName))
+            {
+                return false;
+            }
+
+            var lower = eventName.ToLowerInvariant();
+
+            if (lower.Contains("report"))
+            {
+                return false;
+            }
+
+            return lower.Contains("pli") ||
+                   lower.Contains("pictureloss") ||
+                   lower.Contains("fullintra") ||
+                   lower.Contains("fir") ||
+                   lower.Contains("feedback") ||
+                   lower.Contains("rtcp") ||
+                   lower.Contains("nack");
+        }
+
+        private static bool IsPotentialRtpContainer(Type type, string memberName)
+        {
+            var lowerName = memberName.ToLowerInvariant();
+            if (lowerName.Contains("rtp") || lowerName.Contains("session"))
+            {
+                return true;
+            }
+
+            var typeName = type.FullName?.ToLowerInvariant() ?? type.Name.ToLowerInvariant();
+            return typeName.Contains("rtp") || typeName.Contains("session");
+        }
+
+        private void HandleRtcpFeedback(string source, object?[]? args)
+        {
+            try
+            {
+                if (!ShouldTriggerKeyframe(source, args))
+                {
+                    _logger.LogTrace("ℹ️ 捕获到非关键帧类 RTCP 事件: {Source}", source);
+                    return;
+                }
+
+                string argsSummary = args == null
+                    ? "无参数"
+                    : string.Join(", ", args.Select(a => a?.GetType().Name ?? "null"));
+
+                _logger.LogInformation("📥 捕获到浏览器关键帧请求 ({Source})，参数: {Args}", source, argsSummary);
+                RequestKeyframeFromFeedback(source);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "⚠️ 处理 RTCP 反馈时发生异常: {Source}", source);
+            }
+        }
+
+        private static bool ShouldTriggerKeyframe(string source, object?[]? args)
+        {
+            if (ContainsKeyframeHint(source))
+            {
+                return true;
+            }
+
+            if (args == null)
+            {
+                return false;
+            }
+
+            foreach (var arg in args)
+            {
+                if (arg == null)
+                {
+                    continue;
+                }
+
+                if (ContainsKeyframeHint(arg.GetType().Name))
+                {
+                    return true;
+                }
+
+                var argString = arg.ToString();
+                if (!string.IsNullOrEmpty(argString) && ContainsKeyframeHint(argString))
+                {
+                    return true;
+                }
+
+                var argType = arg.GetType();
+                var feedbackTypeProperty = argType.GetProperty("FeedbackType") ?? argType.GetProperty("FeedbackMessageType");
+                if (feedbackTypeProperty != null)
+                {
+                    var value = feedbackTypeProperty.GetValue(arg)?.ToString();
+                    if (!string.IsNullOrEmpty(value) && ContainsKeyframeHint(value))
+                    {
+                        return true;
+                    }
+                }
+
+                var messageTypeProperty = argType.GetProperty("MessageType");
+                if (messageTypeProperty != null)
+                {
+                    var value = messageTypeProperty.GetValue(arg)?.ToString();
+                    if (!string.IsNullOrEmpty(value) && ContainsKeyframeHint(value))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ContainsKeyframeHint(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            var lower = text.ToLowerInvariant();
+            return lower.Contains("pli") ||
+                   lower.Contains("pictureloss") ||
+                   lower.Contains("fullintra") ||
+                   lower.Contains("fir");
+        }
+
+        private void RequestKeyframeFromFeedback(string source)
+        {
+            lock (_rtcpFeedbackLock)
+            {
+                var now = DateTime.UtcNow;
+                if (_lastKeyframeRequestTime != DateTime.MinValue &&
+                    (now - _lastKeyframeRequestTime) < KEYFRAME_REQUEST_COOLDOWN)
+                {
+                    _logger.LogDebug("⏱️ 忽略过于频繁的关键帧请求: {Source}", source);
+                    return;
+                }
+
+                _lastKeyframeRequestTime = now;
+            }
+
+            _logger.LogInformation("🎯 已根据 RTCP 反馈触发关键帧请求: {Source}", source);
+            OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
         }
         
         /// <summary>
@@ -3248,6 +3553,24 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     _stereoOpusEncoder?.Dispose();
                     _stereoOpusEncoder = null;
+                }
+
+                lock (_rtcpFeedbackLock)
+                {
+                    foreach (var subscription in _rtcpFeedbackSubscriptions)
+                    {
+                        try
+                        {
+                            subscription.@event.RemoveEventHandler(subscription.target, subscription.handler);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "⚠️ 移除 RTCP 反馈事件处理程序失败: {Event}", subscription.@event.Name);
+                        }
+                    }
+
+                    _rtcpFeedbackSubscriptions.Clear();
+                    _rtcpSubscribedEventKeys.Clear();
                 }
                 
                 _peerConnection?.close();

@@ -18,20 +18,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Settings, Monitor, Gauge, Network, Cpu } from 'lucide-react'
+import { Settings, Monitor, Gauge, Network, Cpu, AlertTriangle, Loader2 } from 'lucide-react'
 import {
   playStationService,
   type DeviceStreamingSettings,
   type DeviceStreamingOptions,
 } from '@/service/playstation.service'
 
-interface DeviceSettingsDialogProps {
+export interface DeviceSettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   deviceId: string
   deviceName: string
   defaultSettings?: DeviceStreamingSettings
   onSave?: (settings: DeviceStreamingSettings) => void
+  onDelete?: () => void | Promise<void>
 }
 
 const DEFAULT_SETTINGS: DeviceStreamingSettings = {
@@ -80,6 +81,7 @@ export function DeviceSettingsDialog({
   deviceName,
   defaultSettings,
   onSave,
+  onDelete,
 }: DeviceSettingsDialogProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -89,6 +91,7 @@ export function DeviceSettingsDialog({
   const [options, setOptions] = useState<DeviceStreamingOptions | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   useEffect(() => {
     if (!open || !deviceId) {
@@ -385,6 +388,49 @@ export function DeviceSettingsDialog({
               {t('devices.settings.streamTypeHint')}
             </p>
           </div>
+
+          {onDelete && (
+            <div className="rounded-xl border border-red-200/80 dark:border-red-900/40 bg-red-50/60 dark:bg-red-950/20 px-4 py-4 sm:px-5 sm:py-5 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="mt-1 flex h-8 w-8 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/40">
+                  <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                </div>
+                <div className="flex-1 space-y-1.5">
+                  <h3 className="text-sm font-semibold text-red-700 dark:text-red-300">
+                    {t('devices.settings.deleteSection.title')}
+                  </h3>
+                  <p className="text-xs text-red-600/90 dark:text-red-300/80 leading-relaxed">
+                    {t('devices.settings.deleteSection.description')}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="destructive"
+                  onClick={async () => {
+                    if (isDeleting || !onDelete) return
+                    try {
+                      setIsDeleting(true)
+                      await onDelete()
+                    } finally {
+                      setIsDeleting(false)
+                    }
+                  }}
+                  disabled={isDeleting}
+                  className="min-w-[120px]"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {t('devices.settings.deleteSection.loading')}
+                    </>
+                  ) : (
+                    t('devices.settings.deleteSection.action')
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
 
         </div>
 

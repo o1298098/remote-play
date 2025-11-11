@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import type { DragEvent } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { Edit3, Check } from 'lucide-react'
 import { useGamepadNavigation } from '@/hooks/use-gamepad-navigation'
 import { BindDeviceDialog } from './components/BindDeviceDialog'
-import { DeviceSettingsDialog } from './components/DeviceSettingsDialog'
+import { DeviceSettingsDialog, type DeviceSettingsDialogProps } from './components/DeviceSettingsDialog'
 import { DevicesHeader } from './components/DevicesHeader'
 import { DeviceCard } from './components/DeviceCard'
 import { AddDeviceCard } from './components/AddDeviceCard'
@@ -17,6 +21,11 @@ import {
 import { useDeviceStatus } from '@/hooks/use-device-status'
 import type { Console } from '@/types/device'
 import { mapDeviceStatus } from '@/utils/device-status'
+
+const DEVICE_ORDER_STORAGE_KEY = 'psrp_device_order'
+
+const resolveDeviceKey = (device: { userDeviceId?: string | null; id: string }) =>
+  device.userDeviceId || device.id
 
 export default function Devices() {
   const { t } = useTranslation()
@@ -31,6 +40,12 @@ export default function Devices() {
   const [selectedDeviceName, setSelectedDeviceName] = useState<string>('')
   const [selectedDeviceSettings, setSelectedDeviceSettings] = useState<DeviceStreamingSettings | undefined>(undefined)
   const [selectedDeviceForRegister, setSelectedDeviceForRegister] = useState<ConsoleWithSettings | null>(null)
+  const [selectedConsole, setSelectedConsole] = useState<ConsoleWithSettings | null>(null)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const originalOrderRef = useRef<ConsoleWithSettings[] | null>(null)
+  const dropCompletedRef = useRef(false)
+  const [isReorderMode, setIsReorderMode] = useState(false)
   const { toast } = useToast()
 
   // 启用手柄导航（只在没有对话框打开时启用）
@@ -55,13 +70,61 @@ export default function Devices() {
   }, [])
 
   // 加载设备列表
+  const applyStoredOrder = useCallback((devices: ConsoleWithSettings[]) => {
+    if (typeof window === 'undefined') {
+      return devices
+    }
+
+    try {
+      const stored = localStorage.getItem(DEVICE_ORDER_STORAGE_KEY)
+      if (!stored) {
+        return devices
+      }
+
+      const order = JSON.parse(stored) as unknown
+      if (!Array.isArray(order)) {
+        return devices
+      }
+
+      const map = new Map(devices.map((device) => [resolveDeviceKey(device), device]))
+      const sorted: ConsoleWithSettings[] = []
+
+      for (const identifier of order as string[]) {
+        const matched = map.get(identifier)
+        if (matched) {
+          sorted.push(matched)
+          map.delete(identifier)
+        }
+      }
+
+      if (map.size > 0) {
+        sorted.push(...map.values())
+      }
+
+      return sorted
+    } catch (error) {
+      console.warn('加载设备排序信息失败:', error)
+      return devices
+    }
+  }, [])
+
+  const persistOrder = useCallback((devices: ConsoleWithSettings[]) => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    const order = devices.map((device) => resolveDeviceKey(device))
+    localStorage.setItem(DEVICE_ORDER_STORAGE_KEY, JSON.stringify(order))
+  }, [])
+
   const loadDevices = useCallback(async () => {
     setIsLoading(true)
     try {
       const response = await playStationService.getMyDevices()
       if (response.success && response.result) {
         const mappedDevices: ConsoleWithSettings[] = response.result.map(mapUserDeviceToConsole)
-        setConsoles(mappedDevices)
+        const orderedDevices = applyStoredOrder(mappedDevices)
+        setConsoles(orderedDevices)
+        persistOrder(orderedDevices)
       } else {
         setConsoles([])
       }
@@ -76,7 +139,7 @@ export default function Devices() {
     } finally {
       setIsLoading(false)
     }
-  }, [mapUserDeviceToConsole, toast])
+  }, [mapUserDeviceToConsole, toast, applyStoredOrder, persistOrder])
 
   // 处理设备状态更新（来自 SignalR 的已注册设备状态）
   const handleDevicesUpdate = useCallback((devices: UserDevice[]) => {
@@ -202,8 +265,255 @@ export default function Devices() {
     setSelectedDeviceName(deviceName)
     const targetConsole = consoles.find((console) => console.id === deviceId)
     setSelectedDeviceSettings(targetConsole?.settings)
+    setSelectedConsole(targetConsole ?? null)
     setSettingsDialogOpen(true)
   }
+
+  const reorderDevices = useCallback(
+    (sourceId: string, targetId: string, options?: { persist?: boolean }) => {
+      setConsoles((prevConsoles) => {
+        if (sourceId === targetId) {
+          return prevConsoles
+        }
+
+        const fromIndex = prevConsoles.findIndex(
+          (item) => resolveDeviceKey(item) === sourceId
+        )
+        const toIndex = prevConsoles.findIndex(
+          (item) => resolveDeviceKey(item) === targetId
+        )
+
+        if (fromIndex === -1 || toIndex === -1) {
+          return prevConsoles
+        }
+
+        const updated = [...prevConsoles]
+        const [moved] = updated.splice(fromIndex, 1)
+        updated.splice(toIndex, 0, moved)
+
+        if (options?.persist !== false) {
+          persistOrder(updated)
+        }
+
+        return updated
+      })
+    },
+    [persistOrder]
+  )
+
+  const handleCardDragStart = (event: DragEvent<HTMLDivElement>, device: ConsoleWithSettings) => {
+    if (!isReorderMode) {
+      event.preventDefault()
+      return
+    }
+    const identifier = resolveDeviceKey(device)
+    setDraggingId(identifier)
+    setDragOverId(null)
+    dropCompletedRef.current = false
+    originalOrderRef.current = [...consoles]
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/plain', identifier)
+    }
+  }
+
+  const handleCardDragEnter = (_event: DragEvent<HTMLDivElement>, device: ConsoleWithSettings) => {
+    if (!isReorderMode) {
+      return
+    }
+    const identifier = resolveDeviceKey(device)
+    if (!draggingId || draggingId === identifier) {
+      return
+    }
+    setDragOverId(identifier)
+  }
+
+  const handleCardDragOver = (_event: DragEvent<HTMLDivElement>, device: ConsoleWithSettings) => {
+    if (!isReorderMode) {
+      return
+    }
+    const identifier = resolveDeviceKey(device)
+    if (!draggingId || draggingId === identifier) {
+      return
+    }
+    if (dragOverId !== identifier) {
+      setDragOverId(identifier)
+      reorderDevices(draggingId, identifier, { persist: false })
+    } else {
+      reorderDevices(draggingId, identifier, { persist: false })
+    }
+  }
+
+  const handleCardDragLeave = (_event: DragEvent<HTMLDivElement>, device: ConsoleWithSettings) => {
+    if (!isReorderMode) {
+      return
+    }
+    const identifier = resolveDeviceKey(device)
+    if (dragOverId === identifier) {
+      setDragOverId(null)
+    }
+  }
+
+  const handleCardDrop = (_event: DragEvent<HTMLDivElement>, device: ConsoleWithSettings) => {
+    if (!isReorderMode) {
+      return
+    }
+    const identifier = resolveDeviceKey(device)
+    if (draggingId && identifier && draggingId !== identifier) {
+      reorderDevices(draggingId, identifier)
+      dropCompletedRef.current = true
+    } else {
+      // 即使未发生序列变化，也需要持久化当前顺序
+      setConsoles((prev) => {
+        persistOrder(prev)
+        return prev
+      })
+      dropCompletedRef.current = true
+    }
+    setDraggingId(null)
+    setDragOverId(null)
+  }
+
+  const handleCardDragEnd = () => {
+    if (!isReorderMode) {
+      return
+    }
+    if (!dropCompletedRef.current && originalOrderRef.current) {
+      setConsoles(originalOrderRef.current)
+    }
+    setDraggingId(null)
+    setDragOverId(null)
+    originalOrderRef.current = null
+    dropCompletedRef.current = false
+  }
+
+  const handleReorderToggle = useCallback(
+    (next: boolean) => {
+      if (next && consoles.length <= 1) {
+        return false
+      }
+      setIsReorderMode((prev) => {
+        if (prev === next) {
+          return prev
+        }
+        if (next) {
+          toast({
+            title: t('devices.console.reorderModeEnabledTitle'),
+            description: t('devices.console.reorderModeEnabledDescription'),
+          })
+        } else {
+          setDraggingId(null)
+          setDragOverId(null)
+          originalOrderRef.current = null
+          dropCompletedRef.current = false
+        }
+        return next
+      })
+      return true
+    },
+    [consoles.length, toast, t]
+  )
+
+  useEffect(() => {
+    if (isReorderMode && consoles.length <= 1) {
+      setIsReorderMode(false)
+    }
+  }, [consoles.length, isReorderMode])
+
+  const handleDelete = async (consoleItem: ConsoleWithSettings) => {
+    const confirmed = window.confirm(
+      t('devices.console.deleteConfirm', {
+        name: consoleItem.name,
+      })
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    if (!consoleItem.userDeviceId) {
+      toast({
+        title: t('devices.console.deleteFailedTitle'),
+        description: t('devices.console.deleteInvalidId'),
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      const response = await playStationService.unbindDevice(consoleItem.userDeviceId)
+      if (response.success) {
+        setConsoles((prevConsoles) => {
+          const updated = prevConsoles.filter(
+            (item) => resolveDeviceKey(item) !== resolveDeviceKey(consoleItem)
+          )
+          persistOrder(updated)
+          return updated
+        })
+
+        toast({
+          title: t('devices.console.deleteSuccessTitle'),
+          description: t('devices.console.deleteSuccessDescription', {
+            name: consoleItem.name,
+          }),
+        })
+        if (selectedConsole?.userDeviceId === consoleItem.userDeviceId) {
+          setSettingsDialogOpen(false)
+          setSelectedDeviceId(null)
+          setSelectedDeviceName('')
+          setSelectedDeviceSettings(undefined)
+          setSelectedConsole(null)
+        }
+      } else {
+        toast({
+          title: t('devices.console.deleteFailedTitle'),
+          description: response.errorMessage || t('devices.console.deleteFailedDescription'),
+          variant: 'destructive',
+        })
+      }
+    } catch (error) {
+      console.error('删除设备失败:', error)
+      toast({
+        title: t('devices.console.deleteFailedTitle'),
+        description:
+          error instanceof Error
+            ? error.message
+            : t('devices.console.deleteFailedDescription'),
+        variant: 'destructive',
+      })
+    } finally {
+      // no-op
+    }
+  }
+
+  const deviceSettingsDialogProps: DeviceSettingsDialogProps | null = selectedDeviceId
+    ? {
+        open: settingsDialogOpen,
+        onOpenChange: (openState) => {
+          setSettingsDialogOpen(openState)
+          if (!openState) {
+            setSelectedDeviceSettings(undefined)
+            setSelectedConsole(null)
+          }
+        },
+        deviceId: selectedDeviceId,
+        deviceName: selectedDeviceName,
+        defaultSettings: selectedDeviceSettings,
+        onDelete: selectedConsole
+          ? () => handleDelete(selectedConsole)
+          : undefined,
+        onSave: (settings) => {
+          setConsoles((prevConsoles) =>
+            prevConsoles.map((consoleItem) =>
+              consoleItem.id === selectedDeviceId
+                ? { ...consoleItem, settings }
+                : consoleItem
+            )
+          )
+          setSelectedDeviceSettings(settings)
+        },
+      }
+    : null
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950 relative overflow-hidden">
@@ -220,9 +530,40 @@ export default function Devices() {
       {/* Main Content */}
       <main className="relative z-10 container mx-auto px-6 py-12">
         {/* 主标题 */}
-        <h2 className="text-4xl font-bold text-gray-900 dark:text-white mb-12">
-          {t('devices.title')}
-        </h2>
+        <div className="flex items-center gap-3 mb-12">
+          <h2 className="text-4xl font-bold text-gray-900 dark:text-white">
+            {t('devices.title')}
+          </h2>
+          {consoles.length > 1 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'h-10 w-10 rounded-full border transition-all',
+                isReorderMode
+                  ? 'border-blue-500 bg-blue-600 text-white hover:bg-blue-600/90 hover:text-white'
+                  : 'border-transparent text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+              )}
+              onClick={() => {
+                handleReorderToggle(!isReorderMode)
+              }}
+              aria-pressed={isReorderMode}
+              aria-label={
+                isReorderMode
+                  ? t('devices.console.disableReorder')
+                  : t('devices.console.enableReorder')
+              }
+            >
+              {isReorderMode ? <Check className="h-4 w-4" /> : <Edit3 className="h-4 w-4" />}
+              <span className="sr-only">
+                {isReorderMode
+                  ? t('devices.console.disableReorder')
+                  : t('devices.console.enableReorder')}
+              </span>
+            </Button>
+          )}
+        </div>
 
         {/* 主机卡片 */}
         <div className="flex flex-wrap gap-6 items-stretch">
@@ -242,6 +583,22 @@ export default function Devices() {
                   onConnect={handleConnect}
                   onRegister={handleRegister}
                   onSettings={handleSettings}
+                  onDragStart={consoles.length > 1 ? handleCardDragStart : undefined}
+                  onDragEnter={consoles.length > 1 ? handleCardDragEnter : undefined}
+                  onDragOver={consoles.length > 1 ? handleCardDragOver : undefined}
+                  onDragLeave={consoles.length > 1 ? handleCardDragLeave : undefined}
+                  onDrop={consoles.length > 1 ? handleCardDrop : undefined}
+                  onDragEnd={consoles.length > 1 ? handleCardDragEnd : undefined}
+                  isDragging={
+                    consoles.length > 1 &&
+                    draggingId === resolveDeviceKey(consoleItem)
+                  }
+                  isDragOver={
+                    consoles.length > 1 &&
+                    dragOverId === resolveDeviceKey(consoleItem) &&
+                    draggingId !== resolveDeviceKey(consoleItem)
+                  }
+                  isReorderMode={isReorderMode}
                 />
               ))}
 
@@ -270,30 +627,7 @@ export default function Devices() {
       />
 
       {/* 设备设置对话框 */}
-      {selectedDeviceId && (
-        <DeviceSettingsDialog
-          open={settingsDialogOpen}
-          onOpenChange={(openState) => {
-            setSettingsDialogOpen(openState)
-            if (!openState) {
-              setSelectedDeviceSettings(undefined)
-            }
-          }}
-          deviceId={selectedDeviceId}
-          deviceName={selectedDeviceName}
-          defaultSettings={selectedDeviceSettings}
-          onSave={(settings) => {
-            setConsoles((prevConsoles) =>
-              prevConsoles.map((consoleItem) =>
-                consoleItem.id === selectedDeviceId
-                  ? { ...consoleItem, settings }
-                  : consoleItem
-              )
-            )
-            setSelectedDeviceSettings(settings)
-          }}
-        />
-      )}
+      {deviceSettingsDialogProps && <DeviceSettingsDialog {...deviceSettingsDialogProps} />}
     </div>
   )
 }
