@@ -1,6 +1,8 @@
 /**
  * 优化 SDP 以降低延迟
  */
+const AUDIO_MIN_BUFFERED_PLAYBACK_TIME = 0.3
+
 export function optimizeSdpForLowLatency(
   sdp: string,
   options?: {
@@ -56,7 +58,7 @@ export function optimizeSdpForLowLatency(
           optimizedLines.push('a=x-google-flag:low-latency')
         }
         if (!sdp.includes('a=minBufferedPlaybackTime')) {
-          optimizedLines.push('a=minBufferedPlaybackTime:0')
+          optimizedLines.push(`a=minBufferedPlaybackTime:${AUDIO_MIN_BUFFERED_PLAYBACK_TIME}`)
         }
         videoOptimized = true
       }

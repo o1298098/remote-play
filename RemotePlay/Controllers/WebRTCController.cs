@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.Base;
+using RemotePlay.Models.WebRTC;
 using RemotePlay.Services;
 using RemotePlay.Services.Streaming;
 
@@ -571,49 +572,4 @@ namespace RemotePlay.Controllers
     
     // DTO Models
     
-    public class WebRTCOfferResponse
-    {
-        public required string SessionId { get; set; }
-        public required string Sdp { get; set; }
-        public required string Type { get; set; }
-    }
-    
-    public class WebRTCAnswerRequest
-    {
-        public required string SessionId { get; set; }
-        public required string Sdp { get; set; }
-        public string Type { get; set; } = "answer";
-    }
-    
-    public class WebRTCIceCandidateRequest
-    {
-        public required string SessionId { get; set; }
-        public required string Candidate { get; set; }
-        public string? SdpMid { get; set; }
-        public ushort SdpMLineIndex { get; set; }
-    }
-    
-    public class WebRTCSessionStatus
-    {
-        public required string SessionId { get; set; }
-        public required string ConnectionState { get; set; }
-        public required string IceConnectionState { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public TimeSpan Age { get; set; }
-    }
-    
-    public class LatencyReceiveRequest
-    {
-        public required string SessionId { get; set; }
-        public required string PacketType { get; set; }
-        public long FrameIndex { get; set; }
-        public DateTime ClientReceiveTime { get; set; }
-    }
-
-    public class WebRTCOfferRequest
-    {
-        public Guid? RemotePlaySessionId { get; set; }
-        public bool? PreferLanCandidates { get; set; }
-    }
 }
-

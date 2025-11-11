@@ -274,7 +274,7 @@ namespace RemotePlay.Services.Streaming
                         await SendFeedbackHistoryAsync(previousStateCopy, currentStateCopy);
                         historyCount++;
                         
-                        _logger.LogInformation("📤 Feedback History #{Count} sent (button change detected)", 
+                        _logger.LogDebug("📤 Feedback History #{Count} sent (button change detected)", 
                             historyCount);
                     }
                     

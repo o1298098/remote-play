@@ -44,6 +44,7 @@ namespace RemotePlay.Services.Streaming
         public int Flag { get; private set; }
         public int Channel { get; private set; }
         public uint Tsn { get; private set; }
+		public byte? DataType { get; private set; }
         public byte[]? Data { get; private set; }
         public PacketParams Params { get; private set; } = new PacketParams();
 
@@ -155,10 +156,12 @@ namespace RemotePlay.Services.Streaming
 
             if (chunkType == ChunkType.DATA)
             {
+				p.DataType = null;
                 if (payload.Length >= 9)
                 {
                     p.Tsn = BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(0, 4));
                     p.Channel = BinaryPrimitives.ReadUInt16BigEndian(payload.AsSpan(4, 2));
+					p.DataType = payload[8];
                     p.Data = payload.AsSpan(9).ToArray();
                 }
             }

@@ -1,14 +1,23 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Gamepad2, Keyboard, Save, RotateCcw, Gauge } from 'lucide-react'
+import { Label } from '@/components/ui/label'
+import { ArrowLeft, Gamepad2, Keyboard, Save, RotateCcw, Gauge, Vibrate } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { PS5ControllerLayout } from '@/components/PS5ControllerLayout'
 import { useGamepad, useGamepadInput } from '@/hooks/use-gamepad'
 import { type GamepadInputEvent } from '@/service/gamepad.service'
+import {
+  getRumbleSettings,
+  hasRumbleCapableGamepad,
+  onRumbleSettingsChange,
+  runRumbleTest,
+  updateRumbleSettings,
+  type RumbleSettings,
+} from '@/service/rumble.service'
 import {
   Select,
   SelectContent,
@@ -97,6 +106,8 @@ export default function ControllerMapping() {
   const [selectedGamepadIndex, setSelectedGamepadIndex] = useState<number | null>(null)
   const [buttonStates, setButtonStates] = useState<Array<{ pressed: boolean; value: number }>>([])
   const [axisStates, setAxisStates] = useState<number[]>([])
+  const [rumbleSettings, setRumbleSettingsState] = useState<RumbleSettings>(() => getRumbleSettings())
+  const [supportsRumble, setSupportsRumble] = useState<boolean>(false)
 
   // 初始化映射
   useEffect(() => {
@@ -119,6 +130,19 @@ export default function ControllerMapping() {
       loadDefaultMappings()
     }
   }, [isAuthenticated, navigate])
+
+  useEffect(() => {
+    const unsubscribe = onRumbleSettingsChange((settings) => {
+      setRumbleSettingsState(settings)
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    setSupportsRumble(hasRumbleCapableGamepad())
+  }, [connectedGamepads, selectedGamepadIndex, isGamepadConnected])
 
   useEffect(() => {
     if (!isGamepadConnected || connectedGamepads.length === 0) {
@@ -346,6 +370,48 @@ export default function ControllerMapping() {
   const leftStickDisplayY = -leftStickRawY
   const rightStickDisplayX = rightStickRawX
   const rightStickDisplayY = -rightStickRawY
+  const strengthPercent = Math.round(rumbleSettings.strength * 100)
+
+  const handleToggleRumble = useCallback(() => {
+    updateRumbleSettings({ enabled: !rumbleSettings.enabled })
+  }, [rumbleSettings.enabled])
+
+  const handleStrengthSliderChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const value = Number(event.target.value)
+      if (Number.isNaN(value)) {
+        return
+      }
+      updateRumbleSettings({ strength: value / 100 })
+    },
+    []
+  )
+
+  const handleTestRumble = useCallback(() => {
+    const settings = rumbleSettings
+    if (!settings.enabled || settings.strength <= 0) {
+      toast({
+        title: t('devices.controllerMapping.rumble.toastDisabled'),
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const success = runRumbleTest(settings)
+    setSupportsRumble(hasRumbleCapableGamepad())
+
+    if (success) {
+      toast({
+        title: t('devices.controllerMapping.rumble.toastTestSuccess'),
+      })
+    } else {
+      toast({
+        title: t('devices.controllerMapping.rumble.toastTestFailed'),
+        description: t('devices.controllerMapping.rumble.notSupported'),
+        variant: 'destructive',
+      })
+    }
+  }, [rumbleSettings, setSupportsRumble, t, toast])
 
   const handleStartMapping = (button: ControllerButton) => {
     setIsListening(button)
@@ -600,6 +666,81 @@ export default function ControllerMapping() {
                       })}
                     </div>
                   </div>
+
+                  <div className="pt-6 border-t border-gray-200 dark:border-gray-800 space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                        <Vibrate className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+                          {t('devices.controllerMapping.rumble.title')}
+                        </h4>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {t('devices.controllerMapping.rumble.description')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {rumbleSettings.enabled
+                          ? t('devices.controllerMapping.rumble.statusOn')
+                          : t('devices.controllerMapping.rumble.statusOff')}
+                      </span>
+                      <Button
+                        variant={rumbleSettings.enabled ? 'default' : 'outline'}
+                        onClick={handleToggleRumble}
+                        className="w-full sm:w-auto"
+                      >
+                        {rumbleSettings.enabled
+                          ? t('devices.controllerMapping.rumble.toggleDisable')
+                          : t('devices.controllerMapping.rumble.toggleEnable')}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label
+                          htmlFor="rumble-strength"
+                          className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
+                          {t('devices.controllerMapping.rumble.strengthLabel')}
+                        </Label>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {t('devices.controllerMapping.rumble.strengthValue', { value: strengthPercent })}
+                        </span>
+                      </div>
+                      <input
+                        id="rumble-strength"
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={strengthPercent}
+                        onChange={handleStrengthSliderChange}
+                        disabled={!rumbleSettings.enabled}
+                        className="w-full accent-blue-600 dark:accent-blue-500"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <Button
+                        variant="outline"
+                        onClick={handleTestRumble}
+                        disabled={!rumbleSettings.enabled}
+                        className="w-full sm:w-auto"
+                      >
+                        <Vibrate className="mr-2 h-4 w-4" />
+                        {t('devices.controllerMapping.rumble.test')}
+                      </Button>
+                      {!supportsRumble ? (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {t('devices.controllerMapping.rumble.notSupported')}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
                 </>
               )}
             </CardContent>
@@ -746,17 +887,37 @@ function StickVisualizer({ label, x, y, info, size = 220 }: StickVisualizerProps
               <circle cx={center} cy={center} r={radius} />
             </clipPath>
           </defs>
-          <circle cx={center} cy={center} r={radius} fill="#f3f4f6" stroke="#d1d5db" strokeDasharray="6 6" />
-          <line x1={center} y1={center - effectiveRadius} x2={center} y2={center + effectiveRadius} stroke="#d1d5db" strokeWidth="1" />
-          <line x1={center - effectiveRadius} y1={center} x2={center + effectiveRadius} y2={center} stroke="#d1d5db" strokeWidth="1" />
+          <circle
+            cx={center}
+            cy={center}
+            r={radius}
+            strokeDasharray="6 6"
+            strokeWidth="1"
+            className="fill-gray-100 stroke-gray-300 dark:fill-slate-800 dark:stroke-slate-600"
+          />
+          <line
+            x1={center}
+            y1={center - effectiveRadius}
+            x2={center}
+            y2={center + effectiveRadius}
+            strokeWidth="1"
+            className="stroke-gray-300 dark:stroke-slate-500"
+          />
+          <line
+            x1={center - effectiveRadius}
+            y1={center}
+            x2={center + effectiveRadius}
+            y2={center}
+            strokeWidth="1"
+            className="stroke-gray-300 dark:stroke-slate-500"
+          />
           <circle
             cx={pointerX}
             cy={pointerY}
             r="10"
-            fill="#3b82f6"
-            stroke="#1d4ed8"
             strokeWidth="2"
             clipPath={`url(#${clipPathId})`}
+            className="fill-blue-500 stroke-blue-700 dark:fill-blue-400 dark:stroke-blue-500"
           />
         </svg>
       </div>

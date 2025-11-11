@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Services.Streaming;
+using RemotePlay.Hubs;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -15,6 +17,7 @@ namespace RemotePlay.Services
     {
         private readonly ILogger<ControllerService> _logger;
         private readonly IStreamingService _streamingService;
+		private readonly IHubContext<ControllerHub> _controllerHubContext;
         
         // 每个会话的控制器实例
         private readonly ConcurrentDictionary<Guid, ControllerInstance> _controllers = new();
@@ -24,12 +27,14 @@ namespace RemotePlay.Services
         private const int StateIntervalMinMs = 8;
         private const int MaxEvents = 5;
 
-        public ControllerService(
-            ILogger<ControllerService> logger,
-            IStreamingService streamingService)
+		public ControllerService(
+			ILogger<ControllerService> logger,
+			IStreamingService streamingService,
+			IHubContext<ControllerHub> controllerHubContext)
         {
             _logger = logger;
             _streamingService = streamingService;
+			_controllerHubContext = controllerHubContext ?? throw new ArgumentNullException(nameof(controllerHubContext));
         }
 
         public async Task<bool> ConnectAsync(Guid sessionId, CancellationToken ct = default)
@@ -47,8 +52,14 @@ namespace RemotePlay.Services
                 return false;
             }
 
-            var controller = new ControllerInstance(sessionId, _logger, _streamingService);
-            _controllers[sessionId] = controller;
+			var controller = new ControllerInstance(sessionId, this, _logger, _streamingService);
+			_controllers[sessionId] = controller;
+
+			var stream = await _streamingService.GetStreamAsync(sessionId);
+			if (stream != null)
+			{
+				controller.AttachStream(stream);
+			}
             
             _logger.LogInformation("控制器已连接到会话 {SessionId}", sessionId);
             return true;
@@ -178,6 +189,36 @@ namespace RemotePlay.Services
             return Enum.GetNames(typeof(FeedbackEvent.ButtonType)).ToList();
         }
 
+		internal async Task BroadcastRumbleAsync(Guid sessionId, RumbleEventArgs rumble)
+		{
+			try
+			{
+				var payload = new
+				{
+					sessionId,
+					rumble.Unknown,
+					rawLeft = rumble.Left,
+					rawRight = rumble.Right,
+					left = rumble.AdjustedLeft,
+					right = rumble.AdjustedRight,
+					multiplier = rumble.Multiplier,
+					ps5RumbleIntensity = rumble.Ps5RumbleIntensity,
+					ps5TriggerIntensity = rumble.Ps5TriggerIntensity,
+					timestamp = rumble.TimestampUtc
+				};
+
+				await _controllerHubContext.Clients
+					.Group(GetControllerGroupName(sessionId))
+					.SendAsync("ControllerRumble", payload);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Failed to broadcast rumble event for session {SessionId}", sessionId);
+			}
+		}
+
+		private static string GetControllerGroupName(Guid sessionId) => $"session_{sessionId}";
+
         /// <summary>
         /// 控制器实例（内部类）
         /// 对应Python的Controller类的实例
@@ -185,8 +226,11 @@ namespace RemotePlay.Services
         private class ControllerInstance
         {
             private readonly Guid _sessionId;
+			private readonly ControllerService _owner;
             private readonly ILogger _logger;
             private readonly IStreamingService _streamingService;
+			private RPStreamV2? _attachedStream;
+			private readonly object _streamSubscriptionLock = new();
 
             private ushort _sequenceEvent = 0;
             private ushort _sequenceState = 0;
@@ -203,15 +247,50 @@ namespace RemotePlay.Services
             public bool IsRunning => _workerTask != null && !_workerTask.IsCompleted;
             public bool IsReady => _streamingService.IsStreamRunningAsync(_sessionId).Result;
 
-            public ControllerInstance(
-                Guid sessionId,
-                ILogger logger,
-                IStreamingService streamingService)
+			public ControllerInstance(
+				Guid sessionId,
+				ControllerService owner,
+				ILogger logger,
+				IStreamingService streamingService)
             {
                 _sessionId = sessionId;
+				_owner = owner;
                 _logger = logger;
                 _streamingService = streamingService;
             }
+
+			public void AttachStream(RPStreamV2 stream)
+			{
+				ArgumentNullException.ThrowIfNull(stream);
+
+				lock (_streamSubscriptionLock)
+				{
+					if (ReferenceEquals(_attachedStream, stream))
+					{
+						return;
+					}
+
+					if (_attachedStream != null)
+					{
+						_attachedStream.RumbleReceived -= OnRumbleReceived;
+					}
+
+					_attachedStream = stream;
+					_attachedStream.RumbleReceived += OnRumbleReceived;
+				}
+			}
+
+			private void DetachStream()
+			{
+				lock (_streamSubscriptionLock)
+				{
+					if (_attachedStream != null)
+					{
+						_attachedStream.RumbleReceived -= OnRumbleReceived;
+						_attachedStream = null;
+					}
+				}
+			}
 
             public void Start()
             {
@@ -229,6 +308,7 @@ namespace RemotePlay.Services
             public void Stop()
             {
                 _cts?.Cancel();
+				DetachStream();
                 _workerTask?.Wait(TimeSpan.FromSeconds(1));
                 _cts?.Dispose();
                 _cts = null;
@@ -454,6 +534,7 @@ namespace RemotePlay.Services
                 var stream = await _streamingService.GetStreamAsync(_sessionId);
                 if (stream != null)
                 {
+					AttachStream(stream);
                     _logger.LogDebug("发送控制器事件到流: 事件数={EventCount}, 数据长度={DataLength}, 序列号={Sequence}, 会话={SessionId}", 
                         eventCount, data.Length, _sequenceEvent, _sessionId);
                     
@@ -471,6 +552,11 @@ namespace RemotePlay.Services
                 }
             }
 
+			private void OnRumbleReceived(object? sender, RumbleEventArgs e)
+			{
+				_ = _owner.BroadcastRumbleAsync(_sessionId, e);
+			}
+
             private bool CheckSession()
             {
                 var stream = _streamingService.GetStreamAsync(_sessionId).Result;
@@ -480,6 +566,7 @@ namespace RemotePlay.Services
                     return false;
                 }
 
+				AttachStream(stream);
                 return true;
             }
         }

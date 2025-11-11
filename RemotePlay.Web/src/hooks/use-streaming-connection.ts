@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGamepadInput, useGamepad } from '@/hooks/use-gamepad'
 import { streamingService } from '@/service/streaming.service'
+import { streamingHubService } from '@/service/streaming-hub.service'
 import { controllerService } from '@/service/controller.service'
+import {
+  applyControllerRumbleToGamepads,
+  getRumbleSettings,
+  onRumbleSettingsChange,
+  type RumbleSettings,
+} from '@/service/rumble.service'
 import { playStationService } from '@/service/playstation.service'
 import { apiRequest } from '@/service/api-client'
 import { optimizeSdpForLowLatency, optimizeVideoForLowLatency } from '@/utils/webrtc-optimization'
@@ -44,6 +51,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const gamepadEnabledRef = useRef<boolean>(false)
   const isConnectedRef = useRef<boolean>(false)
   const hasAttemptedInitialConnectRef = useRef<boolean>(false)
+  const rumbleSettingsRef = useRef<RumbleSettings>(getRumbleSettings())
 
   const {
     getNormalizedState,
@@ -60,6 +68,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     onPointerLockChange: setPointerLock,
     onMouseMove: setMouseVelocity,
   })
+
+  useEffect(() => {
+    const unsubscribe = onRumbleSettingsChange((settings) => {
+      rumbleSettingsRef.current = settings
+    })
+    return () => {
+      unsubscribe()
+    }
+  }, [])
 
   const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; l2: number; r2: number; timestamp: number }>({
     leftX: 0,
@@ -88,6 +105,85 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const lastDecodedFrameCountRef = useRef<number | null>(null)
   const lastPlaybackPositionRef = useRef<number | null>(null)
   const lastKeyframeRequestRef = useRef<number>(0)
+  const pendingKeyframeRequestRef = useRef<boolean>(false)
+
+  const KEYFRAME_REQUEST_COOLDOWN_MS = 8000
+
+  const requestKeyframe = useCallback(
+    (reason: string) => {
+      const now = Date.now()
+      const sessionId = webrtcSessionIdRef.current || webrtcSessionId
+      if (!sessionId) {
+        console.debug('⚠️ 无法请求关键帧，缺少 SessionId', { reason })
+        return false
+      }
+
+      if (pendingKeyframeRequestRef.current) {
+        console.debug('⚠️ 关键帧请求进行中，跳过', { reason })
+        return false
+      }
+
+      if (now - lastKeyframeRequestRef.current < KEYFRAME_REQUEST_COOLDOWN_MS) {
+        console.debug('⚠️ 关键帧请求冷却中', {
+          reason,
+          elapsed: now - lastKeyframeRequestRef.current,
+        })
+        return false
+      }
+
+      lastKeyframeRequestRef.current = now
+      pendingKeyframeRequestRef.current = true
+
+      console.warn('⚠️ 触发关键帧请求', {
+        reason,
+        sessionId,
+      })
+
+      const sendKeyframeRequest = async () => {
+        try {
+          const signalrResult = await streamingHubService.requestKeyframe(sessionId)
+          if (!signalrResult) {
+            console.warn('⚠️ SignalR 请求关键帧未成功，尝试使用 HTTP 备用方案', { reason })
+            const response = await streamingService.requestKeyframe(sessionId)
+            if (!response.success) {
+              console.warn('⚠️ HTTP 关键帧请求失败', {
+                reason,
+                message: response.message,
+                error: response.errorMessage,
+              })
+            } else {
+              console.log('🎯 HTTP 关键帧请求已发送', { reason })
+            }
+          } else {
+            console.log('🎯 SignalR 关键帧请求已发送', { reason })
+          }
+        } catch (error) {
+          console.error('❌ 请求关键帧失败，尝试使用 HTTP 备用方案', error, { reason })
+          try {
+            const response = await streamingService.requestKeyframe(sessionId)
+            if (!response.success) {
+              console.warn('⚠️ HTTP 关键帧请求失败', {
+                reason,
+                message: response.message,
+                error: response.errorMessage,
+              })
+            } else {
+              console.log('🎯 HTTP 关键帧请求已发送', { reason })
+            }
+          } catch (httpError) {
+            console.error('❌ HTTP 请求关键帧异常:', httpError, { reason })
+          }
+        } finally {
+          pendingKeyframeRequestRef.current = false
+        }
+      }
+
+      void sendKeyframeRequest()
+
+      return true
+    },
+    [KEYFRAME_REQUEST_COOLDOWN_MS, webrtcSessionId]
+  )
 
   const applyReceiverLatencyHints = useCallback((receiver: RTCRtpReceiver) => {
     const anyReceiver = receiver as any
@@ -639,6 +735,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     lastDecodedFrameCountRef.current = null
     lastPlaybackPositionRef.current = null
     lastKeyframeRequestRef.current = 0
+    pendingKeyframeRequestRef.current = false
 
     if (keyboardCleanupRef.current) {
       keyboardCleanupRef.current()
@@ -646,6 +743,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     controllerService.disconnect().catch(() => {})
+    streamingHubService.disconnect().catch(() => {})
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close()
@@ -1092,6 +1190,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
                   console.error('❌ 恢复播放失败:', err)
                 })
               }
+              requestKeyframe('video-waiting')
             })
 
             video.addEventListener('stalled', () => {
@@ -1102,6 +1201,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
                   console.error('❌ 恢复播放失败:', err)
                 })
               }
+              requestKeyframe('video-stalled')
             })
 
             video.addEventListener('progress', () => {
@@ -1329,6 +1429,27 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
   }, [isConnected, setupMouseRightStick, tearDownMouseRightStick])
 
+  useEffect(() => {
+    const unsubscribe = controllerService.onRumble((event) => {
+      if (!isConnectedRef.current || !gamepadEnabledRef.current || !isGamepadEnabled) {
+        return
+      }
+
+      const settings = rumbleSettingsRef.current
+      if (!settings.enabled || settings.strength <= 0) {
+        return
+      }
+
+      applyControllerRumbleToGamepads(event, {
+        settings,
+      })
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [isGamepadEnabled])
+
   useGamepadInput(handleGamepadInput, isConnected && gamepadEnabledRef.current && isGamepadEnabled)
 
   useEffect(() => {
@@ -1356,8 +1477,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       return
     }
 
-    const STALL_THRESHOLD_MS = 3000
-    const REQUEST_COOLDOWN_MS = 8000
+    const STALL_THRESHOLD_MS = 1500
     const POSITION_EPSILON = 0.03
 
     lastVideoActivityRef.current = Date.now()
@@ -1428,37 +1548,12 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         return
       }
 
-      if (now - lastKeyframeRequestRef.current < REQUEST_COOLDOWN_MS) {
-        return
-      }
-
-      const sessionId = maybeEnsureSessionId()
-      if (!sessionId) {
-        return
-      }
-
-      lastKeyframeRequestRef.current = now
-      lastVideoActivityRef.current = now
-      console.warn('⚠️ 检测到视频播放停滞，自动请求关键帧', {
-        inactivityMs: inactivity,
-        sessionId,
-      })
-
-      streamingService
-        .requestKeyframe(sessionId)
-        .then((response) => {
-          if (response.success) {
-            console.log('🎯 自动关键帧请求已发送')
-          } else {
-            console.warn('⚠️ 自动关键帧请求失败', {
-              message: response.message,
-              error: response.errorMessage,
-            })
-          }
+      if (requestKeyframe('monitor-stall')) {
+        lastVideoActivityRef.current = now
+        console.warn('⚠️ 检测到视频播放停滞，已请求关键帧', {
+          inactivityMs: inactivity,
         })
-        .catch((error) => {
-          console.error('❌ 自动请求关键帧异常:', error)
-        })
+      }
     }
 
     keyframeMonitorIntervalRef.current = window.setInterval(checkStall, 1000)
@@ -1469,7 +1564,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         keyframeMonitorIntervalRef.current = null
       }
     }
-  }, [isConnected, webrtcSessionId, videoRef])
+  }, [isConnected, webrtcSessionId, videoRef, requestKeyframe])
 
   useEffect(() => {
     isStatsEnabledRef.current = isStatsEnabled

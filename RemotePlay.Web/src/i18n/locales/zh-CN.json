@@ -244,6 +244,21 @@
         "buttonPressed": "按下",
         "buttonReleased": "未按下"
       },
+      "rumble": {
+        "title": "手柄震动",
+        "description": "将主机的震动反馈同步到本地手柄。",
+        "statusOn": "已开启手柄震动",
+        "statusOff": "已关闭手柄震动",
+        "toggleEnable": "开启震动",
+        "toggleDisable": "关闭震动",
+        "strengthLabel": "震动强度",
+        "strengthValue": "{{value}}%",
+        "test": "测试震动",
+        "notSupported": "未检测到支持震动的手柄。",
+        "toastTestSuccess": "测试震动已发送",
+        "toastTestFailed": "无法触发震动",
+        "toastDisabled": "震动功能已关闭，请先开启。"
+      },
       "mapButton": "点击映射",
       "listening": "监听中...",
       "listeningDescription": "请按下要映射到 {button} 的按键",

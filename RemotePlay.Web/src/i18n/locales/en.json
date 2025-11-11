@@ -244,6 +244,21 @@
         "buttonPressed": "Pressed",
         "buttonReleased": "Released"
       },
+      "rumble": {
+        "title": "Controller vibration",
+        "description": "Sync vibration feedback from the console to your local controller.",
+        "statusOn": "Vibration is enabled",
+        "statusOff": "Vibration is disabled",
+        "toggleEnable": "Enable vibration",
+        "toggleDisable": "Disable vibration",
+        "strengthLabel": "Intensity",
+        "strengthValue": "{{value}}%",
+        "test": "Test vibration",
+        "notSupported": "No vibration-capable controller detected.",
+        "toastTestSuccess": "Vibration test sent",
+        "toastTestFailed": "Failed to trigger vibration",
+        "toastDisabled": "Vibration is currently disabled. Please enable it first."
+      },
       "mapButton": "Click to Map",
       "listening": "Listening...",
       "listeningDescription": "Please press the key you want to map to {button}",

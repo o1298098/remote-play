@@ -2,6 +2,7 @@ using RemotePlay.Models.PlayStation;
 using SIPSorcery.Media;
 using SIPSorcery.Net;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -18,7 +19,7 @@ namespace RemotePlay.Services.Streaming.Receiver
     /// <summary>
     /// WebRTC 接收器 - 通过 WebRTC 将 AV 流推送到浏览器
     /// </summary>
-    public sealed class WebRTCReceiver : IAVReceiver, IDisposable
+    public sealed partial class WebRTCReceiver : IAVReceiver, IDisposable
     {
         private readonly ILogger<WebRTCReceiver> _logger;
         private readonly string _sessionId;
@@ -209,433 +210,6 @@ namespace RemotePlay.Services.Streaming.Receiver
             
             // 创建视频和音频轨道
             InitializeTracks();
-        }
-        
-        /// <summary>
-        /// 初始化 RTCP 反馈监听（用于自动感知关键帧请求）
-        /// </summary>
-        private void InitializeRTCPFeedback()
-        {
-            try
-            {
-                if (_peerConnection == null) return;
-
-                var attached = TryAttachRtcpFeedbackHandlers(_peerConnection, "RTCPeerConnection");
-                if (attached)
-                {
-                    _logger.LogInformation("✅ 已在 RTCPeerConnection 上订阅 RTCP 反馈事件");
-                }
-                else
-                {
-                    _logger.LogDebug("ℹ️ 未在 RTCPeerConnection 上找到可用的 RTCP 反馈事件，将在 RTP 会话准备后继续尝试");
-                }
-
-                _logger.LogInformation("📡 RTCP 反馈监听初始化完成（等待 RTP 会话就绪）");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "⚠️ 初始化 RTCP 反馈监听失败，将无法自动感知关键帧请求");
-            }
-        }
-        
-        private void InitializeRtpChannels()
-        {
-            try
-            {
-                if (_peerConnection == null || _videoTrack == null) return;
-                
-                // 尝试获取 RTP 会话
-                // SIPSorcery 在连接建立后会自动创建 RTP 会话
-                // 我们需要通过反射或者其他方式获取 RTP 会话来发送数据
-                // RTP 通道已就绪
-                
-                // ✅ 连接建立后，尝试激活 RTCP 反馈监听
-                ActivateRTCPFeedback();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 初始化 RTP 通道失败");
-            }
-        }
-        
-        /// <summary>
-        /// 激活 RTCP 反馈监听（在连接建立后调用）
-        /// </summary>
-        private void ActivateRTCPFeedback()
-        {
-            try
-            {
-                if (_peerConnection == null) return;
-
-                var attachedAny = false;
-
-                if (_videoTrack != null)
-                {
-                    attachedAny |= TryAttachRtcpFeedbackFromTrack(_videoTrack, "VideoTrack");
-                }
-
-                if (!attachedAny)
-                {
-                    // 如果在 VideoTrack 上未找到，则尝试通过 peerConnection 的内部字段/属性
-                    attachedAny |= TryAttachRtcpFeedbackFromPeerConnectionInternals();
-                }
-
-                if (attachedAny)
-                {
-                    lock (_rtcpFeedbackLock)
-                    {
-                        _rtcpFeedbackSubscribed = true;
-                    }
-                    _logger.LogInformation("📡 RTCP 反馈监听已激活（将自动响应浏览器 PLI/FIR）");
-                }
-                else
-                {
-                    _logger.LogWarning("⚠️ 未找到可订阅的 RTCP 反馈事件，将继续依赖连接状态作为备用方案");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "⚠️ 激活 RTCP 反馈监听失败");
-            }
-        }
-
-        private bool TryAttachRtcpFeedbackFromTrack(MediaStreamTrack track, string sourceLabel)
-        {
-            var bindingFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            var trackType = track.GetType();
-            var attached = false;
-
-            var properties = trackType.GetProperties(bindingFlags)
-                .Where(p => p.GetIndexParameters().Length == 0 && IsPotentialRtpContainer(p.PropertyType, p.Name))
-                .ToList();
-
-            foreach (var property in properties)
-            {
-                try
-                {
-                    var value = property.GetValue(track);
-                    attached |= AttachToValue(value, $"{sourceLabel}.{property.Name}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug("⚠️ 无法访问 {Source}.{Property}: {Message}", sourceLabel, property.Name, ex.Message);
-                }
-            }
-
-            var fields = trackType.GetFields(bindingFlags)
-                .Where(f => IsPotentialRtpContainer(f.FieldType, f.Name))
-                .ToList();
-
-            foreach (var field in fields)
-            {
-                try
-                {
-                    var value = field.GetValue(track);
-                    attached |= AttachToValue(value, $"{sourceLabel}.{field.Name}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug("⚠️ 无法访问 {Source}.{Field}: {Message}", sourceLabel, field.Name, ex.Message);
-                }
-            }
-
-            return attached;
-        }
-
-        private bool TryAttachRtcpFeedbackFromPeerConnectionInternals()
-        {
-            if (_peerConnection == null) return false;
-
-            var bindingFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            var peerType = _peerConnection.GetType();
-            var attached = false;
-
-            var properties = peerType.GetProperties(bindingFlags)
-                .Where(p => p.GetIndexParameters().Length == 0 && IsPotentialRtpContainer(p.PropertyType, p.Name))
-                .ToList();
-
-            foreach (var property in properties)
-            {
-                try
-                {
-                    var value = property.GetValue(_peerConnection);
-                    attached |= AttachToValue(value, $"RTCPeerConnection.{property.Name}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug("⚠️ 无法访问 RTCPeerConnection.{Property}: {Message}", property.Name, ex.Message);
-                }
-            }
-
-            var fields = peerType.GetFields(bindingFlags)
-                .Where(f => IsPotentialRtpContainer(f.FieldType, f.Name))
-                .ToList();
-
-            foreach (var field in fields)
-            {
-                try
-                {
-                    var value = field.GetValue(_peerConnection);
-                    attached |= AttachToValue(value, $"RTCPeerConnection.{field.Name}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug("⚠️ 无法访问 RTCPeerConnection.{Field}: {Message}", field.Name, ex.Message);
-                }
-            }
-
-            return attached;
-        }
-
-        private bool AttachToValue(object? value, string label)
-        {
-            if (value == null) return false;
-
-            var attached = false;
-
-            attached |= TryAttachRtcpFeedbackHandlers(value, label);
-
-            if (!attached && value is System.Collections.IEnumerable enumerable && value is not string)
-            {
-                foreach (var item in enumerable)
-                {
-                    if (item == null) continue;
-                    attached |= TryAttachRtcpFeedbackHandlers(item, $"{label}[]");
-                }
-            }
-
-            return attached;
-        }
-
-        private bool TryAttachRtcpFeedbackHandlers(object target, string source)
-        {
-            if (target == null) return false;
-
-            var targetType = target.GetType();
-            var events = targetType.GetEvents(BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic)
-                .Where(e => IsRtcpFeedbackEvent(e.Name))
-                .ToList();
-
-            if (events.Count == 0)
-            {
-                return false;
-            }
-
-            var attached = false;
-
-            foreach (var evt in events)
-            {
-                var key = $"{targetType.FullName}.{evt.Name}";
-                lock (_rtcpFeedbackLock)
-                {
-                    if (_rtcpSubscribedEventKeys.Contains(key))
-                    {
-                        continue;
-                    }
-                }
-
-                try
-                {
-                    var handler = CreateRtcpFeedbackDelegate(evt, $"{source}.{evt.Name}");
-                    if (handler == null)
-                    {
-                        continue;
-                    }
-
-                    evt.AddEventHandler(target, handler);
-
-                    lock (_rtcpFeedbackLock)
-                    {
-                        _rtcpSubscribedEventKeys.Add(key);
-                        _rtcpFeedbackSubscriptions.Add((target, evt, handler));
-                    }
-
-                    _logger.LogInformation("✅ 已订阅 RTCP 反馈事件: {Source}", $"{source}.{evt.Name}");
-                    attached = true;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "⚠️ 订阅 RTCP 反馈事件失败: {Source}", $"{source}.{evt.Name}");
-                }
-            }
-
-            return attached;
-        }
-
-        private Delegate? CreateRtcpFeedbackDelegate(EventInfo eventInfo, string sourceTag)
-        {
-            var handlerType = eventInfo.EventHandlerType;
-            if (handlerType == null) return null;
-
-            var invokeMethod = handlerType.GetMethod("Invoke");
-            if (invokeMethod == null) return null;
-
-            var parameters = invokeMethod.GetParameters()
-                .Select(p => Expression.Parameter(p.ParameterType, p.Name))
-                .ToArray();
-
-            var argsArray = Expression.NewArrayInit(typeof(object),
-                parameters.Select(p => Expression.Convert(p, typeof(object))));
-
-            var callbackMethod = typeof(WebRTCReceiver).GetMethod(nameof(HandleRtcpFeedback), BindingFlags.Instance | BindingFlags.NonPublic);
-            if (callbackMethod == null)
-            {
-                return null;
-            }
-
-            var callExpression = Expression.Call(
-                Expression.Constant(this),
-                callbackMethod,
-                Expression.Constant(sourceTag, typeof(string)),
-                argsArray);
-
-            return Expression.Lambda(handlerType, callExpression, parameters).Compile();
-        }
-
-        private static bool IsRtcpFeedbackEvent(string? eventName)
-        {
-            if (string.IsNullOrWhiteSpace(eventName))
-            {
-                return false;
-            }
-
-            var lower = eventName.ToLowerInvariant();
-
-            if (lower.Contains("report"))
-            {
-                return false;
-            }
-
-            return lower.Contains("pli") ||
-                   lower.Contains("pictureloss") ||
-                   lower.Contains("fullintra") ||
-                   lower.Contains("fir") ||
-                   lower.Contains("feedback") ||
-                   lower.Contains("rtcp") ||
-                   lower.Contains("nack");
-        }
-
-        private static bool IsPotentialRtpContainer(Type type, string memberName)
-        {
-            var lowerName = memberName.ToLowerInvariant();
-            if (lowerName.Contains("rtp") || lowerName.Contains("session"))
-            {
-                return true;
-            }
-
-            var typeName = type.FullName?.ToLowerInvariant() ?? type.Name.ToLowerInvariant();
-            return typeName.Contains("rtp") || typeName.Contains("session");
-        }
-
-        private void HandleRtcpFeedback(string source, object?[]? args)
-        {
-            try
-            {
-                if (!ShouldTriggerKeyframe(source, args))
-                {
-                    _logger.LogTrace("ℹ️ 捕获到非关键帧类 RTCP 事件: {Source}", source);
-                    return;
-                }
-
-                string argsSummary = args == null
-                    ? "无参数"
-                    : string.Join(", ", args.Select(a => a?.GetType().Name ?? "null"));
-
-                _logger.LogInformation("📥 捕获到浏览器关键帧请求 ({Source})，参数: {Args}", source, argsSummary);
-                RequestKeyframeFromFeedback(source);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "⚠️ 处理 RTCP 反馈时发生异常: {Source}", source);
-            }
-        }
-
-        private static bool ShouldTriggerKeyframe(string source, object?[]? args)
-        {
-            if (ContainsKeyframeHint(source))
-            {
-                return true;
-            }
-
-            if (args == null)
-            {
-                return false;
-            }
-
-            foreach (var arg in args)
-            {
-                if (arg == null)
-                {
-                    continue;
-                }
-
-                if (ContainsKeyframeHint(arg.GetType().Name))
-                {
-                    return true;
-                }
-
-                var argString = arg.ToString();
-                if (!string.IsNullOrEmpty(argString) && ContainsKeyframeHint(argString))
-                {
-                    return true;
-                }
-
-                var argType = arg.GetType();
-                var feedbackTypeProperty = argType.GetProperty("FeedbackType") ?? argType.GetProperty("FeedbackMessageType");
-                if (feedbackTypeProperty != null)
-                {
-                    var value = feedbackTypeProperty.GetValue(arg)?.ToString();
-                    if (!string.IsNullOrEmpty(value) && ContainsKeyframeHint(value))
-                    {
-                        return true;
-                    }
-                }
-
-                var messageTypeProperty = argType.GetProperty("MessageType");
-                if (messageTypeProperty != null)
-                {
-                    var value = messageTypeProperty.GetValue(arg)?.ToString();
-                    if (!string.IsNullOrEmpty(value) && ContainsKeyframeHint(value))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        private static bool ContainsKeyframeHint(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return false;
-            }
-
-            var lower = text.ToLowerInvariant();
-            return lower.Contains("pli") ||
-                   lower.Contains("pictureloss") ||
-                   lower.Contains("fullintra") ||
-                   lower.Contains("fir");
-        }
-
-        private void RequestKeyframeFromFeedback(string source)
-        {
-            lock (_rtcpFeedbackLock)
-            {
-                var now = DateTime.UtcNow;
-                if (_lastKeyframeRequestTime != DateTime.MinValue &&
-                    (now - _lastKeyframeRequestTime) < KEYFRAME_REQUEST_COOLDOWN)
-                {
-                    _logger.LogDebug("⏱️ 忽略过于频繁的关键帧请求: {Source}", source);
-                    return;
-                }
-
-                _lastKeyframeRequestTime = now;
-            }
-
-            _logger.LogInformation("🎯 已根据 RTCP 反馈触发关键帧请求: {Source}", source);
-            OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
         }
         
         /// <summary>
@@ -909,12 +483,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
                 
                 // ⚠️ 参照 FfmpegMuxReceiver：从 audioHeader 读取音频参数
-                if (audioHeader != null && audioHeader.Length >= 14)
+                if (audioHeader != null && audioHeader.Length >= 10)
                 {
-                    int channels = audioHeader[0];
-                    int bits = audioHeader[1];
-                    int rate = (audioHeader[2] << 24) | (audioHeader[3] << 16) | (audioHeader[4] << 8) | audioHeader[5];
-                    int frameSize = (audioHeader[6] << 24) | (audioHeader[7] << 16) | (audioHeader[8] << 8) | audioHeader[9];
+                    int channels = ParseAudioChannels(audioHeader);
+                    int bitsPerSample = ParseBitsPerSample(audioHeader);
+                    int rate = ParseSampleRate(audioHeader);
+                    int frameSize = ParseFrameSize(audioHeader);
                     
                     // 保存帧大小（用于 PCM 缓冲区大小计算）
                     if (frameSize > 0)
@@ -925,24 +499,20 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                     if (channels > 0)
                     {
-                        if (channels != 2)
+                        if (_audioPacketCount < 5 || previousSourceChannels != channels)
                         {
-                            if (!_forceStereoDownmix || previousSourceChannels != channels)
-                            {
-                                _logger.LogWarning("⚠️ 检测到 {Channels} 声道音频，将在服务端下混为立体声发送", channels);
-                            }
-                            _forceStereoDownmix = true;
-                            _sendingAudioChannels = 2;
+                            _logger.LogInformation("🔊 音频参数：channels={Channels}, bits={Bits}, rate={Rate}Hz, frameSize={FrameSize}", channels, bitsPerSample, rate, frameSize);
                         }
-                        else
+
+                        if (channels != 2 && (_audioPacketCount < 5 || previousSourceChannels != channels))
                         {
-                            if (_forceStereoDownmix)
-                            {
-                                _logger.LogInformation("🎧 音频声道恢复为 2 声道，恢复直接透传");
-                            }
-                            _forceStereoDownmix = false;
-                            _sendingAudioChannels = 2;
+                            _logger.LogWarning("⚠️ 主机报告音频声道数为 {Channels}，建议在主机端开启立体声下混或设置为 2 声道输出", channels);
                         }
+
+                        _audioChannels = Math.Clamp(channels, 1, 2);
+                        _forceStereoDownmix = false;
+                        _useOpusDirect = true;
+                        _sendingAudioChannels = 2;
                     }
 
                     // 初始化 Opus 解码器（参照 FfmpegMuxReceiver）
@@ -957,12 +527,18 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 _audioSampleRate = rate;
                                 needReinit = true;
                             }
-                            if (channels != _audioChannels)
+                            if (rate != _audioSampleRate)
                             {
-                                _audioChannels = channels;
+                                _audioSampleRate = rate;
                                 needReinit = true;
                             }
-                            
+                            int targetChannels = Math.Clamp(channels, 1, 2);
+                            if (targetChannels != _audioChannels)
+                            {
+                                _audioChannels = targetChannels;
+                                needReinit = true;
+                            }
+
                             if (needReinit || _opusDecoder == null)
                             {
                                 _opusDecoder?.Dispose();
@@ -986,85 +562,6 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
         }
         
-        public void OnVideoPacket(byte[] packet)
-        {
-            try
-            {
-                if (_disposed || packet == null || packet.Length <= 1)
-                {
-                    if (_videoPacketCount < 3 && packet != null && packet.Length == 1)
-                    {
-                        _logger.LogError("❌ 视频包异常：长度只有 1 字节");
-                    }
-                    return;
-                }
-                
-                // ✅ 记录PS5数据包到达时间（用于延时统计）
-                // 这个时间代表PS5画面产生后的某个时间点（包含PS5->服务器的网络延迟，通常<5ms）
-                // 用于计算从PS5画面到浏览器显示的端到端延迟
-                _currentVideoFrameIndex++;
-                _latencyStats?.RecordPacketArrival(_sessionId, "video", _currentVideoFrameIndex);
-                
-                // 检查 WebRTC 连接状态
-                if (_peerConnection == null)
-                {
-                    return;
-                }
-                    
-                // ✅ 性能优化：使用缓存的状态检查
-                var (connectionState, _, _) = GetCachedConnectionState();
-                // 优化：允许在 connecting 状态也发送，减少等待延迟
-                if (connectionState != RTCPeerConnectionState.connected && 
-                    connectionState != RTCPeerConnectionState.connecting)
-                {
-                    if (_videoPacketCount % 1000 == 0)
-                    {
-                        _logger.LogWarning("⚠️ WebRTC 连接状态: {State}，等待连接建立... (已收到 {Count} 个视频包)", 
-                            connectionState, _videoPacketCount);
-                    }
-                    // 不返回，继续尝试发送（连接可能稍后建立）
-                }
-                
-                // ⚠️ 关键修复：参照 FfmpegMuxReceiver 的处理方式
-                // FfmpegMuxReceiver 直接跳过第一个字节后写入数据（包含起始码），不解析 NAL units
-                // WebRTC 的 SendVideo 可能也需要包含起始码的完整数据，而不是解析后的 NAL units
-                // 提取视频数据（跳过第一个字节的 header type）
-                // ✅ 性能优化：使用Span减少内存分配开销
-                var videoData = new byte[packet.Length - 1];
-                packet.AsSpan(1).CopyTo(videoData);
-                    
-                // ⚠️ 尝试两种方式：
-                // 1. 直接发送包含起始码的完整数据（参照 FfmpegMuxReceiver）
-                // 2. 如果失败，再尝试解析 NAL units
-                    
-                // 注意：_currentVideoFrameIndex 已在 OnVideoPacket 开始时递增
-                
-                // 先尝试直接发送（包含起始码的完整数据）
-                if (TrySendVideoDirect(videoData))
-                    {
-                    // 发送成功，记录延时统计（使用已递增的帧索引）
-                    _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                    
-                    // 发送成功
-                    _videoPacketCount++;
-                    return;
-                    }
-                    
-                // 如果直接发送失败，尝试解析 NAL units 并发送
-                SendVideoRTP(videoData);
-                
-                // 记录延时统计（RTP发送）
-                _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                
-                _videoPacketCount++;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送视频包失败: packetLen={Len}, count={Count}", 
-                    packet?.Length ?? 0, _videoPacketCount);
-            }
-        }
-        
         public void OnAudioPacket(byte[] packet)
         {
             // ✅ 优化：直接发送 Opus RTP 包，不转码，保持原始音质
@@ -1081,58 +578,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 _latencyStats?.RecordPacketArrival(_sessionId, "audio", _currentAudioFrameIndex);
                 
                 // 发送音频包到 WebRTC
-                if (_peerConnection != null)
-                {
-                    // packet 格式：[HeaderType.AUDIO (1 byte)] + [Opus 编码帧数据]
-                    byte[] opusFrame = new byte[packet.Length - 1];
-                    packet.AsSpan(1).CopyTo(opusFrame);
-                    
-                    // ✅ 优化音质：优先使用 Opus，即使浏览器选择了 PCMU 也尝试发送 Opus
-                    // 现代浏览器通常都能处理 Opus，即使 SDP 中也选择了 PCMU 作为备用
-                    if (_forceStereoDownmix)
-                    {
-                        if (!TrySendOpusDownmixedToStereo(opusFrame))
-                        {
-                            SendAudioOpusDirect(opusFrame);
-                        }
-                    }
-                    else if (_useOpusDirect)
-                    {
-                        // 直接发送 Opus RTP 包，无需转码（最高音质）
-                        SendAudioOpusDirect(opusFrame);
-                    }
-                    else
-                    {
-                        // ✅ 如果浏览器选择了 PCMU，尝试使用 Opus 编码器重新编码为 Opus
-                        // 这样即使浏览器选择了 PCMU，我们仍然发送高质量的 Opus
-                        if (!_opusCodecDetected)
-                        {
-                            // 尝试重新编码为 Opus（保持高质量）
-                            if (TrySendOpusReencoded(opusFrame))
-                            {
-                                // Opus 重新编码成功，使用高质量编码
-                            }
-                            else
-                            {
-                                // 回退到转码方案：Opus -> PCM -> PCMU（低质量，但兼容）
-                                if (_audioPacketCount < 5)
-                                {
-                                    _logger.LogWarning("⚠️ Opus 重新编码失败，使用转码方案: Opus -> PCM -> PCMU");
-                                }
-                                SendAudioWithTranscoding(opusFrame);
-                            }
-                        }
-                        else
-                        {
-                            SendAudioWithTranscoding(opusFrame);
-                        }
-                    }
-                    
-                    // 记录发送时间戳（用于延时统计）
-                    _latencyStats?.RecordPacketSent(_sessionId, "audio", _currentAudioFrameIndex);
-                    
-                    _audioPacketCount++;
-                }
+                SendAudioPacketInternal(packet);
             }
             catch (Exception ex)
             {
@@ -1141,980 +587,49 @@ namespace RemotePlay.Services.Streaming.Receiver
         }
         
         /// <summary>
-        /// 尝试直接发送视频数据（参照 FfmpegMuxReceiver：直接发送包含起始码的数据）
-        /// </summary>
-        private bool TrySendVideoDirect(byte[] videoData)
-        {
-            if (_peerConnection == null || _videoTrack == null || videoData == null || videoData.Length == 0)
-                return false;
-            
-            try
-            {
-                // ✅ 性能优化：使用缓存的状态检查
-                var (connectionState, iceState, signalingState) = GetCachedConnectionState();
-                
-                // ⚠️ 放宽发送条件：即使信令状态是 have_local_offer，也尝试发送
-                // 因为 Answer 可能已经被强制接受，但状态还没有更新
-                // 允许在以下情况下发送：
-                // 1. 信令状态是 stable（正常情况）
-                // 2. 信令状态是 have_local_offer 但 ICE 已连接或正在检查（Answer 可能已设置但状态未更新）
-                // 3. 连接状态是 connected 或 connecting
-                bool canSendVideo = signalingState == RTCSignalingState.stable ||
-                                    (signalingState == RTCSignalingState.have_local_offer && 
-                                     (iceState == RTCIceConnectionState.connected || 
-                                      iceState == RTCIceConnectionState.checking ||
-                                      connectionState == RTCPeerConnectionState.connected ||
-                                      connectionState == RTCPeerConnectionState.connecting));
-                
-                if (!canSendVideo)
-                {
-                    return false; // 状态不允许发送
-                }
-                
-                // ✅ 性能优化：使用缓存的反射方法
-                if (!_methodsInitialized)
-                {
-                    InitializeReflectionMethods();
-                }
-                
-                if (_cachedSendVideoMethod != null)
-                {
-                    try
-                    {
-                        // ⚠️ 关键：直接发送包含起始码的完整数据（参照 FfmpegMuxReceiver）
-                        // videoData 已经跳过了第一个字节（header type），但包含起始码（0x00000001 或 0x000001）
-                        
-                        // 优化：基于实际时间计算时间戳以减少延迟
-                        var now = DateTime.UtcNow;
-                        if (_videoPacketCount > 0)
-                        {
-                            var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                        }
-                        _lastVideoPacketTime = now;
-                        
-                        // ✅ 性能优化：直接调用缓存的方法（避免反射查找开销）
-                        _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, videoData });
-                        
-                        // 为下一个包准备时间戳（使用固定增量作为后备）
-                        _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                        
-                        
-                        return true; // 发送成功
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_videoPacketCount < 3)
-                        {
-                            var innerEx = ex.InnerException ?? ex;
-                            _logger.LogWarning("⚠️ SendVideo 直接发送失败: {Ex}", innerEx.Message);
-                        }
-                        // 如果缓存的方法失败，清除缓存以便下次重新查找
-                        _cachedSendVideoMethod = null;
-                        _methodsInitialized = false;
-                    }
-                }
-                
-                return false; // 发送失败
-            }
-            catch (Exception ex)
-            {
-                if (_videoPacketCount < 3)
-                {
-                    _logger.LogWarning("⚠️ TrySendVideoDirect 异常: {Ex}", ex.Message);
-                }
-                return false;
-            }
-        }
-        
-        private void SendVideoRTP(byte[] data)
-        {
-            try
-            {
-                if (_peerConnection == null || _videoTrack == null)
-                {
-                    return;
-                }
-                
-                // ✅ 性能优化：使用缓存的状态检查
-                var (connectionState, iceState, signalingState) = GetCachedConnectionState();
-                
-                // ⚠️ 关键修复：必须等待 SDP 协商完成（stable）和连接建立（connected）
-                // GetSendingFormat() 需要 SDP 协商完成才能返回格式信息
-                bool canSend = false;
-                
-                // 必须满足两个条件：
-                // 1. 信令状态必须是 stable（SDP 协商完成）
-                // 2. 连接状态必须是 connected 或 connecting（连接建立或正在建立）
-                if (signalingState == RTCSignalingState.stable)
-                {
-                    if (connectionState == RTCPeerConnectionState.connected || 
-                        connectionState == RTCPeerConnectionState.connecting)
-                    {
-                        canSend = true;
-                    }
-                    else if (iceState == RTCIceConnectionState.connected)
-                    {
-                        // ICE 已连接，即使 connectionState 还是 new，也可以尝试
-                        // 但需要确保 SDP 已协商完成
-                        canSend = true;
-                    }
-                }
-                
-                if (!canSend)
-                {
-                    if (_videoPacketCount < 10 || _videoPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ WebRTC 状态不允许发送: connection={State}, ICE={IceState}, signaling={Signaling}, 已收到 {Count} 个包", 
-                            connectionState, iceState, signalingState, _videoPacketCount);
-                        if (signalingState != RTCSignalingState.stable)
-                        {
-                            _logger.LogWarning("⚠️ SDP 协商未完成（{SignalingState}），需要等待 Answer 并设置为 stable", signalingState);
-                        }
-                        if (connectionState == RTCPeerConnectionState.@new)
-                        {
-                            _logger.LogWarning("⚠️ 连接状态还是 new，等待连接建立...");
-                        }
-                    }
-                    return;
-                }
-                
-                // ⚠️ 关键问题：如果 PS5 发送 HEVC，但浏览器只支持 H.264，需要转码
-                // 当前实现：直接发送接收到的数据（可能是 HEVC）
-                // 如果检测到 HEVC，会记录警告，但不会转码（需要实现转码功能）
-                
-                // ✅ 低延迟优化：先尝试直接发送，如果失败再解析NAL units
-                // 这样可以避免不必要的NAL解析开销（大多数情况下直接发送都能成功）
-                // 参考 FfmpegMuxReceiver：直接处理视频数据，让 WebRTC 自动处理关键帧检测
-                
-                // ⚠️ 注意：我们已经尝试过 TrySendVideoDirect，但可能失败了
-                // 这里如果直接发送也失败，才解析NAL units
-                
-                // ✅ 优化：如果数据看起来是完整的帧（包含起始码），先尝试直接发送
-                bool hasStartCode = (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 && 
-                                   (data[2] == 0x00 && data[3] == 0x01 || data[2] == 0x01));
-                
-                if (hasStartCode && data.Length < 50000) // 如果帧不是太大，尝试直接发送
-                {
-                    // 尝试直接发送（不解析NAL units）
-                    try
-                    {
-                        var now = DateTime.UtcNow;
-                        if (_videoPacketCount > 0)
-                        {
-                            var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                            if (elapsed > 0)
-                            {
-                                _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                            }
-                            else
-                            {
-                                _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                            }
-                        }
-                        _lastVideoPacketTime = now;
-                        
-                        // 尝试使用缓存的SendVideo方法
-                        if (_cachedSendVideoMethod != null)
-                        {
-                            _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, data });
-                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                            return; // 直接发送成功，跳过NAL解析
-                        }
-                    }
-                    catch
-                    {
-                        // 直接发送失败，继续使用NAL解析方式
-                    }
-                }
-                
-                // 如果直接发送失败，解析 NAL units（Annex-B 格式，支持 H.264 和 HEVC）
-                // ⚠️ 注意：FfmpegMuxReceiver 接收的数据格式是 [HeaderType(1 byte)] + [视频数据（可能包含起始码）]
-                // 而我们已经跳过了第一个字节，所以 data 就是纯视频数据（可能包含起始码）
-                var nalUnits = ParseAnnexBNalUnits(data);
-                
-                if (nalUnits.Count == 0 && _videoPacketCount < 5)
-                {
-                    _logger.LogWarning("⚠️ 未解析到 NAL units，数据长度: {Length}, 前 16 字节: {Hex}", 
-                        data.Length, 
-                        data.Length > 0 ? Convert.ToHexString(data.Take(Math.Min(16, data.Length)).ToArray()) : "empty");
-                }
-                
-                
-                foreach (var nalUnit in nalUnits)
-                {
-                    if (nalUnit.Length == 0) continue;
-                    
-                    // 更新时间戳（每帧递增）
-                    // 参考 FfmpegMuxReceiver：基于帧率自动更新时间戳
-                    bool isVideoFrame = false;
-                    
-                    if (_detectedVideoFormat == "hevc")
-                    {
-                        // HEVC: NAL unit type 在第一个字节的高 6 位 (bits 6-1)
-                        // HEVC NAL unit 格式: [F(1) | Type(6) | LayerId(6) | TID(3)]
-                        byte nalType = (byte)((nalUnit[0] >> 1) & 0x3F);
-                        // HEVC: IDR 帧是 type 19 (IDR_N_LP) 或 20 (IDR_W_RADL)
-                        // 普通帧是 type 1 (TRAIL_N) 到 9 (CRA_NUT)
-                        if (nalType >= 1 && nalType <= 21)
-                        {
-                            isVideoFrame = true;
-                        }
-                    }
-                    else
-                    {
-                        // H.264: NAL unit type 在第一个字节的低 5 位 (bits 4-0)
-                        byte nalType = (byte)(nalUnit[0] & 0x1F);
-                        if (nalType >= 1 && nalType <= 5)
-                        {
-                            isVideoFrame = true;
-                        }
-                    }
-                    
-                    if (isVideoFrame)
-                    {
-                        // 视频帧（IDR 或非 IDR），优化：基于实际时间更新时间戳
-                        var now = DateTime.UtcNow;
-                        if (_videoPacketCount > 0)
-                        {
-                            var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                            if (elapsed > 0)
-                            {
-                                _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                            }
-                            else
-                            {
-                                // 如果时间间隔太小，使用固定增量
-                                _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                            }
-                        }
-                        _lastVideoPacketTime = now;
-                    }
-                    
-                    // 如果 NAL unit 太大，需要分片
-                    if (nalUnit.Length > RTP_MTU - 12) // RTP header 12 bytes
-                    {
-                        SendFragmentedNalUnit(nalUnit);
-                    }
-                    else
-                    {
-                        SendSingleNalUnit(nalUnit);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送视频 RTP 包失败");
-            }
-        }
-        
-        /// <summary>
-        /// ✅ 优化：使用Span高效解析Annex-B格式的NAL units
-        /// 使用单次扫描和Span操作，减少内存分配和循环开销
-        /// </summary>
-        private List<byte[]> ParseAnnexBNalUnits(byte[] data)
-        {
-            var nalUnits = new List<byte[]>();
-            if (data == null || data.Length < 4) return nalUnits;
-            
-            // ✅ 使用Span进行高效搜索
-            Span<byte> dataSpan = data;
-            int currentPos = 0;
-            
-            while (currentPos < dataSpan.Length - 3)
-            {
-                // ✅ 优化：使用Span.SequenceEqual进行快速匹配
-                // 查找起始码 0x00000001 或 0x000001
-                int startCodePos = -1;
-                int startCodeLength = 0;
-                
-                // 单次扫描查找起始码
-                for (int i = currentPos; i < dataSpan.Length - 3; i++)
-                {
-                    // ✅ 快速检查：先检查前两个字节是否为0x00
-                    if (dataSpan[i] == 0x00 && dataSpan[i + 1] == 0x00)
-                    {
-                        // 检查4字节起始码 0x00000001
-                        if (i + 3 < dataSpan.Length && dataSpan[i + 2] == 0x00 && dataSpan[i + 3] == 0x01)
-                        {
-                            startCodePos = i;
-                            startCodeLength = 4;
-                            break;
-                        }
-                        // 检查3字节起始码 0x000001
-                        else if (i + 2 < dataSpan.Length && dataSpan[i + 2] == 0x01)
-                        {
-                            startCodePos = i;
-                            startCodeLength = 3;
-                            break;
-                        }
-                    }
-                }
-                
-                if (startCodePos == -1)
-                {
-                    // 没有找到起始码，结束
-                    break;
-                }
-                
-                // ✅ 优化：从当前起始码后开始查找下一个起始码（避免重复扫描）
-                int nextStartCodePos = -1;
-                int nextStartCodeLength = 0;
-                int searchStart = startCodePos + startCodeLength;
-                
-                for (int i = searchStart; i < dataSpan.Length - 3; i++)
-                {
-                    if (dataSpan[i] == 0x00 && dataSpan[i + 1] == 0x00)
-                    {
-                        if (i + 3 < dataSpan.Length && dataSpan[i + 2] == 0x00 && dataSpan[i + 3] == 0x01)
-                        {
-                            nextStartCodePos = i;
-                            nextStartCodeLength = 4;
-                            break;
-                        }
-                        else if (i + 2 < dataSpan.Length && dataSpan[i + 2] == 0x01)
-                        {
-                            nextStartCodePos = i;
-                            nextStartCodeLength = 3;
-                            break;
-                        }
-                    }
-                }
-                
-                // ✅ 优化：使用Span提取NAL unit（减少内存分配）
-                int nalStart = startCodePos + startCodeLength;
-                int nalEnd = nextStartCodePos == -1 ? dataSpan.Length : nextStartCodePos;
-                int nalLength = nalEnd - nalStart;
-                
-                if (nalLength > 0)
-                {
-                    // ✅ 使用Span.Slice和ToArray进行高效复制
-                    var nalUnit = dataSpan.Slice(nalStart, nalLength).ToArray();
-                    nalUnits.Add(nalUnit);
-                }
-                
-                // 移动到下一个起始码位置
-                if (nextStartCodePos == -1)
-                {
-                    break;
-                }
-                currentPos = nextStartCodePos;
-            }
-            
-            return nalUnits;
-        }
-        
-        private void SendSingleNalUnit(byte[] nalUnit)
-        {
-            if (_peerConnection == null || _videoTrack == null || nalUnit.Length == 0) return;
-            
-            try
-            {
-                // 创建 RTP 包
-                var rtpPacket = new RTPPacket(12 + nalUnit.Length);
-                rtpPacket.Header.Version = 2;
-                
-                // ⚠️ 关键修复：根据视频编码格式选择正确的 payload type
-                // H.264: payload type 96 (动态)
-                // HEVC: payload type 97 (动态，取决于 SDP 协商)
-                // 注意：SIPSorcery 可能会自动处理 payload type，但我们需要确保使用正确的值
-                // ⚠️ 重要：SendRtpRaw 和 SendVideo 应该使用相同的 payload type
-                int payloadType = 96; // 默认使用 96（H.264）
-                if (_detectedVideoFormat == "hevc")
-                {
-                    // HEVC 通常使用 payload type 97（在 SDP 中协商）
-                    // 但注意：浏览器不支持 HEVC，即使格式正确也无法播放
-                    payloadType = 97;
-                }
-                
-                rtpPacket.Header.PayloadType = (byte)payloadType;
-                
-                // ⚠️ 修复：确保序列号在 ushort 范围内
-                // ushort 会自动回绕：65535 + 1 = 0，这是正常的 RTP 行为
-                rtpPacket.Header.SequenceNumber = _videoSequenceNumber;
-                _videoSequenceNumber++; // 自动回绕，无需检查溢出
-                
-                rtpPacket.Header.Timestamp = _videoTimestamp;
-                
-                // 设置 SSRC（使用 SRC 属性）
-                rtpPacket.Header.SyncSource = _videoSsrc;
-                
-                // 设置 Marker（使用 MarkerBit 属性）
-                // 对于 HEVC，需要检查是否是最后一个 NAL unit 来决定 marker
-                rtpPacket.Header.MarkerBit = 0; // 单个 NAL unit，marker 设为 0
-                
-                // 复制 NAL unit 数据到 payload
-                Buffer.BlockCopy(nalUnit, 0, rtpPacket.Payload, 0, nalUnit.Length);
-                
-                // 尝试通过 RTCPeerConnection 发送 RTP 包
-                // SIPSorcery 可能需要通过内部机制发送，这里先尝试序列化并发送
-                try
-                {
-                    // 将 RTP 包序列化为字节数组
-                    byte[] rtpBytes = rtpPacket.GetBytes();
-                    
-                    
-                    try
-                    {
-                        // ✅ 关键修复：应该发送完整的 RTP 包，而不是原始 NAL unit
-                        // SIPSorcery 的 SendRtpRaw 期望接收完整的 RTP 包（包括 header + payload）
-                        // ⚠️ 注意：SendVideo 已经成功发送，说明数据格式正确
-                        // 如果 SendRtpRaw 失败，可以继续使用 SendVideo
-                        
-                        // ⚠️ 策略调整：由于 SendVideo 已经验证可以工作，优先使用 SendVideo
-                        // SendRtpRaw 存在参数问题（UInt16 溢出），暂时跳过
-                        // 方法1：优先使用 SendVideo（传入原始 NAL unit，让 SIPSorcery 自动打包）
-                        // 方法2：如果 SendVideo 失败，再尝试 SendRtpRaw（但可能失败）
-                        
-                        var peerConnectionType = _peerConnection.GetType();
-                        
-                        // 先尝试 SendVideo（已经验证可以工作）
-                        var sendVideoMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                            .Where(m => m.Name == "SendVideo")
-                            .ToList();
-                        
-                        if (sendVideoMethods.Count == 0)
-                        {
-                            var baseType = peerConnectionType.BaseType;
-                            if (baseType != null)
-                            {
-                                sendVideoMethods = baseType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                    .Where(m => m.Name == "SendVideo")
-                                    .ToList();
-                            }
-                        }
-                        
-                        bool videoSent = false;
-                        foreach (var method in sendVideoMethods)
-                        {
-                            try
-                            {
-                                var parameters = method.GetParameters();
-                                
-                                if (parameters.Length == 2)
-                                {
-                                    if (parameters[0].ParameterType == typeof(uint) &&
-                                        parameters[1].ParameterType == typeof(byte[]))
-                                    {
-                                        // SendVideo(uint timestamp, byte[] nalUnit)
-                                        // ⚠️ 关键：SendVideo 期望的是 NAL unit 数据（不包含起始码）
-                                        // ParseAnnexBNalUnits 已经去除了起始码，所以 nalUnit 就是纯 NAL unit 数据
-                                        
-                                        method.Invoke(_peerConnection, new object[] { _videoTimestamp, nalUnit });
-                                        videoSent = true;
-                                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                                if (_videoPacketCount == 0 || _videoPacketCount % 100 == 0)
-                                {
-                                    var innerEx = ex.InnerException ?? ex;
-                                    _logger.LogWarning("⚠️ SendVideo 调用失败: {Ex}, 内部异常: {InnerEx}", 
-                                        ex.Message, innerEx.Message);
-                                }
-                            }
-                        }
-                        
-                        // 如果 SendVideo 成功，直接返回（不再尝试 SendRtpRaw）
-                        if (videoSent) return;
-                        
-                        // 方法2：如果 SendVideo 失败，尝试 SendRtpRaw（但可能因为参数问题失败）
-                        // ⚠️ 注意：SendRtpRaw 存在 UInt16 参数溢出问题，暂时禁用
-                        // 如果 SendVideo 已经工作，不需要 SendRtpRaw
-                        if (_videoPacketCount == 0)
-                        {
-                            _logger.LogWarning("⚠️ SendVideo 失败，尝试 SendRtpRaw（但可能因为参数问题失败）");
-                        }
-                        
-                        var sendRtpRawMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                            .Where(m => m.Name == "SendRtpRaw")
-                            .ToList();
-                        
-                        // 如果当前类型没有找到，尝试基类
-                        if (sendRtpRawMethods.Count == 0)
-                        {
-                            var baseType = peerConnectionType.BaseType;
-                            if (baseType != null)
-                            {
-                                sendRtpRawMethods = baseType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                    .Where(m => m.Name == "SendRtpRaw")
-                                    .ToList();
-                            }
-                        }
-                        
-                        bool rtpSent = false;
-                        if (sendRtpRawMethods.Any())
-                        {
-                            
-                            foreach (var method in sendRtpRawMethods)
-        {
-            try
-            {
-                                    var parameters = method.GetParameters();
-                                    
-                                    // ⚠️ 关键修复：优先使用 SendRtpRaw(SDPMediaTypesEnum, Byte[], UInt32, Int32, Int32, UInt16)
-                                    // 这个签名是完整的 RTP 发送方法，不需要 GetSendingFormat()
-                                    if (parameters.Length == 6)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                            parameters[1].ParameterType == typeof(byte[]) &&
-                                            parameters[2].ParameterType == typeof(uint) &&
-                                            parameters[3].ParameterType == typeof(int) &&
-                                            parameters[4].ParameterType == typeof(int) &&
-                                            parameters[5].ParameterType == typeof(ushort))
-                                        {
-                                            // SendRtpRaw(SDPMediaTypesEnum, Byte[], UInt32 timestamp, Int32 payloadType, Int32 ssrc, UInt16 sequenceNumber)
-                                            // ⚠️ 修复：直接使用 _videoSequenceNumber（已经是 ushort 类型），避免类型转换问题
-                                            // 注意：序列号会在 65535 后自动回绕到 0，这是正常的 RTP 行为
-                                            ushort seqNum = _videoSequenceNumber; // 直接使用，确保是 ushort 类型
-                                            
-                                            // 确保 PayloadType 在有效范围内（0-127）
-                                            int payloadTypeInt = _detectedVideoFormat == "hevc" ? 97 : 96;
-                                            if (rtpPacket.Header.PayloadType < 0 || rtpPacket.Header.PayloadType > 127)
-                                            {
-                                                _logger.LogWarning("⚠️ RTP Header PayloadType 超出范围: {PayloadType}, 使用计算值: {Computed}", 
-                                                    rtpPacket.Header.PayloadType, payloadTypeInt);
-                                            }
-                                            else
-                                            {
-                                                payloadTypeInt = (int)rtpPacket.Header.PayloadType;
-                                            }
-                                            
-                                            // SSRC 转换为 int（确保不溢出）
-                                            int ssrcInt = (int)(_videoSsrc & 0x7FFFFFFF); // 确保是正数
-                                            
-                                            
-                                            try
-                                            {
-                                                method.Invoke(_peerConnection, new object[] { 
-                                                    SDPMediaTypesEnum.video, 
-                                                    rtpBytes, 
-                                                    rtpPacket.Header.Timestamp, 
-                                                    payloadTypeInt, 
-                                                    ssrcInt, 
-                                                    seqNum 
-                                                });
-                                                rtpSent = true;
-                                                break;
-                                            }
-                                            catch (Exception invokeEx)
-                                            {
-                                                var innerEx = invokeEx.InnerException ?? invokeEx;
-                                                _logger.LogError(innerEx, "❌ SendRtpRaw 调用异常: seq={Seq}, payloadType={Pt}, ssrc={Ssrc}, ts={Ts}, rtpBytesLen={Len}, 错误: {Error}", 
-                                                    seqNum, payloadTypeInt, ssrcInt, rtpPacket.Header.Timestamp, rtpBytes.Length, innerEx.Message);
-                                                
-                                                // 如果错误是 UInt16 超出范围，记录所有可能的值
-                                                if (innerEx.Message.Contains("UInt16"))
-                                                {
-                                                    _logger.LogError("❌ UInt16 参数检查: seqNum={Seq} (range: 0-65535), rtpBytesLen={Len} (int, not UInt16)", 
-                                                        seqNum, rtpBytes.Length);
-                                                    _logger.LogError("❌ 可能的问题: RTP header 中的序列号字段可能不正确");
-                                                }
-                                                throw; // 重新抛出，让外层处理
-                                            }
-                                        }
-                                    }
-                                    else if (parameters.Length == 5)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                            parameters[1].ParameterType == typeof(byte[]) &&
-                                            parameters[2].ParameterType == typeof(uint) &&
-                                            parameters[3].ParameterType == typeof(int) &&
-                                            parameters[4].ParameterType == typeof(int))
-                                        {
-                                            // SendRtpRaw(SDPMediaTypesEnum, Byte[], UInt32 timestamp, Int32 payloadType, Int32 ssrc)
-                                            // ⚠️ 修复：确保 PayloadType 在有效范围内（0-127）
-                                            int payloadTypeInt = (int)rtpPacket.Header.PayloadType;
-                                            if (payloadTypeInt < 0 || payloadTypeInt > 127)
-                                            {
-                                                _logger.LogWarning("⚠️ PayloadType 超出范围: {PayloadType}, 使用默认值 96", payloadTypeInt);
-                                                payloadTypeInt = 96; // 默认 H.264 payload type
-                                            }
-                                            
-                                            method.Invoke(_peerConnection, new object[] { 
-                                                SDPMediaTypesEnum.video, 
-                                                rtpBytes, 
-                                                rtpPacket.Header.Timestamp, 
-                                                payloadTypeInt, 
-                                                (int)rtpPacket.Header.SyncSource 
-                                            });
-                                            rtpSent = true;
-                                            break;
-                                        }
-                                    }
-                                    else if (parameters.Length == 2)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(byte[]) && 
-                                            parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
-                                        {
-                                        method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video });
-                                            rtpSent = true;
-                                            break;
-                                        }
-                                        else if (parameters[0].ParameterType == typeof(byte[]) && 
-                                                 parameters[1].ParameterType == typeof(int))
-                                        {
-                                        method.Invoke(_peerConnection, new object[] { rtpBytes, 96 });
-                                            rtpSent = true;
-                                            break;
-                                        }
-                                    }
-                                    else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
-                                    {
-                                    method.Invoke(_peerConnection, new object[] { rtpBytes });
-                                        rtpSent = true;
-                                        break;
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    if (_videoPacketCount == 0 || _videoPacketCount % 100 == 0)
-                                    {
-                                        var innerEx = ex.InnerException ?? ex;
-                                        _logger.LogWarning("⚠️ SendRtpRaw 调用失败: {Ex}, 内部异常: {InnerEx}, 方法参数: {Params}", 
-                                            ex.Message, innerEx.Message, string.Join(", ", method.GetParameters().Select(p => p.ParameterType.Name)));
-                                    }
-                                }
-                            }
-                            
-                            // ⚠️ 如果 SendRtpRaw 成功，直接返回
-                            if (rtpSent) return;
-                        }
-                        else
-                        {
-                            if (_videoPacketCount == 0)
-                            {
-                                _logger.LogWarning("⚠️ 未找到 SendRtpRaw 方法");
-                            }
-                        }
-                        
-                        // ⚠️ 如果 SendVideo 成功，直接返回（不再尝试 SendRtpRaw）
-                        if (videoSent) return;
-                        
-                        // ⚠️ 如果所有方法都失败，记录详细错误信息
-                        if (_videoPacketCount == 0 || _videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogError("❌ 所有 SendVideo 方法调用都失败了！");
-                            _logger.LogError("❌ 连接状态: {State}, ICE: {Ice}, 信令: {Signaling}", 
-                                _peerConnection.connectionState, _peerConnection.iceConnectionState, _peerConnection.signalingState);
-                            _logger.LogError("❌ 视频轨道状态: {Track}", _videoTrack != null ? "存在" : "不存在");
-                            
-                            // 尝试列出所有可用的方法
-                            var allMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name.Contains("Send", StringComparison.OrdinalIgnoreCase) ||
-                                           m.Name.Contains("Rtp", StringComparison.OrdinalIgnoreCase))
-                                .Select(m => {
-                                    var paramsStr = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name}"));
-                                    return $"{m.Name}({paramsStr})";
-                                })
-                                .ToList();
-                            if (allMethods.Any())
-                            {
-                                _logger.LogError("❌ 可用的发送方法: {Methods}", string.Join("; ", allMethods));
-                            }
-                        }
-                        
-                        // 方法3：尝试通过 MediaStreamTrack 发送
-                        if (_videoTrack != null)
-                        {
-                            var trackType = _videoTrack.GetType();
-                            var trackMethods = trackType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name.Contains("Send", StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-                            
-                            
-                            foreach (var method in trackMethods)
-                            {
-                                try
-                                {
-                                    var parameters = method.GetParameters();
-                                    if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
-                                    {
-                                        method.Invoke(_videoTrack, new object[] { nalUnit });
-                                        return; // 发送成功
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-                        
-                        if (_videoPacketCount == 0)
-                        {
-                            // 首次调用时，列出所有可用的方法
-                            var allMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name.Contains("Send", StringComparison.OrdinalIgnoreCase) || 
-                                           m.Name.Contains("Rtp", StringComparison.OrdinalIgnoreCase))
-                                .Select(m => {
-                                    var paramsStr = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name}"));
-                                    return $"{m.Name}({paramsStr})";
-                                })
-                                .ToList();
-                            _logger.LogWarning("⚠️ 未找到可用的发送方法。所有相关方法: {Methods}", string.Join("; ", allMethods));
-                        }
-                        else if (_videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogWarning("⚠️ 未找到可用的 SendVideo 或 SendRtpRaw 方法");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // 记录详细错误
-                        if (_videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogWarning("⚠️ 发送 RTP 包异常: {Ex}", ex.Message);
-                        }
-                    }
-                    
-                    // 如果所有方法都失败，记录警告
-                    if (_videoPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ RTP 包已构建但未发送（需要找到正确的发送 API）: seq={Seq}, size={Size}", 
-                            rtpPacket.Header.SequenceNumber, rtpBytes.Length);
-                    }
-                }
-                catch (Exception sendEx)
-                {
-                    _logger.LogError(sendEx, "❌ 发送 RTP 包失败");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送单个 NAL unit RTP 包失败");
-            }
-        }
-        
-        private void SendFragmentedNalUnit(byte[] nalUnit)
-        {
-            if (_peerConnection == null || _videoTrack == null || nalUnit.Length == 0) return;
-            
-            byte nalType = (byte)(nalUnit[0] & 0x1F);
-            byte nalHeader = (byte)(nalUnit[0] & 0x60); // 保留 F 和 NRI 位
-            
-            // 计算分片数量
-            int maxFragmentSize = RTP_MTU - 12 - 2; // RTP header + FU header
-            int fragmentCount = (nalUnit.Length + maxFragmentSize - 1) / maxFragmentSize;
-            
-            for (int i = 0; i < fragmentCount; i++)
-            {
-                int fragmentStart = i * maxFragmentSize;
-                int fragmentLength = Math.Min(maxFragmentSize, nalUnit.Length - fragmentStart);
-                
-                try
-                {
-                    // 创建 RTP 包
-                    var rtpPacket = new RTPPacket(12 + 2 + fragmentLength);
-                    rtpPacket.Header.Version = 2;
-                    rtpPacket.Header.PayloadType = 96;
-                    
-                    // ⚠️ 修复：确保序列号在 ushort 范围内
-                    rtpPacket.Header.SequenceNumber = _videoSequenceNumber;
-                    _videoSequenceNumber++; // 自动回绕
-                    
-                    rtpPacket.Header.Timestamp = _videoTimestamp;
-                    rtpPacket.Header.SyncSource = _videoSsrc;
-                    
-                    // 第一个分片：S=1, E=0
-                    // 中间分片：S=0, E=0
-                    // 最后分片：S=0, E=1
-                    byte fuIndicator = (byte)(nalHeader | 28); // F=0, NRI, Type=28 (FU-A)
-                    byte fuHeader = (byte)(nalType);
-                    
-                    if (i == 0)
-                    {
-                        fuHeader |= 0x80; // Start bit
-                        rtpPacket.Header.MarkerBit = 0;
-                    }
-                    else if (i == fragmentCount - 1)
-                    {
-                        fuHeader |= 0x40; // End bit
-                        rtpPacket.Header.MarkerBit = 1; // 最后一个分片设置 marker
-                    }
-                    else
-                    {
-                        rtpPacket.Header.MarkerBit = 0;
-                    }
-                    
-                    // 设置 payload
-                    rtpPacket.Payload[0] = fuIndicator;
-                    rtpPacket.Payload[1] = fuHeader;
-                    Buffer.BlockCopy(nalUnit, fragmentStart, rtpPacket.Payload, 2, fragmentLength);
-                    
-                    // 尝试发送分片 RTP 包
-                    try
-                    {
-                        byte[] rtpBytes = rtpPacket.GetBytes();
-                        
-                        // 尝试发送分片 RTP 包（使用反射调用 SendRtpRaw）
-                        try
-                        {
-                            var sendRtpRawMethods = _peerConnection.GetType().GetMethods()
-                                .Where(m => m.Name == "SendRtpRaw" && m.GetParameters().Length == 2)
-                                .ToList();
-                            
-                            foreach (var method in sendRtpRawMethods)
-                            {
-                                try
-                                {
-                                    var parameters = method.GetParameters();
-                                    if (parameters[0].ParameterType == typeof(byte[]))
-                                    {
-                                        if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
-                                        {
-                                            method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video });
-                                            return; // 发送成功
-                                        }
-                                        else if (parameters[1].ParameterType == typeof(int))
-                                        {
-                                            method.Invoke(_peerConnection, new object[] { rtpBytes, 96 });
-                                            return; // 发送成功
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-                        catch (Exception)
-                        {
-                            // 分片发送失败，静默处理
-                        }
-                    }
-                    catch (Exception sendEx)
-                    {
-                        _logger.LogError(sendEx, "❌ 发送分片 RTP 包失败");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "❌ 发送分片 NAL unit RTP 包失败: fragment {I}/{Count}", i + 1, fragmentCount);
-                }
-            }
-        }
-        
-        /// <summary>
         /// 转码并发送音频：Opus -> PCM -> PCMU (G.711 μ-law)
         /// </summary>
-        private void SendAudioWithTranscoding(byte[] opusFrame)
+        private void SendAudioPacketInternal(byte[] packet)
         {
             try
             {
-                if (_peerConnection == null || opusFrame == null || opusFrame.Length == 0)
+                if (_peerConnection == null || packet == null || packet.Length <= 1)
                 {
                     return;
                 }
                 
-                // 步骤1：将 Opus 解码为 PCM
-                byte[]? pcmData = null;
-                int samplesDecoded = 0;
-                
-                lock (_opusDecoderLock)
+                // packet 格式：[HeaderType.AUDIO (1 byte)] + [编码后音频帧]
+                var payloadType = (HeaderType)packet[0];
+                if (payloadType != HeaderType.AUDIO)
                 {
-                    // 初始化 Opus 解码器（如果需要）
-                    if (_opusDecoder == null)
-                    {
-                        try
-                        {
-                            _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
-                            _logger.LogInformation("✅ Opus 解码器已初始化: {SampleRate}Hz, {Channels} 声道 (使用 OpusCodecFactory)", 
-                                _audioSampleRate, _audioChannels);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "❌ 初始化 Opus 解码器失败");
+                    _logger.LogWarning("⚠️ 非音频包传入 OnAudioPacket，已忽略");
                             return;
                         }
-                    }
-                    
-                    // 使用 Opus 解码器解码为 PCM
-                    // IOpusDecoder 使用 float[] 作为输出缓冲区
-                    // frame_size 参数是每声道的样本数
-                    float[] pcmBufferFloat = new float[_audioChannels * _audioFrameSize];
-                    samplesDecoded = _opusDecoder.Decode(opusFrame.AsSpan(), pcmBufferFloat.AsSpan(), _audioFrameSize, false);
-                    
-                    if (samplesDecoded > 0)
-                    {
-                        // ✅ 优化音质：使用更精确的 float 到 short 转换
-                        // 使用 32767.0f 而不是 32768.0f 以避免溢出，同时保持精度
-                        int sampleCount = samplesDecoded * _audioChannels;
-                        pcmData = new byte[sampleCount * 2];
-                        // ✅ 安全代码：使用 Span<T> 和 MemoryMarshal 进行高效转换
-                        var floatSpan = pcmBufferFloat.AsSpan();
-                        var shortSpan = MemoryMarshal.Cast<byte, short>(pcmData.AsSpan());
-                        
-                        for (int i = 0; i < sampleCount; i++)
-                        {
-                            // ✅ 优化：使用更精确的转换，避免截断失真和噪音
-                            // 将 float (-1.0 到 1.0) 转换为 short (-32768 到 32767)
-                            float sample = floatSpan[i];
-                            // 软限制，避免硬截断造成的失真
-                            if (sample > 1.0f) sample = 1.0f;
-                            else if (sample < -1.0f) sample = -1.0f;
-                            
-                            // ✅ 优化：减少去噪阈值，避免过度去噪导致音质损失
-                            // 只对极小的量化噪音进行去噪，保留更多细节
-                            if (Math.Abs(sample) < 0.0001f)
-                            {
-                                sample = 0.0f; // 完全静音，避免量化噪音
-                            }
-                            
-                            // 使用四舍五入而不是截断，提升精度
-                            // 使用 32767.0f 而不是 32768.0f 以避免溢出
-                            shortSpan[i] = (short)Math.Round(sample * 32767.0f);
-                        }
-                    }
-                    else
-                    {
-                        if (_audioPacketCount < 5)
-                        {
-                            _logger.LogWarning("⚠️ Opus 解码返回 0 个样本");
-                        }
-                        return;
-                    }
-                }
-                
-                // ⚠️ 改进策略：优先尝试直接发送 Opus（如果浏览器支持），否则转码为 PCMA (A-law)
-                // PCMA 在低音量时音质比 PCMU 更好
-                // 步骤2：检查是否可以发送 Opus，否则转码为 PCMA
-                if (pcmData != null && pcmData.Length > 0)
+
+                var opusFrame = packet.AsSpan(1).ToArray();
+
+                if (_forceStereoDownmix)
                 {
-                    // 先尝试直接发送 Opus（如果浏览器支持）
-                    // 注意：这需要检查 Answer SDP 中是否包含 Opus
-                    // 目前先使用 PCMA 转码，因为音质更好
-                    
-                    // 降采样：48000Hz -> 8000Hz（PCMA 需要 8000Hz）
-                    byte[] downsampledPcm = DownsamplePCM(pcmData, _audioSampleRate, 8000, _audioChannels);
-                    if (downsampledPcm != null && downsampledPcm.Length > 0)
+                    if (TrySendOpusDownmixedToStereo(opusFrame, out var downmixedFrame))
                     {
-                        int downsampledSamples = downsampledPcm.Length / (2 * _audioChannels); // 每个样本 2 字节
-                        
-                        // ⚠️ 暂时使用 PCMU 确保有声音，PCMA 编码算法可能有问题
-                        // 使用 PCMU (μ-law) 转码
-                        byte[] pcmuData = EncodePCMToPCMU(downsampledPcm);
-                        if (pcmuData != null && pcmuData.Length > 0)
-                        {
-                            SendAudioPCMUAsRTP(pcmuData, downsampledSamples);
-                        }
-                        else
-                        {
-                            if (_audioPacketCount <= 5)
-                            {
-                                _logger.LogWarning("⚠️ PCMU 编码返回空数据");
-                            }
-                        }
+                        SendAudioOpusDirect(downmixedFrame.FrameData, downmixedFrame.SamplesPerFrame);
                     }
                     else
                     {
-                        if (_audioPacketCount <= 5)
-                        {
-                            _logger.LogWarning("⚠️ 降采样返回空数据: PCM长度={Length}", pcmData.Length);
-                        }
+                        SendAudioOpusDirect(opusFrame);
                     }
                 }
+                else
+                {
+                    SendAudioOpusDirect(opusFrame);
+                }
+
+                _latencyStats?.RecordPacketSent(_sessionId, "audio", _currentAudioFrameIndex);
+                _audioPacketCount++;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 音频转码失败");
+                _logger.LogError(ex, "❌ 处理音频包失败");
             }
         }
         
@@ -2631,66 +1146,57 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     return;
                 }
-                
+
                 if (_peerConnection.connectionState != RTCPeerConnectionState.connected)
                 {
                     return;
                 }
-                
-                // ⚠️ 参照 FfmpegMuxReceiver：使用 Opus 解码器将 Opus 帧解码为 PCM
+
                 byte[]? pcmData = null;
                 int samplesDecoded = 0;
-                
+
                 lock (_opusDecoderLock)
                 {
-                    // 初始化 Opus 解码器（如果需要）
                     if (_opusDecoder == null)
                     {
                         try
                         {
                             _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
-                            _logger.LogInformation("✅ Opus 解码器已初始化: {SampleRate}Hz, {Channels} 声道 (使用 OpusCodecFactory)", 
+                            _logger.LogInformation("✅ Opus 解码器已初始化: {SampleRate}Hz, {Channels} 声道 (使用 OpusCodecFactory)",
                                 _audioSampleRate, _audioChannels);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "❌ 初始化 Opus 解码器失败");
-                            // 如果解码器初始化失败，尝试直接发送 Opus 数据（让 WebRTC 处理）
                             SendAudioOpusDirect(opusFrame);
                             return;
                         }
                     }
-                    
-                    // 使用 Opus 解码器解码为 PCM
-                    // IOpusDecoder 使用 float[] 作为输出缓冲区
-                    // frame_size 参数是每声道的样本数
+
                     float[] pcmBufferFloat = new float[_audioChannels * _audioFrameSize];
                     samplesDecoded = _opusDecoder.Decode(opusFrame.AsSpan(), pcmBufferFloat.AsSpan(), _audioFrameSize, false);
-                    
+
                     if (samplesDecoded > 0)
                     {
-                        // 将 float 样本转换为 short[]，然后转换为字节数组（s16le）
                         short[] pcmBuffer = new short[samplesDecoded * _audioChannels];
                         for (int i = 0; i < samplesDecoded * _audioChannels; i++)
                         {
-                            // 将 float (-1.0 到 1.0) 转换为 short (-32768 到 32767)
                             float clamped = Math.Max(-1.0f, Math.Min(1.0f, pcmBufferFloat[i]));
                             pcmBuffer[i] = (short)(clamped * 32767.0f);
                         }
-                        pcmData = new byte[samplesDecoded * _audioChannels * 2]; // 每个样本 2 字节
-                        System.Buffer.BlockCopy(pcmBuffer, 0, pcmData, 0, pcmData.Length);
+                        pcmData = new byte[samplesDecoded * _audioChannels * 2];
+                        Buffer.BlockCopy(pcmBuffer, 0, pcmData, 0, pcmData.Length);
                     }
                     else
                     {
                         if (_audioPacketCount < 5)
                         {
-                            _logger.LogWarning("⚠️ Opus 解码返回 0 个样本，包计数: {Count}", _audioPacketCount);
+                            _logger.LogWarning("⚠️ Opus 解码返回 0 个样本");
                         }
-                        return; // 解码失败，跳过这个包
+                        return;
                     }
                 }
-                
-                // 发送 PCM 数据到 WebRTC
+
                 if (pcmData != null && pcmData.Length > 0)
                 {
                     SendAudioPCMToWebRTC(pcmData, samplesDecoded);
@@ -2702,6 +1208,11 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
         }
         
+        private void SendAudioOpusFallback(byte[] opusFrame)
+        {
+            SendAudioOpusDirect(opusFrame);
+        }
+
         /// <summary>
         /// 尝试使用 Opus 编码器重新编码并发送（即使浏览器选择了 PCMU，也发送 Opus 以获得高质量）
         /// </summary>
@@ -2741,8 +1252,10 @@ namespace RemotePlay.Services.Streaming.Receiver
         /// <summary>
         /// 直接发送 Opus 数据（直接发送 Opus RTP 包，不转码）
         /// </summary>
-        private bool TrySendOpusDownmixedToStereo(byte[] opusFrame)
+        private bool TrySendOpusDownmixedToStereo(byte[] opusFrame, out DownmixedOpusFrame downmixedFrame)
         {
+            downmixedFrame = default;
+            
             try
             {
                 if (opusFrame == null || opusFrame.Length == 0)
@@ -2783,67 +1296,14 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                 try
                 {
-                    var floatSpan = pcmBufferFloat.AsSpan();
                     var stereoSpan = stereoSamplesBuffer.AsSpan(0, stereoSamples * 2);
-
-                    for (int sample = 0; sample < stereoSamples; sample++)
+                    if (!TryBuildStereoSamples(pcmBufferFloat, stereoSamples, _audioChannels, stereoSpan))
                     {
-                        int baseIndex = sample * _audioChannels;
-                        float leftSum = 0f;
-                        float rightSum = 0f;
-                        int leftCount = 0;
-                        int rightCount = 0;
-
-                        for (int ch = 0; ch < _audioChannels; ch++)
+                        if (_audioPacketCount < 5 || _audioPacketCount % 100 == 0)
                         {
-                            float value = floatSpan[baseIndex + ch];
-
-                            if (ch == 0)
-                            {
-                                leftSum += value;
-                                leftCount++;
-                                continue;
-                            }
-
-                            if (ch == 1)
-                            {
-                                rightSum += value;
-                                rightCount++;
-                                continue;
-                            }
-
-                            if ((ch & 1) == 0)
-                            {
-                                leftSum += value;
-                                leftCount++;
-                            }
-                            else
-                            {
-                                rightSum += value;
-                                rightCount++;
-                            }
+                            _logger.LogWarning("⚠️ 下混音频：声道矩阵无效（channels={Channels}），放弃下混", _audioChannels);
                         }
-
-                        if (leftCount == 0)
-                        {
-                            leftSum = 0f;
-                            leftCount = 1;
-                        }
-
-                        if (rightCount == 0)
-                        {
-                            rightSum = leftSum;
-                            rightCount = leftCount;
-                        }
-
-                        float leftValue = leftSum / leftCount;
-                        float rightValue = rightSum / rightCount;
-
-                        leftValue = Math.Clamp(leftValue, -1f, 1f);
-                        rightValue = Math.Clamp(rightValue, -1f, 1f);
-
-                        stereoSpan[sample * 2] = (short)Math.Round(leftValue * 32767f);
-                        stereoSpan[sample * 2 + 1] = (short)Math.Round(rightValue * 32767f);
+                        return false;
                     }
 
                     byte[] encodeBuffer = ArrayPool<byte>.Shared.Rent(_opusEncodeBuffer.Length);
@@ -2874,9 +1334,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                             return false;
                         }
 
-                        var downmixedFrame = new byte[encodedBytes];
-                        Buffer.BlockCopy(encodeBuffer, 0, downmixedFrame, 0, encodedBytes);
-                        SendAudioOpusDirect(downmixedFrame, stereoSamples);
+                        var downmixedData = new byte[encodedBytes];
+                        Buffer.BlockCopy(encodeBuffer, 0, downmixedData, 0, encodedBytes);
+                        downmixedFrame = new DownmixedOpusFrame(downmixedData, stereoSamples);
                         return true;
                     }
                     finally
@@ -2895,8 +1355,315 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     _logger.LogWarning(ex, "⚠️ 下混音频失败，将回退发送原始音频");
                 }
+                downmixedFrame = default;
                 return false;
             }
+        }
+        
+        private bool TryBuildStereoSamples(float[] source, int samples, int sourceChannels, Span<short> destination)
+        {
+            if (destination.Length < samples * 2)
+            {
+                return false;
+            }
+
+            if (sourceChannels <= 0 || samples <= 0)
+            {
+                return false;
+            }
+
+            if (sourceChannels == 1)
+            {
+                for (int sample = 0; sample < samples; sample++)
+                {
+                    float value = Math.Clamp(source[sample], -1f, 1f);
+                    short converted = (short)Math.Round(value * 32767f);
+                    destination[sample * 2] = converted;
+                    destination[sample * 2 + 1] = converted;
+                }
+                return true;
+            }
+
+            var matrix = BuildDownmixMatrix(sourceChannels);
+            if (!matrix.IsValid || matrix.Left.Length != sourceChannels || matrix.Right.Length != sourceChannels)
+            {
+                return false;
+            }
+
+            var floatSpan = source.AsSpan();
+            var leftWeights = matrix.Left;
+            var rightWeights = matrix.Right;
+            float normalization = matrix.Normalization;
+
+            for (int sample = 0; sample < samples; sample++)
+            {
+                int baseIndex = sample * sourceChannels;
+                float leftValue = 0f;
+                float rightValue = 0f;
+
+                for (int ch = 0; ch < sourceChannels; ch++)
+                {
+                    float value = floatSpan[baseIndex + ch];
+                    leftValue += value * leftWeights[ch];
+                    rightValue += value * rightWeights[ch];
+                }
+
+                leftValue *= normalization;
+                rightValue *= normalization;
+
+                float peak = Math.Max(Math.Abs(leftValue), Math.Abs(rightValue));
+                if (peak > 1f)
+                {
+                    float scale = 1f / peak;
+                    leftValue *= scale;
+                    rightValue *= scale;
+                }
+
+                leftValue = Math.Clamp(leftValue, -1f, 1f);
+                rightValue = Math.Clamp(rightValue, -1f, 1f);
+
+                destination[sample * 2] = (short)Math.Round(leftValue * 32767f);
+                destination[sample * 2 + 1] = (short)Math.Round(rightValue * 32767f);
+            }
+
+            return true;
+        }
+
+        private static int ParseAudioChannels(byte[] header)
+        {
+            var span = header.AsSpan();
+
+            if (span.Length >= 2)
+            {
+                int be = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(0, 2));
+                if (IsValidChannelCount(be)) return be;
+
+                int le = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(0, 2));
+                if (IsValidChannelCount(le)) return le;
+            }
+
+            if (span.Length >= 1 && IsValidChannelCount(span[0]))
+            {
+                return span[0];
+            }
+
+            return 2;
+        }
+
+        private static int ParseBitsPerSample(byte[] header)
+        {
+            var span = header.AsSpan();
+
+            if (span.Length >= 8)
+            {
+                int be = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(6, 2));
+                if (IsValidBitsPerSample(be)) return be;
+
+                int le = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(6, 2));
+                if (IsValidBitsPerSample(le)) return le;
+            }
+
+            if (span.Length > 6 && IsValidBitsPerSample(span[6]))
+            {
+                return span[6];
+            }
+
+            return 16;
+        }
+
+        private static int ParseSampleRate(byte[] header)
+        {
+            var span = header.AsSpan();
+
+            if (span.Length >= 6)
+            {
+                int be = BinaryPrimitives.ReadInt32BigEndian(span.Slice(2, 4));
+                if (IsValidSampleRate(be)) return be;
+
+                int le = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(2, 4));
+                if (IsValidSampleRate(le)) return le;
+            }
+
+            return 48000;
+        }
+
+        private static int ParseFrameSize(byte[] header)
+        {
+            var span = header.AsSpan();
+
+            if (span.Length >= 12)
+            {
+                int be32 = BinaryPrimitives.ReadInt32BigEndian(span.Slice(8, 4));
+                if (IsValidFrameSize(be32)) return be32;
+
+                int le32 = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(8, 4));
+                if (IsValidFrameSize(le32)) return le32;
+            }
+
+            if (span.Length >= 10)
+            {
+                int be16 = BinaryPrimitives.ReadUInt16BigEndian(span.Slice(8, 2));
+                if (IsValidFrameSize(be16)) return be16;
+
+                int le16 = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(8, 2));
+                if (IsValidFrameSize(le16)) return le16;
+            }
+
+            return 480;
+        }
+
+        private static bool IsValidChannelCount(int value) => value >= 1 && value <= 8;
+
+        private static bool IsValidBitsPerSample(int value) => value is 8 or 16 or 24 or 32;
+
+        private static bool IsValidSampleRate(int value) => value >= 8000 && value <= 192000;
+
+        private static bool IsValidFrameSize(int value) => value >= 60 && value <= 8192;
+
+        private readonly struct DownmixedOpusFrame
+        {
+            public DownmixedOpusFrame(byte[] frameData, int samplesPerFrame)
+            {
+                FrameData = frameData;
+                SamplesPerFrame = samplesPerFrame;
+            }
+
+            public byte[] FrameData { get; }
+            public int SamplesPerFrame { get; }
+            public bool IsValid => FrameData != null && FrameData.Length > 0 && SamplesPerFrame > 0;
+        }
+
+        private readonly struct DownmixMatrix
+        {
+            public DownmixMatrix(float[] left, float[] right, float normalization)
+            {
+                Left = left;
+                Right = right;
+                Normalization = normalization;
+            }
+
+            public float[] Left { get; }
+            public float[] Right { get; }
+            public float Normalization { get; }
+            public bool IsValid => Left.Length > 0 && Right.Length > 0;
+        }
+
+        private static DownmixMatrix BuildDownmixMatrix(int channels)
+        {
+            if (channels <= 0)
+            {
+                return new DownmixMatrix(Array.Empty<float>(), Array.Empty<float>(), 1f);
+            }
+
+            const float INV_SQRT2 = 0.70710677f; // ≈ 1/√2
+            const float LFE_GAIN = 0.5f;
+            const float SURROUND_GAIN = 0.70710677f;
+            const float DIRECT_GAIN = 1f;
+
+            var left = new float[channels];
+            var right = new float[channels];
+
+            switch (channels)
+            {
+                case 1: // Mono
+                    left[0] = DIRECT_GAIN;
+                    right[0] = DIRECT_GAIN;
+                    break;
+                case 2: // Stereo
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    break;
+                case 3: // L, R, C
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    left[2] = INV_SQRT2;
+                    right[2] = INV_SQRT2;
+                    break;
+                case 4: // L, R, Ls, Rs
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    left[2] = SURROUND_GAIN;
+                    right[3] = SURROUND_GAIN;
+                    break;
+                case 5: // L, R, C, Ls, Rs
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    left[2] = INV_SQRT2;
+                    right[2] = INV_SQRT2;
+                    left[3] = SURROUND_GAIN;
+                    right[4] = SURROUND_GAIN;
+                    break;
+                case 6: // 5.1 -> L, R, C, LFE, Ls, Rs
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    left[2] = INV_SQRT2;
+                    right[2] = INV_SQRT2;
+                    left[3] = LFE_GAIN;
+                    right[3] = LFE_GAIN;
+                    left[4] = SURROUND_GAIN;
+                    right[5] = SURROUND_GAIN;
+                    break;
+                case 7: // 6.1 -> L, R, C, LFE, Ls, Rs, Cs
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    left[2] = INV_SQRT2;
+                    right[2] = INV_SQRT2;
+                    left[3] = LFE_GAIN;
+                    right[3] = LFE_GAIN;
+                    left[4] = SURROUND_GAIN;
+                    right[5] = SURROUND_GAIN;
+                    left[6] = SURROUND_GAIN;
+                    right[6] = SURROUND_GAIN;
+                    break;
+                default: // 7.1 及以上 -> L, R, C, LFE, Ls, Rs, Lb, Rb, ...
+                    left[0] = DIRECT_GAIN;
+                    right[1] = DIRECT_GAIN;
+                    left[2] = INV_SQRT2;
+                    right[2] = INV_SQRT2;
+                    left[3] = LFE_GAIN;
+                    right[3] = LFE_GAIN;
+                    if (channels > 4)
+                    {
+                        left[4] = SURROUND_GAIN;
+                    }
+                    if (channels > 5)
+                    {
+                        right[5] = SURROUND_GAIN;
+                    }
+                    if (channels > 6)
+                    {
+                        left[6] = SURROUND_GAIN;
+                    }
+                    if (channels > 7)
+                    {
+                        right[7] = SURROUND_GAIN;
+                    }
+                    for (int ch = 8; ch < channels; ch++)
+                    {
+                        if ((ch & 1) == 0)
+                        {
+                            left[ch] = SURROUND_GAIN;
+                        }
+                        else
+                        {
+                            right[ch] = SURROUND_GAIN;
+                        }
+                    }
+                    break;
+            }
+
+            float sumLeft = 0f;
+            float sumRight = 0f;
+            for (int i = 0; i < channels; i++)
+            {
+                sumLeft += Math.Abs(left[i]);
+                sumRight += Math.Abs(right[i]);
+            }
+
+            float maxSum = Math.Max(sumLeft, sumRight);
+            float normalization = maxSum > 1f ? 1f / maxSum : 1f;
+
+            return new DownmixMatrix(left, right, normalization);
         }
 
         private void SendAudioOpusDirect(byte[] opusFrame, int? samplesPerFrameOverride = null)
@@ -3318,98 +2085,6 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 _logger.LogError(ex, "❌ 发送音频 RTP 包失败");
             }
-        }
-        
-        private string? DetectCodecFromVideoHeader(byte[] header)
-        {
-            if (header == null || header.Length < 5)
-            {
-                return null;
-            }
-            
-            int actualHeaderLen = header.Length >= 64 ? header.Length - 64 : header.Length;
-            
-            for (int i = 0; i < actualHeaderLen - 4; i++)
-            {
-                if (i + 4 < actualHeaderLen && 
-                    header[i] == 0x00 && header[i+1] == 0x00 && 
-                    header[i+2] == 0x00 && header[i+3] == 0x01)
-                {
-                    byte nalType = header[i+4];
-                    
-                    // HEVC
-                    if ((nalType & 0x7E) == 0x40 || (nalType & 0x7E) == 0x42 || (nalType & 0x7E) == 0x44)
-                    {
-                        return "hevc";
-                    }
-                    
-                    // H.264
-                    byte h264Type = (byte)(nalType & 0x1F);
-                    if (h264Type == 7 || h264Type == 8 || h264Type == 5)
-                    {
-                        return "h264";
-                    }
-                }
-                
-                if (i + 3 < actualHeaderLen && 
-                    header[i] == 0x00 && header[i+1] == 0x00 && header[i+2] == 0x01)
-                {
-                    byte nalType = header[i+3];
-                    
-                    if ((nalType & 0x7E) == 0x40 || (nalType & 0x7E) == 0x42 || (nalType & 0x7E) == 0x44)
-                    {
-                        return "hevc";
-                    }
-                    
-                    byte h264Type = (byte)(nalType & 0x1F);
-                    if (h264Type == 7 || h264Type == 8 || h264Type == 5)
-                    {
-                        return "h264";
-                    }
-                }
-            }
-            
-            return null;
-        }
-        
-        private bool IsIdrFrame(byte[] buf, int hintOffset)
-        {
-            if (buf == null || buf.Length < 6) return false;
-
-            bool AnnexBScan(int start)
-            {
-                for (int i = start; i <= buf.Length - 4; i++)
-                {
-                    if (buf[i] == 0x00 && buf[i + 1] == 0x00)
-                    {
-                        int nalStart = -1;
-                        if (i + 3 < buf.Length && buf[i + 2] == 0x00 && buf[i + 3] == 0x01) nalStart = i + 4;
-                        else if (buf[i + 2] == 0x01) nalStart = i + 3;
-                        if (nalStart >= 0 && nalStart < buf.Length)
-                        {
-                            byte h = buf[nalStart];
-                            
-                            // HEVC
-                            int hevcType = (h >> 1) & 0x3F;
-                            if (hevcType == 19 || hevcType == 20 || hevcType == 21 ||
-                                hevcType == 16 || hevcType == 17 || hevcType == 18)
-                            {
-                                return true;
-                            }
-                            
-                            // H.264
-                            int h264Type = h & 0x1F;
-                            if (h264Type == 5)
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
-                return false;
-            }
-
-            return AnnexBScan(0) || (hintOffset > 0 && AnnexBScan(hintOffset));
         }
         
         /// <summary>

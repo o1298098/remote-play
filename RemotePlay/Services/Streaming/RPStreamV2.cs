@@ -44,6 +44,16 @@ namespace RemotePlay.Services.Streaming
         // 心跳常量
         private const int HEARTBEAT_INTERVAL_MS = 1000; // 心跳间隔 1 秒
         private const int HEARTBEAT_LOG_INTERVAL = 10; // 每 10 次心跳记录一次日志
+		private const double DUALSENSE_WEAK_MULTIPLIER = 0.33;
+		private const double DUALSENSE_MEDIUM_MULTIPLIER = 0.5;
+
+		private enum TakionDataType : byte
+		{
+			Protobuf = 0,
+			Rumble = 7,
+			PadInfo = 9,
+			TriggerEffects = 11
+		}
 
         #endregion
 
@@ -105,7 +115,23 @@ namespace RemotePlay.Services.Streaming
         // 断开连接回调
         private Func<Task>? _onDisconnectCallback;
 
+		// 手柄反馈状态
+		private readonly object _rumbleLock = new();
+		private double _rumbleMultiplier = 1.0;
+		private int _ps5RumbleIntensity = 0x00;
+		private int _ps5TriggerIntensity = 0x00;
+		private byte _currentHapticIntensityCode = 0xFF;
+		private byte _currentTriggerIntensityCode = 0xFF;
+		private readonly byte[] _ledState = new byte[3];
+		private byte _playerIndex;
+
         #endregion
+
+		#region Events
+
+		public event EventHandler<RumbleEventArgs>? RumbleReceived;
+
+		#endregion
 
         #region Constructor
 
@@ -146,7 +172,8 @@ namespace RemotePlay.Services.Streaming
                 GetCurrentKeyPos,     // 获取 key_pos 回调
                 GetPacketStats        // 获取包统计回调（可选）
             );
-        }
+
+			}
 
         #endregion
 
@@ -781,22 +808,62 @@ namespace RemotePlay.Services.Streaming
             // 发送 DATA_ACK
             SendDataAck(tsn);
 
-            // 处理 Takion 消息
-            var data = packet.Data ?? Array.Empty<byte>();
-            if (data.Length > 0)
-            {
-                ProcessTakionMessage(data);
-            }
-            else
-            {
-                _logger.LogWarning("Received DATA packet with empty data: tsn={Tsn}", tsn);
-            }
+			// 处理 Takion 消息
+			if (packet.Data == null || packet.Data.Length == 0)
+			{
+				_logger.LogWarning(
+					"Received DATA packet with empty payload: tsn={Tsn}, dataType={DataType}",
+					tsn,
+					packet.DataType?.ToString("X2") ?? "null");
+				return;
+			}
+
+			DispatchTakionData(packet);
         }
 
-        /// <summary>
-        /// 处理 Takion 消息
-        /// </summary>
-        private void ProcessTakionMessage(byte[] data)
+		/// <summary>
+		/// 根据数据类型分发 Takion DATA 消息。
+		/// </summary>
+		private void DispatchTakionData(Packet packet)
+		{
+			var payload = packet.Data ?? Array.Empty<byte>();
+			if (payload.Length == 0)
+			{
+				if (_logger.IsEnabled(LogLevel.Trace))
+				{
+					_logger.LogTrace("Takion data ignored: empty payload, type={DataType}", packet.DataType ?? 0);
+				}
+				return;
+			}
+
+			var dataType = (TakionDataType)(packet.DataType ?? (byte)TakionDataType.Protobuf);
+			switch (dataType)
+			{
+				case TakionDataType.Protobuf:
+					ProcessTakionMessage(payload);
+					break;
+				case TakionDataType.Rumble:
+					HandleRumble(payload);
+					break;
+				case TakionDataType.PadInfo:
+					HandlePadInfo(payload);
+					break;
+				case TakionDataType.TriggerEffects:
+					HandleTriggerEffects(payload);
+					break;
+				default:
+					if (_logger.IsEnabled(LogLevel.Trace))
+					{
+						_logger.LogTrace("Unhandled Takion data type {DataType}, length={Length}", (byte)dataType, payload.Length);
+					}
+					break;
+			}
+		}
+
+		/// <summary>
+		/// 处理 Takion 消息
+		/// </summary>
+		private void ProcessTakionMessage(byte[] data)
         {
             if (!ProtoCodec.TryParse(data, out var message))
             {
@@ -843,6 +910,261 @@ namespace RemotePlay.Services.Streaming
                     break;
             }
         }
+
+		private void HandleRumble(byte[] data)
+		{
+			if (data.Length < 3)
+			{
+				_logger.LogWarning("Rumble payload too short: len={Length}", data.Length);
+				return;
+			}
+
+			double multiplier;
+			int ps5RumbleIntensity;
+			int ps5TriggerIntensity;
+			lock (_rumbleLock)
+			{
+				multiplier = _rumbleMultiplier;
+				ps5RumbleIntensity = _ps5RumbleIntensity;
+				ps5TriggerIntensity = _ps5TriggerIntensity;
+			}
+
+			if (ps5RumbleIntensity < 0)
+			{
+				if (_logger.IsEnabled(LogLevel.Trace))
+				{
+					_logger.LogTrace("Skipping rumble packet because haptics are disabled.");
+				}
+				return;
+			}
+
+			byte unknown = data[0];
+			byte left = data[1];
+			byte right = data[2];
+
+			var leftScaled = (int)(left * multiplier);
+			var rightScaled = (int)(right * multiplier);
+
+			byte adjustedLeft = (byte)Math.Clamp(leftScaled, 0, 255);
+			byte adjustedRight = (byte)Math.Clamp(rightScaled, 0, 255);
+
+			if (_logger.IsEnabled(LogLevel.Trace))
+			{
+				_logger.LogTrace(
+					"Rumble packet: unknown={Unknown}, left={Left}, right={Right}, adjustedLeft={AdjustedLeft}, adjustedRight={AdjustedRight}, multiplier={Multiplier:F2}",
+					unknown, left, right, adjustedLeft, adjustedRight, multiplier);
+			}
+
+			OnRumbleReceived(new RumbleEventArgs(
+				unknown,
+				left,
+				right,
+				adjustedLeft,
+				adjustedRight,
+				multiplier,
+				ps5RumbleIntensity,
+				ps5TriggerIntensity));
+		}
+
+		private void HandlePadInfo(byte[] data)
+		{
+			ReadOnlySpan<byte> ledSpan = default;
+			byte? newPlayerIndex = null;
+			bool motionReset = false;
+
+			if (data.Length == 0x19)
+			{
+				byte haptic = data[20];
+				byte trigger = data[21];
+				ApplyHapticIntensity(haptic);
+				ApplyTriggerIntensity(trigger);
+				motionReset = data[12] != 0;
+				newPlayerIndex = data[8];
+				ledSpan = data.AsSpan(9, 3);
+			}
+			else if (data.Length == 0x11)
+			{
+				byte haptic = data[12];
+				byte trigger = data[13];
+				ApplyHapticIntensity(haptic);
+				ApplyTriggerIntensity(trigger);
+				motionReset = data[4] != 0;
+				newPlayerIndex = data[0];
+				ledSpan = data.AsSpan(1, 3);
+			}
+			else
+			{
+				if (_logger.IsEnabled(LogLevel.Debug))
+				{
+					_logger.LogDebug("Unexpected pad info payload length={Length}", data.Length);
+				}
+				return;
+			}
+
+			bool ledChanged = false;
+			byte? playerIndexChangedTo = null;
+			if (!ledSpan.IsEmpty || newPlayerIndex.HasValue)
+			{
+				lock (_rumbleLock)
+				{
+					if (newPlayerIndex.HasValue && newPlayerIndex.Value != _playerIndex)
+					{
+						_playerIndex = newPlayerIndex.Value;
+						playerIndexChangedTo = _playerIndex;
+					}
+
+					if (!ledSpan.IsEmpty && !ledSpan.SequenceEqual(_ledState))
+					{
+						ledSpan.CopyTo(_ledState);
+						ledChanged = true;
+					}
+				}
+			}
+
+			if (motionReset && _logger.IsEnabled(LogLevel.Debug))
+			{
+				_logger.LogDebug("Pad info requested motion reset.");
+			}
+
+			if (playerIndexChangedTo.HasValue && _logger.IsEnabled(LogLevel.Debug))
+			{
+				_logger.LogDebug("Player index updated to {PlayerIndex}", playerIndexChangedTo.Value);
+			}
+
+			if (ledChanged && _logger.IsEnabled(LogLevel.Trace))
+			{
+				_logger.LogTrace("LED state updated to {Led}", BitConverter.ToString(_ledState));
+			}
+		}
+
+		private void HandleTriggerEffects(byte[] data)
+		{
+			int triggerIntensity;
+			lock (_rumbleLock)
+			{
+				triggerIntensity = _ps5TriggerIntensity;
+			}
+
+			if (triggerIntensity < 0)
+			{
+				if (_logger.IsEnabled(LogLevel.Trace))
+				{
+					_logger.LogTrace("Trigger effects ignored because trigger intensity is disabled.");
+				}
+				return;
+			}
+
+			if (data.Length < 25)
+			{
+				_logger.LogWarning("Trigger effects payload too short: len={Length}", data.Length);
+				return;
+			}
+
+			if (_logger.IsEnabled(LogLevel.Trace))
+			{
+				_logger.LogTrace("Trigger effects payload: {Payload}", BitConverter.ToString(data));
+			}
+		}
+
+		private void ApplyHapticIntensity(byte intensityCode)
+		{
+			bool changed = false;
+			lock (_rumbleLock)
+			{
+				if (_currentHapticIntensityCode == intensityCode)
+				{
+					return;
+				}
+				_currentHapticIntensityCode = intensityCode;
+				changed = true;
+
+				switch (intensityCode)
+				{
+					case 0:
+						_ps5RumbleIntensity = -1;
+						_rumbleMultiplier = 0.0;
+						break;
+					case 1:
+						_ps5RumbleIntensity = 0x00;
+						_rumbleMultiplier = 1.0;
+						break;
+					case 2:
+						_ps5RumbleIntensity = 0x02;
+						_rumbleMultiplier = DUALSENSE_MEDIUM_MULTIPLIER;
+						break;
+					case 3:
+						_ps5RumbleIntensity = 0x03;
+						_rumbleMultiplier = DUALSENSE_WEAK_MULTIPLIER;
+						break;
+					default:
+						_ps5RumbleIntensity = 0x00;
+						_rumbleMultiplier = 1.0;
+						break;
+				}
+			}
+
+			if (changed && _logger.IsEnabled(LogLevel.Debug))
+			{
+				_logger.LogDebug(
+					"Haptic intensity updated: code={Code}, ps5={Ps5}, multiplier={Multiplier:F2}",
+					intensityCode,
+					_ps5RumbleIntensity,
+					_rumbleMultiplier);
+			}
+		}
+
+		private void ApplyTriggerIntensity(byte intensityCode)
+		{
+			bool changed = false;
+			lock (_rumbleLock)
+			{
+				if (_currentTriggerIntensityCode == intensityCode)
+				{
+					return;
+				}
+				_currentTriggerIntensityCode = intensityCode;
+				changed = true;
+
+				switch (intensityCode)
+				{
+					case 0:
+						_ps5TriggerIntensity = -1;
+						break;
+					case 1:
+						_ps5TriggerIntensity = 0x00;
+						break;
+					case 2:
+						_ps5TriggerIntensity = 0x60;
+						break;
+					case 3:
+						_ps5TriggerIntensity = 0x90;
+						break;
+					default:
+						_ps5TriggerIntensity = 0x00;
+						break;
+				}
+			}
+
+			if (changed && _logger.IsEnabled(LogLevel.Trace))
+			{
+				_logger.LogTrace(
+					"Trigger intensity updated: code={Code}, ps5={Ps5}",
+					intensityCode,
+					_ps5TriggerIntensity);
+			}
+		}
+
+		private void OnRumbleReceived(RumbleEventArgs args)
+		{
+			try
+			{
+				RumbleReceived?.Invoke(this, args);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Error while notifying rumble listeners");
+			}
+		}
 
         /// <summary>
         /// 处理断开连接

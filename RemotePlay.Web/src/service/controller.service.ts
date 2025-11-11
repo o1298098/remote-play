@@ -1,4 +1,5 @@
 import * as signalR from '@microsoft/signalr'
+import { ControllerRumbleEvent, ControllerRumblePayload } from '@/types/controller'
 
 // API 基础配置
 const DEFAULT_API_BASE_URL = `${window.location.origin}/api`
@@ -35,6 +36,7 @@ export class ControllerService {
   private isManualDisconnect = false
   private sessionId: string | null = null
   private connectionStateListeners: Set<(state: ControllerConnectionState) => void> = new Set()
+  private rumbleListeners: Set<(event: ControllerRumbleEvent) => void> = new Set()
 
   /**
    * 连接到控制器 Hub
@@ -144,6 +146,13 @@ export class ControllerService {
         } else {
           console.error('❌ SignalR 错误:', message)
           this.notifyStateChange({ isConnected: false, isConnecting: false, error: message })
+        }
+      })
+
+      this.connection.on('ControllerRumble', (payload: ControllerRumblePayload) => {
+        const event = this.normalizeRumblePayload(payload)
+        if (event) {
+          this.notifyRumble(event)
         }
       })
 
@@ -430,15 +439,6 @@ export class ControllerService {
     const clampedY = Math.max(-1, Math.min(1, y))
 
     // 减少日志输出，避免控制台刷屏（只在值较大时记录）
-    if (Math.abs(clampedX) > 0.1 || Math.abs(clampedY) > 0.1) {
-      console.log('📤 SignalR 调用 Stick:', {
-        sessionId: this.sessionId,
-        stickType,
-        x: clampedX.toFixed(3),
-        y: clampedY.toFixed(3),
-      })
-    }
-    
     try {
       // 调用后端的摇杆 API
       if (stickType === 'left') {
@@ -460,10 +460,8 @@ export class ControllerService {
       console.error('❌ SignalR Stick 调用失败:', error)
       // 如果 SignalR 失败且连接仍然可用，尝试使用 HTTP API 备用方案
       if (this.connection && this.connection.state === signalR.HubConnectionState.Connected && this.sessionId) {
-        console.log('🔄 尝试使用 HTTP API 备用方案...')
         try {
           await sendControllerStickHTTP(this.sessionId, stickType, clampedX, clampedY)
-          console.log('✅ HTTP Stick 调用成功')
         } catch (httpError) {
           console.error('❌ HTTP Stick 调用也失败:', httpError)
           // 不抛出错误，静默失败
@@ -525,14 +523,6 @@ export class ControllerService {
     const clampedRightY = Math.max(-1, Math.min(1, rightY))
 
     try {
-      if (import.meta.env?.MODE !== 'production') {
-        console.debug('[controller-service] sendSticks invoke', {
-          leftX: clampedLeftX,
-          leftY: clampedLeftY,
-          rightX: clampedRightX,
-          rightY: clampedRightY,
-        })
-      }
       // 使用 SetSticks 方法同时发送左右摇杆（推荐方法）
       await this.connection.invoke('SetSticks', this.sessionId, clampedLeftX, clampedLeftY, clampedRightX, clampedRightY)
     } catch (error: any) {
@@ -549,7 +539,6 @@ export class ControllerService {
       console.error('❌ SignalR SetSticks 调用失败:', error)
       // 如果 SetSticks 失败，尝试使用单独的 SetLeftStick 和 SetRightStick 方法
       if (this.connection && this.connection.state === signalR.HubConnectionState.Connected && this.sessionId) {
-        console.log('🔄 尝试使用单独的摇杆方法...')
         try {
           await Promise.all([
             this.connection.invoke('SetLeftStick', this.sessionId, clampedLeftX, clampedLeftY),
@@ -640,6 +629,16 @@ export class ControllerService {
   }
 
   /**
+   * 注册震动事件监听
+   */
+  onRumble(listener: (event: ControllerRumbleEvent) => void): () => void {
+    this.rumbleListeners.add(listener)
+    return () => {
+      this.rumbleListeners.delete(listener)
+    }
+  }
+
+  /**
    * 添加连接状态监听器
    */
   onStateChange(listener: (state: ControllerConnectionState) => void): () => void {
@@ -654,6 +653,51 @@ export class ControllerService {
    */
   private notifyStateChange(state: ControllerConnectionState): void {
     this.connectionStateListeners.forEach((listener) => listener(state))
+  }
+
+  private normalizeRumblePayload(payload: ControllerRumblePayload | null | undefined): ControllerRumbleEvent | null {
+    if (!payload || typeof payload !== 'object') {
+      return null
+    }
+
+    const ensureNumber = (value: unknown, fallback: number): number =>
+      typeof value === 'number' && Number.isFinite(value) ? value : fallback
+
+    const clampToByte = (value: number): number => {
+      if (!Number.isFinite(value)) {
+        return 0
+      }
+      if (value <= 0) return 0
+      if (value >= 255) return 255
+      return Math.round(value)
+    }
+
+    const rawLeft = clampToByte(ensureNumber(payload.rawLeft ?? payload.left, 0))
+    const rawRight = clampToByte(ensureNumber(payload.rawRight ?? payload.right, 0))
+    const adjustedLeft = clampToByte(ensureNumber(payload.left ?? payload.rawLeft, rawLeft))
+    const adjustedRight = clampToByte(ensureNumber(payload.right ?? payload.rawRight, rawRight))
+
+    return {
+      unknown: clampToByte(ensureNumber(payload.unknown, 0)),
+      rawLeft,
+      rawRight,
+      left: adjustedLeft,
+      right: adjustedRight,
+      multiplier: ensureNumber(payload.multiplier, 1),
+      ps5RumbleIntensity: ensureNumber(payload.ps5RumbleIntensity, 0),
+      ps5TriggerIntensity: ensureNumber(payload.ps5TriggerIntensity, 0),
+      timestamp: typeof payload.timestamp === 'string' ? payload.timestamp : null,
+    }
+  }
+
+  private notifyRumble(event: ControllerRumbleEvent): void {
+    this.rumbleListeners.forEach((listener) => {
+      try {
+        listener(event)
+      } catch (error) {
+        console.warn('⚠️ 震动事件处理失败:', error)
+      }
+    })
   }
 }
 
@@ -746,7 +790,6 @@ export async function sendControllerStickHTTP(
       if (response.ok) {
         const result = await response.json()
         if (result.success) {
-          console.log(`✅ HTTP Stick 调用成功 (${endpoint})`)
           return
         } else {
           throw new Error(result.errorMessage || result.message || '未知错误')
