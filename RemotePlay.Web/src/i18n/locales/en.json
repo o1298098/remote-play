@@ -15,6 +15,7 @@
     "filter": "Filter",
     "sort": "Sort",
     "refresh": "Refresh",
+    "error": "Error",
     "theme": {
       "toggle": "Toggle theme",
       "light": "Light",
@@ -401,6 +402,61 @@
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} ms",
         "resolution": "{{width}} × {{height}}"
+      }
+    },
+    "loading": {
+      "connectingDevice": "Connecting to device"
+    },
+    "videoPlayer": {
+      "connecting": "Connecting...",
+      "waiting": "Waiting for connection",
+      "start": "Start connection"
+    },
+    "header": {
+      "unnamedDevice": "Unnamed console",
+      "connect": "Connect",
+      "gamepadCount_one": "{{count}} controller",
+      "gamepadCount_other": "{{count}} controllers"
+    },
+    "connection": {
+      "state": {
+        "disconnected": "Disconnected",
+        "fetchingDevice": "Fetching device information...",
+        "checkingStatus": "Checking device status...",
+        "wakingUp": "Device in standby, waking up...",
+        "waitingReady": "Waiting for device to be ready...",
+        "waitingReadyWithTime": "Waiting for device to be ready... ({{seconds}}s)",
+        "connecting": "Connecting...",
+        "creatingSession": "Creating session...",
+        "connected": "Connected",
+        "failed": "Connection failed"
+      },
+      "toast": {
+        "wakingTitle": "Waking device",
+        "wakingDescription": "The device is in standby, waking up...",
+        "prepareFailedTitle": "Device preparation failed",
+        "connectingTitle": "Connecting",
+        "connectingDescription": "Connecting to {{name}}...",
+        "connectedTitle": "Connected",
+        "connectedDescription": "Video stream connected",
+        "connectFailedTitle": "Connection failed",
+        "controllerFailedTitle": "Controller connection failed"
+      },
+      "errors": {
+        "missingDeviceInfo": "Device information is missing",
+        "fetchDeviceFailed": "Failed to fetch device information",
+        "deviceNotFound": "Device information not found",
+        "ipNotSet": "Device IP address is not configured",
+        "wakeDeviceFailed": "Failed to wake device",
+        "deviceNotReady": "Device is not ready",
+        "deviceReadyTimeout": "Device ready timeout ({{seconds}}s)",
+        "connectRemotePlayFailed": "Failed to connect to remote play session",
+        "sessionCreateFailed": "Failed to create session",
+        "sessionDataMissing": "Session response missing data",
+        "sessionIdMissing": "Failed to obtain session ID",
+        "offerCreateFailed": "Failed to create WebRTC offer",
+        "offerDataMissing": "Offer response missing data",
+        "unknown": "Unknown error"
       }
     }
   }

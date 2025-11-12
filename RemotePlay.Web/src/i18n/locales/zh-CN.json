@@ -15,6 +15,7 @@
     "filter": "筛选",
     "sort": "排序",
     "refresh": "刷新",
+    "error": "错误",
     "theme": {
       "toggle": "切换主题",
       "light": "浅色",
@@ -401,6 +402,61 @@
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} 毫秒",
         "resolution": "{{width}} × {{height}}"
+      }
+    },
+    "loading": {
+      "connectingDevice": "正在连接设备"
+    },
+    "videoPlayer": {
+      "connecting": "正在连接...",
+      "waiting": "等待连接",
+      "start": "开始连接"
+    },
+    "header": {
+      "unnamedDevice": "未命名主机",
+      "connect": "连接",
+      "gamepadCount_one": "{{count}} 手柄",
+      "gamepadCount_other": "{{count}} 手柄"
+    },
+    "connection": {
+      "state": {
+        "disconnected": "未连接",
+        "fetchingDevice": "正在获取设备信息...",
+        "checkingStatus": "正在查询设备状态...",
+        "wakingUp": "设备处于待机状态，正在唤醒...",
+        "waitingReady": "等待设备就绪...",
+        "waitingReadyWithTime": "等待设备就绪... ({{seconds}}秒)",
+        "connecting": "正在连接...",
+        "creatingSession": "正在创建会话...",
+        "connected": "已连接",
+        "failed": "连接失败"
+      },
+      "toast": {
+        "wakingTitle": "正在唤醒设备",
+        "wakingDescription": "设备处于待机状态，正在唤醒...",
+        "prepareFailedTitle": "设备准备失败",
+        "connectingTitle": "正在连接",
+        "connectingDescription": "正在连接到 {{name}}...",
+        "connectedTitle": "连接成功",
+        "connectedDescription": "视频流已连接",
+        "connectFailedTitle": "连接失败",
+        "controllerFailedTitle": "控制器连接失败"
+      },
+      "errors": {
+        "missingDeviceInfo": "缺少设备信息",
+        "fetchDeviceFailed": "无法获取设备信息",
+        "deviceNotFound": "未找到设备信息",
+        "ipNotSet": "设备 IP 地址未设置",
+        "wakeDeviceFailed": "唤醒设备失败",
+        "deviceNotReady": "设备未就绪",
+        "deviceReadyTimeout": "设备就绪超时（{{seconds}}秒）",
+        "connectRemotePlayFailed": "连接 Remote Play 会话失败",
+        "sessionCreateFailed": "创建会话失败",
+        "sessionDataMissing": "会话响应格式错误：缺少数据",
+        "sessionIdMissing": "无法获取会话 ID",
+        "offerCreateFailed": "创建 WebRTC Offer 失败",
+        "offerDataMissing": "Offer 响应格式错误：缺少数据",
+        "unknown": "未知错误"
       }
     }
   }

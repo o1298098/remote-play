@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Power, Gamepad2 } from 'lucide-react'
 import { useGamepad } from '@/hooks/use-gamepad'
+import { useTranslation } from 'react-i18next'
 
 interface StreamingHeaderProps {
   deviceName: string
@@ -21,6 +22,7 @@ export function StreamingHeader({
   onConnect,
   onDisconnect,
 }: StreamingHeaderProps) {
+  const { t } = useTranslation()
   const { isConnected: isGamepadConnected, connectedGamepads } = useGamepad()
 
   return (
@@ -45,7 +47,7 @@ export function StreamingHeader({
       <div className="flex items-center gap-4 text-right">
         <div className="flex flex-col items-end text-sm text-white/80">
           <span className="font-semibold text-base">
-            {deviceName || '未命名主机'}
+            {deviceName || t('streaming.header.unnamedDevice')}
           </span>
           <span className="text-xs uppercase tracking-wide">
             {connectionState}
@@ -55,12 +57,12 @@ export function StreamingHeader({
         {isGamepadConnected && (
           <div className="flex items-center space-x-1 px-2 py-1 rounded-md bg-green-500/20 backdrop-blur-sm text-green-300 text-xs border border-green-400/30 animate-pulse">
             <Gamepad2 className="h-4 w-4" />
-            <span>{connectedGamepads.length} 手柄</span>
+            <span>{t('streaming.header.gamepadCount', { count: connectedGamepads.length })}</span>
           </div>
         )}
         {!isConnected && !isConnecting && (
           <Button onClick={onConnect} className="bg-blue-600 hover:bg-blue-700">
-            连接
+            {t('streaming.header.connect')}
           </Button>
         )}
         {isConnected && (

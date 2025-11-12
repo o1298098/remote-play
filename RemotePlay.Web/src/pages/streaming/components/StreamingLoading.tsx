@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface Particle {
   id: number
@@ -11,6 +12,7 @@ interface Particle {
 }
 
 export function StreamingLoading() {
+  const { t } = useTranslation()
   const [particles, setParticles] = useState<Particle[]>([])
 
   useEffect(() => {
@@ -208,7 +210,7 @@ export function StreamingLoading() {
             animation: 'textFade 2s ease-in-out infinite',
           }}
         >
-          正在连接设备
+          {t('streaming.loading.connectingDevice')}
         </p>
         <div className="flex items-center justify-center gap-2 mt-3">
           <div 

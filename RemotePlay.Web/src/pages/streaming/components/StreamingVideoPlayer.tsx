@@ -1,4 +1,5 @@
 import { forwardRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 
 interface StreamingVideoPlayerProps {
@@ -9,6 +10,8 @@ interface StreamingVideoPlayerProps {
 
 export const StreamingVideoPlayer = forwardRef<HTMLVideoElement, StreamingVideoPlayerProps>(
   ({ isConnected, isConnecting, onConnect }, ref) => {
+    const { t } = useTranslation()
+
     return (
       <div className="w-full h-full bg-black flex items-center justify-center">
         <video
@@ -31,12 +34,12 @@ export const StreamingVideoPlayer = forwardRef<HTMLVideoElement, StreamingVideoP
           <div className="absolute inset-0 flex items-center justify-center bg-black z-10 pointer-events-none">
             <div className="text-center">
               <p className="text-gray-400 mb-4">
-                {isConnecting ? '正在连接...' : '等待连接'}
+                {isConnecting ? t('streaming.videoPlayer.connecting') : t('streaming.videoPlayer.waiting')}
               </p>
               {!isConnecting && (
                 <div className="pointer-events-auto">
                   <Button onClick={onConnect} className="bg-blue-600 hover:bg-blue-700">
-                    开始连接
+                    {t('streaming.videoPlayer.start')}
                   </Button>
                 </div>
               )}

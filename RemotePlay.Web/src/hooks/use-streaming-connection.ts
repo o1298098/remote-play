@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useGamepadInput, useGamepad } from '@/hooks/use-gamepad'
 import { streamingService } from '@/service/streaming.service'
 import { streamingHubService } from '@/service/streaming-hub.service'
@@ -37,9 +38,10 @@ export interface StreamingMonitorStats {
 }
 
 export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoRef, toast }: UseStreamingConnectionParams) {
+  const { t } = useTranslation()
   const [isConnected, setIsConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
-  const [connectionState, setConnectionState] = useState<string>('未连接')
+  const [connectionState, setConnectionState] = useState<string>(() => t('streaming.connection.state.disconnected'))
   const [webrtcSessionId, setWebrtcSessionId] = useState<string | null>(null)
   const [remotePlaySessionId, setRemotePlaySessionId] = useState<string | null>(null)
   const [connectionStats, setConnectionStats] = useState<StreamingMonitorStats | null>(null)
@@ -101,6 +103,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     videoBytesReceived: number
   } | null>(null)
   const webrtcSessionIdRef = useRef<string | null>(null)
+  const isStreamBoundRef = useRef<boolean>(false)
+  const hasVideoTrackRef = useRef<boolean>(false)
   const keyframeMonitorIntervalRef = useRef<number | null>(null)
   const lastVideoActivityRef = useRef<number>(0)
   const lastDecodedFrameCountRef = useRef<number | null>(null)
@@ -117,6 +121,11 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       const sessionId = webrtcSessionIdRef.current || webrtcSessionId
       if (!sessionId) {
         console.debug('⚠️ 无法请求关键帧，缺少 SessionId', { reason })
+        return false
+      }
+
+      if (!isStreamBoundRef.current) {
+        console.debug('⚠️ 无法请求关键帧，会话尚未绑定远程流', { reason })
         return false
       }
 
@@ -342,24 +351,24 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     try {
-      setConnectionState('正在获取设备信息...')
+      setConnectionState(t('streaming.connection.state.fetchingDevice'))
       const devicesResponse = await playStationService.getMyDevices()
       if (!devicesResponse.success || !devicesResponse.result) {
-        throw new Error('无法获取设备信息')
+        throw new Error(t('streaming.connection.errors.fetchDeviceFailed'))
       }
 
       const device = devicesResponse.result.find((d) => d.hostId === hostId)
       if (!device) {
-        throw new Error('未找到设备信息')
+        throw new Error(t('streaming.connection.errors.deviceNotFound'))
       }
 
       if (!device.ipAddress) {
-        throw new Error('设备 IP 地址未设置')
+        throw new Error(t('streaming.connection.errors.ipNotSet'))
       }
 
       const deviceIp = device.ipAddress
 
-      setConnectionState('正在查询设备状态...')
+      setConnectionState(t('streaming.connection.state.checkingStatus'))
       let firstStatusCheck = await playStationService.discoverDevice(deviceIp, 5000).catch(() => {
         console.warn('首次状态查询失败，将在等待循环中继续查询...')
         return { success: false, result: null }
@@ -380,15 +389,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         console.log('设备当前状态:', deviceStatus)
 
         if (deviceStatus.includes('STANDBY')) {
-          setConnectionState('设备处于待机状态，正在唤醒...')
+          setConnectionState(t('streaming.connection.state.wakingUp'))
           toast({
-            title: '正在唤醒设备',
-            description: '设备处于待机状态，正在唤醒...',
+            title: t('streaming.connection.toast.wakingTitle'),
+            description: t('streaming.connection.toast.wakingDescription'),
           })
 
           const wakeResponse = await playStationService.wakeUpConsole(hostId)
           if (!wakeResponse.success || !wakeResponse.result) {
-            throw new Error('唤醒设备失败')
+            throw new Error(t('streaming.connection.errors.wakeDeviceFailed'))
           }
 
           console.log('✅ 设备唤醒命令已发送，等待设备就绪...')
@@ -406,7 +415,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       }
 
       if (needWaitForReady) {
-        setConnectionState('等待设备就绪...')
+        setConnectionState(t('streaming.connection.state.waitingReady'))
         const timeout = 30000
         const checkInterval = 1000
         const startTime = Date.now()
@@ -444,7 +453,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           }
 
           const elapsed = Math.floor((Date.now() - startTime) / 1000)
-          setConnectionState(`等待设备就绪... (${elapsed}s)`)
+          setConnectionState(t('streaming.connection.state.waitingReadyWithTime', { seconds: elapsed }))
 
           if (Date.now() - startTime >= timeout) {
             break
@@ -455,16 +464,17 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
         const finalElapsed = Math.floor((Date.now() - startTime) / 1000)
         console.error(`❌ 设备就绪超时（${finalElapsed}秒）`)
-        throw new Error(`设备就绪超时（${finalElapsed}秒）`)
+        throw new Error(t('streaming.connection.errors.deviceReadyTimeout', { seconds: finalElapsed }))
       }
 
       return false
     } catch (error) {
       console.error('设备准备失败:', error)
-      const errorMessage = error instanceof Error ? error.message : '未知错误'
-      if (errorMessage.includes('超时') || errorMessage.includes('就绪超时')) {
+      const errorMessage = error instanceof Error ? error.message : t('streaming.connection.errors.unknown')
+      const normalizedErrorMessage = errorMessage.toLowerCase()
+      if (normalizedErrorMessage.includes('timeout') || errorMessage.includes('超时')) {
         toast({
-          title: '设备准备失败',
+          title: t('streaming.connection.toast.prepareFailedTitle'),
           description: errorMessage,
           variant: 'destructive',
         })
@@ -473,7 +483,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       }
       return false
     }
-  }, [hostId, toast])
+  }, [hostId, t, toast])
 
   const setupKeyboardControl = useCallback(() => {
     if (keyboardCleanupRef.current) {
@@ -564,14 +574,14 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       } catch (error) {
         console.error('❌ 控制器连接失败:', error)
         toast({
-          title: '控制器连接失败',
-          description: error instanceof Error ? error.message : '未知错误',
+          title: t('streaming.connection.toast.controllerFailedTitle'),
+          description: error instanceof Error ? error.message : t('streaming.connection.errors.unknown'),
           variant: 'destructive',
         })
         setupKeyboardControl()
       }
     },
-    [setupKeyboardControl, toast]
+    [setupKeyboardControl, t, toast]
   )
 
   const startStickProcessing = useCallback(() => {
@@ -731,6 +741,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     gamepadEnabledRef.current = false
     tearDownMouseRightStick()
 
+    isStreamBoundRef.current = false
+    hasVideoTrackRef.current = false
+
     if (videoOptimizeCleanupRef.current) {
       videoOptimizeCleanupRef.current()
       videoOptimizeCleanupRef.current = null
@@ -798,14 +811,14 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     setIsConnected(false)
     isConnectedRef.current = false
     setIsConnecting(false)
-    setConnectionState('未连接')
-  }, [remotePlaySessionId, stopStickProcessing, videoRef, webrtcSessionId])
+    setConnectionState(t('streaming.connection.state.disconnected'))
+  }, [remotePlaySessionId, stopStickProcessing, t, videoRef, webrtcSessionId])
 
   const connect = useCallback(async () => {
     if (!hostId) {
       toast({
-        title: '错误',
-        description: '缺少设备信息',
+        title: t('common.error'),
+        description: t('streaming.connection.errors.missingDeviceInfo'),
         variant: 'destructive',
       })
       return
@@ -820,18 +833,18 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     setIsConnecting(true)
-    setConnectionState('正在连接...')
+    setConnectionState(t('streaming.connection.state.connecting'))
 
     try {
       const deviceReady = await prepareDevice()
       if (!deviceReady) {
-        throw new Error('设备未就绪')
+        throw new Error(t('streaming.connection.errors.deviceNotReady'))
       }
 
-      setConnectionState('正在创建会话...')
+      setConnectionState(t('streaming.connection.state.creatingSession'))
       toast({
-        title: '正在连接',
-        description: `正在连接到 ${deviceName}...`,
+        title: t('streaming.connection.toast.connectingTitle'),
+        description: t('streaming.connection.toast.connectingDescription', { name: deviceName }),
       })
 
       const sessionResponse = await streamingService.startSession(hostId)
@@ -845,13 +858,17 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       })
 
       if (!sessionResponse.success) {
-        throw new Error(sessionResponse.errorMessage || sessionResponse.message || '创建会话失败')
+        throw new Error(
+          sessionResponse.errorMessage ||
+            sessionResponse.message ||
+            t('streaming.connection.errors.sessionCreateFailed')
+        )
       }
 
       const sessionData = sessionResponse.data || sessionResponse.result
       if (!sessionData) {
         console.error('会话响应中没有 data 或 result 字段:', sessionResponse)
-        throw new Error('会话响应格式错误：缺少数据')
+        throw new Error(t('streaming.connection.errors.sessionDataMissing'))
       }
 
       const sessionId = sessionData.id || sessionData.Id || sessionData.sessionId || sessionData.session_id
@@ -862,7 +879,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       if (!sessionId) {
         console.error('无法从响应中提取 Session ID，可用字段:', Object.keys(sessionData))
-        throw new Error('无法获取会话 ID')
+        throw new Error(t('streaming.connection.errors.sessionIdMissing'))
       }
 
       const offerResponse = await streamingService.createOffer({
@@ -872,13 +889,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       console.log('Offer 响应:', offerResponse)
 
       if (!offerResponse.success) {
-        throw new Error(offerResponse.errorMessage || offerResponse.message || '创建 WebRTC Offer 失败')
+        throw new Error(
+          offerResponse.errorMessage || offerResponse.message || t('streaming.connection.errors.offerCreateFailed')
+        )
       }
 
       const offerData = offerResponse.data || offerResponse.result
       if (!offerData) {
         console.error('Offer 响应中没有 data 或 result 字段:', offerResponse)
-        throw new Error('Offer 响应格式错误：缺少数据')
+        throw new Error(t('streaming.connection.errors.offerDataMissing'))
       }
 
       const { sessionId: webrtcSessionIdValue, sdp: offerSdp } = offerData
@@ -931,10 +950,17 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
         if (event.track.kind === 'video') {
           receivedTracks.video = event.track
-          if (!initialKeyframeRequestedRef.current) {
-            if (requestKeyframe('initial-video-track')) {
-              initialKeyframeRequestedRef.current = true
+          hasVideoTrackRef.current = true
+          if (isStreamBoundRef.current) {
+            if (!initialKeyframeRequestedRef.current) {
+              if (requestKeyframe('initial-video-track')) {
+                initialKeyframeRequestedRef.current = true
+              }
             }
+          } else {
+            console.debug('⚠️ 已收到视频轨道，但会话尚未完成绑定，等待后续触发关键帧请求', {
+              trackId: event.track.id,
+            })
           }
         } else if (event.track.kind === 'audio') {
           receivedTracks.audio = event.track
@@ -1186,10 +1212,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               setIsConnecting(false)
               setIsConnected(true)
               isConnectedRef.current = true
-              setConnectionState('已连接')
+              setConnectionState(t('streaming.connection.state.connected'))
               toast({
-                title: '连接成功',
-                description: '视频流已连接',
+                title: t('streaming.connection.toast.connectedTitle'),
+                description: t('streaming.connection.toast.connectedDescription'),
               })
             })
 
@@ -1275,7 +1301,17 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       peerConnection.onconnectionstatechange = () => {
         const state = peerConnection.connectionState
         console.log('🔌 WebRTC 连接状态变化:', state)
-        setConnectionState(state)
+        const localizedState =
+          state === 'connected'
+            ? t('streaming.connection.state.connected')
+            : state === 'connecting'
+            ? t('streaming.connection.state.connecting')
+            : state === 'disconnected' || state === 'closed'
+            ? t('streaming.connection.state.disconnected')
+            : state === 'failed'
+            ? t('streaming.connection.state.failed')
+            : state
+        setConnectionState(localizedState)
         if (state === 'connected') {
           console.log('✅ WebRTC 连接已建立')
           reinforceLatencyHints(peerConnection)
@@ -1403,7 +1439,24 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         type: 'answer',
       })
 
-      await streamingService.connectToRemotePlaySession(webrtcSessionIdValue, sessionId)
+      const connectResponse = await streamingService.connectToRemotePlaySession(webrtcSessionIdValue, sessionId)
+      if (!connectResponse.success) {
+        throw new Error(
+          connectResponse.errorMessage ||
+            connectResponse.message ||
+            t('streaming.connection.errors.connectRemotePlayFailed')
+        )
+      }
+
+      isStreamBoundRef.current = true
+      console.log('🔗 WebRTC 会话已绑定远程流')
+
+      if (hasVideoTrackRef.current && !initialKeyframeRequestedRef.current) {
+        console.log('📡 会话绑定完成，补发初始关键帧请求')
+        if (requestKeyframe('post-bind-initial-video')) {
+          initialKeyframeRequestedRef.current = true
+        }
+      }
 
       console.log('🎮 准备连接控制器，Session ID:', sessionId)
       await connectController(sessionId)
@@ -1414,23 +1467,37 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       setIsConnected(true)
       isConnectedRef.current = true
       setIsConnecting(false)
-      setConnectionState('已连接')
+      setConnectionState(t('streaming.connection.state.connected'))
       console.log('✅ 连接状态已设置为已连接')
 
       startStickProcessing()
     } catch (error) {
       console.error('连接失败:', error)
       toast({
-        title: '连接失败',
-        description: error instanceof Error ? error.message : '未知错误',
+        title: t('streaming.connection.toast.connectFailedTitle'),
+        description: error instanceof Error ? error.message : t('streaming.connection.errors.unknown'),
         variant: 'destructive',
       })
-      setConnectionState('连接失败')
+      setConnectionState(t('streaming.connection.state.failed'))
       disconnect()
     } finally {
       setIsConnecting(false)
     }
-  }, [connectController, deviceName, disconnect, hostId, isConnected, isConnecting, isLikelyLan, prepareDevice, reinforceLatencyHints, startStickProcessing, toast])
+  }, [
+    connectController,
+    deviceName,
+    disconnect,
+    hostId,
+    isConnected,
+    isConnecting,
+    isLikelyLan,
+    prepareDevice,
+    requestKeyframe,
+    reinforceLatencyHints,
+    startStickProcessing,
+    t,
+    toast,
+  ])
 
   useEffect(() => {
     if (!isConnected) {
