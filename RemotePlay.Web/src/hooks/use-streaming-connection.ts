@@ -59,6 +59,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     handleGamepadAxis,
     setPointerLock,
     setMouseVelocity,
+    setKeyboardLeftStick,
     setTriggerPressure,
     reset: resetStickInput,
   } = useStickInputState()
@@ -106,6 +107,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const lastPlaybackPositionRef = useRef<number | null>(null)
   const lastKeyframeRequestRef = useRef<number>(0)
   const pendingKeyframeRequestRef = useRef<boolean>(false)
+  const initialKeyframeRequestedRef = useRef<boolean>(false)
 
   const KEYFRAME_REQUEST_COOLDOWN_MS = 8000
 
@@ -479,37 +481,44 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       keyboardCleanupRef.current = null
     }
 
-    const cleanup = createKeyboardHandler(async (buttonName: string, action: 'press' | 'release') => {
-      console.log('🎮 键盘控制触发:', buttonName, action, {
-        isConnected: controllerService.isConnected(),
-        buttonName,
-        action,
-      })
+    const cleanup = createKeyboardHandler(
+      async (buttonName: string, action: 'press' | 'release') => {
+        console.log('🎮 键盘控制触发:', buttonName, action, {
+          isConnected: controllerService.isConnected(),
+          buttonName,
+          action,
+        })
 
-      try {
-        let retries = 0
-        const maxRetries = 10
-        while (!controllerService.isConnected() && retries < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-          retries++
-        }
+        try {
+          let retries = 0
+          const maxRetries = 10
+          while (!controllerService.isConnected() && retries < maxRetries) {
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            retries++
+          }
 
-        if (!controllerService.isConnected()) {
-          console.warn('⚠️ 控制器未就绪，但尝试发送按键:', buttonName, action)
-        }
+          if (!controllerService.isConnected()) {
+            console.warn('⚠️ 控制器未就绪，但尝试发送按键:', buttonName, action)
+          }
 
-        console.log('📤 发送按钮命令:', buttonName, action)
-        if (action === 'press') {
-          await controllerService.sendButton(buttonName, 'press')
-          console.log('✅ 按钮命令发送成功:', buttonName, 'press')
-        } else {
-          await controllerService.sendButton(buttonName, 'release')
-          console.log('✅ 按钮命令发送成功:', buttonName, 'release')
+          console.log('📤 发送按钮命令:', buttonName, action)
+          if (action === 'press') {
+            await controllerService.sendButton(buttonName, 'press')
+            console.log('✅ 按钮命令发送成功:', buttonName, 'press')
+          } else {
+            await controllerService.sendButton(buttonName, 'release')
+            console.log('✅ 按钮命令发送成功:', buttonName, 'release')
+          }
+        } catch (error) {
+          console.error('❌ 键盘控制失败:', error, '按钮:', buttonName, '动作:', action)
         }
-      } catch (error) {
-        console.error('❌ 键盘控制失败:', error, '按钮:', buttonName, '动作:', action)
+      },
+      {
+        onLeftStickChange: (x: number, y: number) => {
+          setKeyboardLeftStick(x, y)
+        },
       }
-    })
+    )
 
     keyboardCleanupRef.current = cleanup
     console.log('✅ 键盘控制已启用')
@@ -736,6 +745,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     lastPlaybackPositionRef.current = null
     lastKeyframeRequestRef.current = 0
     pendingKeyframeRequestRef.current = false
+    initialKeyframeRequestedRef.current = false
 
     if (keyboardCleanupRef.current) {
       keyboardCleanupRef.current()
@@ -921,6 +931,11 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
         if (event.track.kind === 'video') {
           receivedTracks.video = event.track
+          if (!initialKeyframeRequestedRef.current) {
+            if (requestKeyframe('initial-video-track')) {
+              initialKeyframeRequestedRef.current = true
+            }
+          }
         } else if (event.track.kind === 'audio') {
           receivedTracks.audio = event.track
         }

@@ -60,7 +60,7 @@ export const useMouseRightStick = ({ videoRef, onPointerLockChange, onMouseMove 
 
       const now = getTimestamp()
       const nextX = clamp(event.movementX * MOUSE_SENSITIVITY)
-      const nextY = clamp(-event.movementY * MOUSE_SENSITIVITY)
+      const nextY = clamp(event.movementY * MOUSE_SENSITIVITY)
       onMouseMove(nextX, nextY, now)
     }
 

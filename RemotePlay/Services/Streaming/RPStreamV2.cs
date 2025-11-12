@@ -297,11 +297,11 @@ namespace RemotePlay.Services.Streaming
             receiver.EnterWaitForIdr();
             
             // 重新启动 IDR requester，确保新 receiver 从关键帧开始
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(100);
-                await StartIdrRequesterAsync();
-            });
+            //_ = Task.Run(async () =>
+            //{
+            //    await Task.Delay(100);
+            //    await StartIdrRequesterAsync();
+            //});
 
             if (oldReceiver != null)
             {

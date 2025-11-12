@@ -75,6 +75,7 @@ export const useStickInputState = () => {
     leftStick: { x: 0, y: 0 },
     rightStick: { x: 0, y: 0 },
   })
+  const keyboardLeftStickRef = useRef<StickVector>({ x: 0, y: 0 })
   const stickHoldRef = useRef<StickHoldState>(createStickHoldState())
   const triggerStateRef = useRef<TriggerState>({
     l2: 0,
@@ -167,11 +168,14 @@ export const useStickInputState = () => {
     const { leftStick, rightStick } = stickStateRef.current
     const mouseState = mouseStateRef.current
     const triggerState = triggerStateRef.current
+    const keyboardLeftStick = keyboardLeftStickRef.current
     const now = getTimestamp()
 
+    const hasKeyboardLeftInput = keyboardLeftStick.x !== 0 || keyboardLeftStick.y !== 0
+    const leftSource = hasKeyboardLeftInput ? keyboardLeftStick : leftStick
     const leftRaw = {
-      x: clamp(leftStick.x),
-      y: clamp(leftStick.y),
+      x: clamp(leftSource.x),
+      y: clamp(leftSource.y),
     }
     const rightGamepadRaw = {
       x: clamp(rightStick.x),
@@ -239,6 +243,12 @@ export const useStickInputState = () => {
     mouseState.lastUpdateTime = timestamp ?? getTimestamp()
   }, [])
 
+  const setKeyboardLeftStick = useCallback((x: number, y: number) => {
+    const keyboardStick = keyboardLeftStickRef.current
+    keyboardStick.x = clamp(x)
+    keyboardStick.y = clamp(y)
+  }, [])
+
   const setTriggerPressure = useCallback((trigger: 'l2' | 'r2', value: number) => {
     const clamped = clamp01(value)
     const triggerState = triggerStateRef.current
@@ -261,6 +271,10 @@ export const useStickInputState = () => {
     mouseState.velocityY = 0
     mouseState.lastUpdateTime = getTimestamp()
 
+    const keyboardStick = keyboardLeftStickRef.current
+    keyboardStick.x = 0
+    keyboardStick.y = 0
+
     triggerStateRef.current.l2 = 0
     triggerStateRef.current.r2 = 0
   }, [])
@@ -272,6 +286,7 @@ export const useStickInputState = () => {
     handleGamepadAxis,
     setPointerLock,
     setMouseVelocity,
+    setKeyboardLeftStick,
     setTriggerPressure,
     isPointerLocked,
     reset,

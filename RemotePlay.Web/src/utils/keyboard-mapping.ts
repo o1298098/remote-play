@@ -3,13 +3,9 @@
  */
 export const keyboardMapping: Record<string, string> = {
   // 方向键（使用后端期望的格式）
-  KeyW: 'UP',
   ArrowUp: 'UP',
-  KeyS: 'DOWN',
   ArrowDown: 'DOWN',
-  KeyA: 'LEFT',
   ArrowLeft: 'LEFT',
-  KeyD: 'RIGHT',
   ArrowRight: 'RIGHT',
   // 主要按钮
   Space: 'CROSS',
@@ -29,13 +25,57 @@ export const keyboardMapping: Record<string, string> = {
   Escape: 'PS',
 }
 
+const leftStickKeyMap: Record<string, { x: number; y: number }> = {
+  KeyW: { x: 0, y: -1 },
+  KeyS: { x: 0, y: 1 },
+  KeyA: { x: -1, y: 0 },
+  KeyD: { x: 1, y: 0 },
+}
+
 /**
  * 键盘事件处理
  */
+type OnButtonPress = (button: string, action: 'press' | 'release') => void | Promise<void>
+
+export type KeyboardHandlerOptions = {
+  onLeftStickChange?: (x: number, y: number) => void
+}
+
 export function createKeyboardHandler(
-  onButtonPress: (button: string, action: 'press' | 'release') => void
-) {
+  onButtonPress: OnButtonPress,
+  options: KeyboardHandlerOptions = {}
+): () => void {
+  const { onLeftStickChange } = options
+
   const pressedKeys = new Set<string>()
+  const activeLeftStickKeys = new Set<string>()
+
+  const recomputeLeftStick = () => {
+    if (!onLeftStickChange) {
+      return
+    }
+
+    let x = 0
+    let y = 0
+
+    activeLeftStickKeys.forEach((key) => {
+      const vector = leftStickKeyMap[key]
+      if (vector) {
+        x += vector.x
+        y += vector.y
+      }
+    })
+
+    if (x !== 0 || y !== 0) {
+      const magnitude = Math.hypot(x, y)
+      if (magnitude > 1) {
+        x /= magnitude
+        y /= magnitude
+      }
+    }
+
+    onLeftStickChange(x, y)
+  }
 
   const handleKeyDown = (event: KeyboardEvent) => {
     // 如果焦点在输入框或文本区域，不处理键盘事件（除了 Escape）
@@ -68,13 +108,20 @@ export function createKeyboardHandler(
       }
     }
 
+    if (leftStickKeyMap[keyCode]) {
+      if (!activeLeftStickKeys.has(keyCode)) {
+        activeLeftStickKeys.add(keyCode)
+        recomputeLeftStick()
+      }
+    }
+
     // 处理按键
     const buttonName = keyboardMapping[keyCode]
     if (buttonName) {
       if (!pressedKeys.has(keyCode)) {
         pressedKeys.add(keyCode)
         console.log('⌨️ 键盘按下:', keyCode, '->', buttonName, 'press')
-        onButtonPress(buttonName, 'press')
+        void onButtonPress(buttonName, 'press')
       }
     } else {
       // 记录未映射的按键（用于调试）
@@ -89,7 +136,12 @@ export function createKeyboardHandler(
     if (buttonName && pressedKeys.has(keyCode)) {
       pressedKeys.delete(keyCode)
       console.log('⌨️ 键盘释放:', keyCode, '->', buttonName, 'release')
-      onButtonPress(buttonName, 'release')
+      void onButtonPress(buttonName, 'release')
+    }
+
+    if (leftStickKeyMap[keyCode] && activeLeftStickKeys.has(keyCode)) {
+      activeLeftStickKeys.delete(keyCode)
+      recomputeLeftStick()
     }
   }
 
@@ -98,10 +150,15 @@ export function createKeyboardHandler(
     pressedKeys.forEach((keyCode) => {
       const buttonName = keyboardMapping[keyCode]
       if (buttonName) {
-        onButtonPress(buttonName, 'release')
+        void onButtonPress(buttonName, 'release')
       }
     })
     pressedKeys.clear()
+
+    if (activeLeftStickKeys.size > 0) {
+      activeLeftStickKeys.clear()
+      recomputeLeftStick()
+    }
   }
 
   // 添加事件监听器（使用 capture 模式确保能捕获所有键盘事件，包括视频元素）
@@ -118,10 +175,17 @@ export function createKeyboardHandler(
     pressedKeys.forEach((keyCode) => {
       const buttonName = keyboardMapping[keyCode]
       if (buttonName) {
-        onButtonPress(buttonName, 'release')
+        void onButtonPress(buttonName, 'release')
       }
     })
     pressedKeys.clear()
+
+    if (activeLeftStickKeys.size > 0) {
+      activeLeftStickKeys.clear()
+      recomputeLeftStick()
+    } else if (onLeftStickChange) {
+      onLeftStickChange(0, 0)
+    }
   }
 }
 
