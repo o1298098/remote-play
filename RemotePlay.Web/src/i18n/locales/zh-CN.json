@@ -226,6 +226,32 @@
         "1": "鼠标中键",
         "2": "鼠标右键"
       },
+      "leftStick": {
+        "title": "左摇杆方向",
+        "description": "为键盘自定义左摇杆的四个方向。",
+        "directions": {
+          "UP": "上",
+          "DOWN": "下",
+          "LEFT": "左",
+          "RIGHT": "右"
+        },
+        "mapHint": "点击设置映射",
+        "clear": "清除",
+        "listening": "监听左摇杆…",
+        "listeningDescription": "请按下要映射到左摇杆{{direction}}的按键",
+        "mappingSet": "左摇杆映射已设置",
+        "mappingSetDescription": "左摇杆{{direction}}已映射到 {{key}}",
+        "mappingCleared": "左摇杆映射已清除",
+        "mappingClearedDescription": "左摇杆{{direction}}的映射已清除"
+      },
+      "rightStick": {
+        "title": "右摇杆",
+        "description": "右摇杆默认跟随鼠标移动，仅供查看。",
+        "axisX": "X 轴",
+        "axisY": "Y 轴",
+        "axisXValue": "鼠标左右移动",
+        "axisYValue": "鼠标上下移动"
+      },
       "tester": {
         "title": "手柄测试",
         "description": "实时查看手柄摇杆与按键的输入状态",
@@ -261,11 +287,11 @@
       },
       "mapButton": "点击映射",
       "listening": "监听中...",
-      "listeningDescription": "请按下要映射到 {button} 的按键",
+      "listeningDescription": "请按下要映射到 {{button}} 的按键",
       "mappingSet": "映射已设置",
-      "mappingSetDescription": "{button} 已映射到 {key}",
+      "mappingSetDescription": "{{button}} 已映射到 {{key}}",
       "mappingCleared": "映射已清除",
-      "mappingClearedDescription": "{button} 的映射已清除",
+      "mappingClearedDescription": "{{button}} 的映射已清除",
       "saveSuccess": "保存成功",
       "saveSuccessDescription": "手柄映射设置已保存",
       "saveFailed": "保存失败",

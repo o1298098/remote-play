@@ -1,36 +1,10 @@
-/**
- * 键盘映射配置
- */
-export const keyboardMapping: Record<string, string> = {
-  // 方向键（使用后端期望的格式）
-  ArrowUp: 'UP',
-  ArrowDown: 'DOWN',
-  ArrowLeft: 'LEFT',
-  ArrowRight: 'RIGHT',
-  // 主要按钮
-  Space: 'CROSS',
-  Enter: 'CIRCLE',
-  ShiftLeft: 'SQUARE',
-  ShiftRight: 'SQUARE',
-  ControlLeft: 'TRIANGLE',
-  ControlRight: 'TRIANGLE',
-  // 肩键
-  KeyQ: 'L1',
-  KeyE: 'R1',
-  KeyZ: 'L2',
-  KeyC: 'R2',
-  // 功能键
-  Tab: 'OPTIONS',
-  Backspace: 'SHARE',
-  Escape: 'PS',
-}
-
-const leftStickKeyMap: Record<string, { x: number; y: number }> = {
-  KeyW: { x: 0, y: -1 },
-  KeyS: { x: 0, y: 1 },
-  KeyA: { x: -1, y: 0 },
-  KeyD: { x: 1, y: 0 },
-}
+import {
+  CONTROLLER_MAPPING_STORAGE_KEY,
+  getKeyboardToButtonMapping,
+  getLeftStickKeyVectorMap,
+  subscribeControllerMappings,
+  type ControllerMappings,
+} from '@/types/controller-mapping'
 
 /**
  * 键盘事件处理
@@ -46,9 +20,33 @@ export function createKeyboardHandler(
   options: KeyboardHandlerOptions = {}
 ): () => void {
   const { onLeftStickChange } = options
+  let keyboardMapping = getKeyboardToButtonMapping()
+  let leftStickKeyMap = getLeftStickKeyVectorMap()
 
   const pressedKeys = new Set<string>()
   const activeLeftStickKeys = new Set<string>()
+
+  const refreshKeyboardMapping = (
+    mappings?: ControllerMappings | null
+  ) => {
+    keyboardMapping = getKeyboardToButtonMapping(mappings ?? undefined)
+    leftStickKeyMap = getLeftStickKeyVectorMap(mappings ?? undefined)
+  }
+
+  const unsubscribeMappingChange = subscribeControllerMappings((mappings) => {
+    refreshKeyboardMapping(mappings)
+  })
+
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key && event.key !== CONTROLLER_MAPPING_STORAGE_KEY) {
+      return
+    }
+    refreshKeyboardMapping()
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', handleStorageChange)
+  }
 
   const recomputeLeftStick = () => {
     if (!onLeftStickChange) {
@@ -78,6 +76,8 @@ export function createKeyboardHandler(
   }
 
   const handleKeyDown = (event: KeyboardEvent) => {
+    refreshKeyboardMapping()
+    
     // 如果焦点在输入框或文本区域，不处理键盘事件（除了 Escape）
     const activeElement = document.activeElement
     const isInputFocused =
@@ -130,6 +130,8 @@ export function createKeyboardHandler(
   }
 
   const handleKeyUp = (event: KeyboardEvent) => {
+    refreshKeyboardMapping()
+
     const keyCode = event.code || event.key
     const buttonName = keyboardMapping[keyCode]
 
@@ -171,6 +173,10 @@ export function createKeyboardHandler(
     document.removeEventListener('keydown', handleKeyDown, true)
     document.removeEventListener('keyup', handleKeyUp, true)
     window.removeEventListener('blur', handleBlur)
+    unsubscribeMappingChange()
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('storage', handleStorageChange)
+    }
     // 释放所有按下的按钮
     pressedKeys.forEach((keyCode) => {
       const buttonName = keyboardMapping[keyCode]

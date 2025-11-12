@@ -10,6 +10,10 @@ PSRP 基于 ASP.NET Core，结合 SignalR/WebRTC 串流管线、React 前端与 
 - **安全认证体系**：内置 JWT 身份验证，支持扩展 OAuth/Profile 服务。
 - **可观测性支撑**：延迟统计、日志级别配置与详尽文档，便于排障。
 
+## 界面预览
+
+![设备总览](./RemotePlay.Web/docs/images/devices-overview.png)
+
 ## 技术栈
 - **后端**：ASP.NET Core 10、SignalR、EF Core、Npgsql、gRPC/Protobuf、FFmpeg、BouncyCastle、Concentus、SIPSorcery。
 - **前端**：React 18、TypeScript、Vite、Tailwind CSS、shadcn/ui、Radix UI、i18next、SignalR 客户端。

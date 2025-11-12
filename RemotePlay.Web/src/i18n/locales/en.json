@@ -226,6 +226,32 @@
         "1": "Middle Mouse",
         "2": "Right Mouse"
       },
+      "leftStick": {
+        "title": "Left stick directions",
+        "description": "Customize keyboard keys for the four left stick directions.",
+        "directions": {
+          "UP": "Up",
+          "DOWN": "Down",
+          "LEFT": "Left",
+          "RIGHT": "Right"
+        },
+        "mapHint": "Click to remap",
+        "clear": "Clear",
+        "listening": "Listening for left stick…",
+        "listeningDescription": "Press the key you want to assign to left stick {{direction}}",
+        "mappingSet": "Left stick mapping updated",
+        "mappingSetDescription": "Left stick {{direction}} is now mapped to {{key}}",
+        "mappingCleared": "Left stick mapping cleared",
+        "mappingClearedDescription": "Mapping for left stick {{direction}} has been cleared"
+      },
+      "rightStick": {
+        "title": "Right stick",
+        "description": "The right stick follows mouse movement and is read-only.",
+        "axisX": "X axis",
+        "axisY": "Y axis",
+        "axisXValue": "Mouse horizontal movement",
+        "axisYValue": "Mouse vertical movement"
+      },
       "tester": {
         "title": "Controller Tester",
         "description": "Monitor live input from sticks and buttons.",
@@ -261,11 +287,11 @@
       },
       "mapButton": "Click to Map",
       "listening": "Listening...",
-      "listeningDescription": "Please press the key you want to map to {button}",
+      "listeningDescription": "Please press the key you want to map to {{button}}",
       "mappingSet": "Mapping Set",
-      "mappingSetDescription": "{button} has been mapped to {key}",
+      "mappingSetDescription": "{{button}} has been mapped to {{key}}",
       "mappingCleared": "Mapping Cleared",
-      "mappingClearedDescription": "Mapping for {button} has been cleared",
+      "mappingClearedDescription": "Mapping for {{button}} has been cleared",
       "saveSuccess": "Saved Successfully",
       "saveSuccessDescription": "Controller mapping settings have been saved",
       "saveFailed": "Save Failed",

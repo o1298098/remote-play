@@ -104,7 +104,7 @@ export function DeviceCard({
   }
 
   const cardClassName = cn(
-    'group w-[280px] min-h-[420px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-blue-50 dark:hover:from-blue-900/20 hover:to-indigo-50 dark:hover:to-indigo-900/20 rounded-2xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl transition-all transition-transform duration-300 overflow-hidden relative flex flex-col select-none',
+    'group w-[280px] min-h-[360px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-blue-50 dark:hover:from-blue-900/20 hover:to-indigo-50 dark:hover:to-indigo-900/20 rounded-2xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl transition-all transition-transform duration-300 overflow-hidden relative flex flex-col select-none',
     onDragStart && isReorderMode && 'cursor-grab active:cursor-grabbing',
     isDragging && 'opacity-0 border-blue-400 dark:border-blue-500 border-dashed',
     isDragOver && !isDragging && 'border-blue-500 dark:border-blue-400 ring-2 ring-blue-200 dark:ring-blue-700'
@@ -211,12 +211,12 @@ export function DeviceCard({
         </div>
       </CardHeader>
       
-      <CardContent className="px-6 pb-6 space-y-4 relative z-10 flex flex-col flex-grow">
-        <div className="space-y-2 flex-grow">
+      <CardContent className="px-6 pb-6 space-y-4 relative z-10 flex flex-col flex-1">
+        <div className="space-y-2">
           <h3 className="text-gray-900 dark:text-white text-lg font-bold group-hover:text-blue-900 dark:group-hover:text-blue-400 transition-colors">
             {consoleItem.name}
           </h3>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 min-h-[42px]">
             {consoleItem.hostId && (
               <p className="text-gray-400 dark:text-gray-500 text-xs font-mono">
                 {consoleItem.hostId}

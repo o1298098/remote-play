@@ -731,6 +731,63 @@
             return fetch(url, { ...options, headers });
         }
 
+        const KEYFRAME_REFRESH_INTERVAL_MS = 10000; // 10 秒刷新一次关键帧
+        let keyframeRefreshTimer = null;
+
+        function stopKeyframeRefresh() {
+            if (keyframeRefreshTimer) {
+                clearInterval(keyframeRefreshTimer);
+                keyframeRefreshTimer = null;
+            }
+        }
+
+        function startKeyframeRefresh(sessionId) {
+            stopKeyframeRefresh();
+            if (!sessionId) {
+                return;
+            }
+
+            keyframeRefreshTimer = setInterval(() => {
+                requestKeyframe(sessionId, { silent: true });
+            }, KEYFRAME_REFRESH_INTERVAL_MS);
+        }
+
+        // 主动请求关键帧（适用于 HLS/RemotePlay 会话）
+        async function requestKeyframe(sessionId, options = {}) {
+            if (!sessionId) {
+                return;
+            }
+
+            const { silent = false } = options;
+
+            try {
+                if (!silent) {
+                    log(`🎯 请求关键帧: ${sessionId}`, 'info');
+                }
+                const response = await authorizedFetch(`/api/Streaming/session/${sessionId}/keyframe`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`❌ 请求关键帧失败: ${response.status} ${errorText}`, 'error');
+                    return;
+                }
+
+                const result = await response.json().catch(() => null);
+                if (result?.success) {
+                    if (!silent) {
+                        log('✅ 关键帧请求已发送', 'success');
+                    }
+                } else {
+                    const message = result?.errorMessage || result?.message || '未知错误';
+                    log(`⚠️ 关键帧请求返回非成功状态: ${message}`, 'warning');
+                }
+            } catch (error) {
+                log(`❌ 请求关键帧出现异常: ${error.message}`, 'error');
+            }
+        }
+
         let hls = null;
         let currentStreamUrl = null;
         let currentSessionId = null; // 当前会话 ID，用于控制器
@@ -975,10 +1032,14 @@
                 log(`✅ 从 URL 中提取会话 ID: ${extractedSessionId}`, 'success');
                 // 连接 SignalR 控制器（如果从 URL 提取到 sessionId）
                 await connectControllerSignalR(extractedSessionId);
+                await requestKeyframe(extractedSessionId);
+                startKeyframeRefresh(extractedSessionId);
             } else if (savedSessionId) {
                 currentSessionId = savedSessionId; // 恢复之前保存的 sessionId
                 // 连接 SignalR 控制器
                 await connectControllerSignalR(savedSessionId);
+                await requestKeyframe(savedSessionId);
+                startKeyframeRefresh(savedSessionId);
             }
 
             // 强制使用 HLS.js
@@ -1209,11 +1270,13 @@
             document.getElementById('connectBtn').disabled = false;
             document.getElementById('hostId').disabled = false;
 
-              currentStreamUrl = null;
-              currentSessionId = null; // 清除 sessionId
-              
-              // 断开 SignalR 连接
-              await disconnectControllerSignalR();
+            stopKeyframeRefresh();
+
+            currentStreamUrl = null;
+            currentSessionId = null; // 清除 sessionId
+            
+            // 断开 SignalR 连接
+            await disconnectControllerSignalR();
         }
         
         // 连接 SignalR 控制器

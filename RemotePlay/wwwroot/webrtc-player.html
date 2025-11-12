@@ -840,9 +840,15 @@
 
                 // 1. 创建 Offer
                 log('正在创建 WebRTC Offer...', 'info');
+                const offerRequestPayload = {};
+                if (sessionIdForConnect && isGuid(sessionIdForConnect)) {
+                    offerRequestPayload.remotePlaySessionId = sessionIdForConnect;
+                }
+
                 const offerResponse = await authorizedFetch(`${API_BASE}/offer`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(offerRequestPayload)
                 });
 
                 if (!offerResponse.ok) {
@@ -1187,6 +1193,9 @@
                 
                 // 启动延时统计更新
                 startLatencyStatsUpdate();
+
+                // 建立连接后请求关键帧
+                await requestKeyframe(webrtcSessionId);
                 
                 // 连接 SignalR 控制器（低延迟）
                 await connectControllerSignalR(sessionIdForConnect);
@@ -1277,6 +1286,36 @@
             } catch (error) {
                 // 静默失败，不影响主要功能
                 console.debug('记录接收时间失败:', error);
+            }
+        }
+
+        // 主动请求关键帧
+        async function requestKeyframe(sessionId) {
+            if (!sessionId) {
+                return;
+            }
+
+            try {
+                log(`🎯 请求关键帧: ${sessionId}`, 'info');
+                const response = await authorizedFetch(`${API_BASE}/session/${sessionId}/keyframe`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    log(`❌ 请求关键帧失败: ${response.status} ${errorText}`, 'error');
+                    return;
+                }
+
+                const result = await response.json().catch(() => null);
+                if (result?.success) {
+                    log('✅ 关键帧请求已发送', 'success');
+                } else {
+                    const message = result?.errorMessage || result?.message || '未知错误';
+                    log(`⚠️ 关键帧请求返回非成功状态: ${message}`, 'warning');
+                }
+            } catch (error) {
+                log(`❌ 请求关键帧出现异常: ${error.message}`, 'error');
             }
         }
         

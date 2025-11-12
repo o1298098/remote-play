@@ -10,6 +10,10 @@ PSRP is implemented as an ASP.NET Core service that bridges PlayStation Remote P
 - **Hardened authentication**: Built-in JWT authentication plus extensible OAuth/Profile services.
 - **Operational visibility**: Latency statistics, tunable logging, and detailed documentation to streamline troubleshooting.
 
+## UI Preview
+
+![Devices overview](./RemotePlay.Web/docs/images/devices-overview.png)
+
 ## Tech Stack
 - **Backend**: ASP.NET Core 10, SignalR, EF Core, Npgsql, gRPC/Protobuf, FFmpeg, BouncyCastle, Concentus, SIPSorcery.
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Radix UI, i18next, SignalR client.

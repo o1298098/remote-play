@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ChangeEvent } from 'react'
+import { useState, useEffect, useCallback, useRef, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useToast } from '@/hooks/use-toast'
@@ -10,6 +10,15 @@ import { useAuth } from '@/hooks/use-auth'
 import { PS5ControllerLayout } from '@/components/PS5ControllerLayout'
 import { useGamepad, useGamepadInput } from '@/hooks/use-gamepad'
 import { type GamepadInputEvent } from '@/service/gamepad.service'
+import {
+  type ControllerButton,
+  type ButtonMapping,
+  type ControllerMappings,
+  type StickDirection,
+  getDefaultControllerMappings,
+  loadControllerMappings,
+  saveControllerMappings,
+} from '@/types/controller-mapping'
 import {
   getRumbleSettings,
   hasRumbleCapableGamepad,
@@ -25,34 +34,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-
-// PlayStation controller button types
-export type ControllerButton = 
-  | 'CROSS'      // X/Confirm
-  | 'CIRCLE'     // O/Cancel
-  | 'TRIANGLE'   // △/Menu
-  | 'SQUARE'     // □/Option
-  | 'L1'         // Left Bumper 1
-  | 'R1'         // Right Bumper 1
-  | 'L2'         // Left Bumper 2
-  | 'R2'         // Right Bumper 2
-  | 'L3'         // Left Stick Press
-  | 'R3'         // Right Stick Press
-  | 'DPAD_UP'    // D-Pad Up
-  | 'DPAD_DOWN'  // D-Pad Down
-  | 'DPAD_LEFT'  // D-Pad Left
-  | 'DPAD_RIGHT' // D-Pad Right
-  | 'OPTIONS'    // Options
-  | 'SHARE'      // Share
-  | 'TOUCHPAD'   // Touchpad
-  | 'PS'         // PS Button
-
-export interface ButtonMapping {
-  button: ControllerButton
-  key?: string        // Keyboard key
-  mouseButton?: number // Mouse button (0=left, 1=middle, 2=right)
-  isMouse?: boolean   // Whether it's a mouse mapping
-}
 
 const BUTTON_INDEX_TO_KEY: Partial<Record<number, ControllerButton>> = {
   0: 'CROSS',
@@ -100,14 +81,16 @@ export default function ControllerMapping() {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const { isConnected: isGamepadConnected, connectedGamepads } = useGamepad()
-  const [mappings, setMappings] = useState<Record<ControllerButton, ButtonMapping>>({} as Record<ControllerButton, ButtonMapping>)
+  const [mappings, setMappings] = useState<ControllerMappings>(() => getDefaultControllerMappings())
   const [isListening, setIsListening] = useState<ControllerButton | null>(null)
+  const [leftStickListening, setLeftStickListening] = useState<StickDirection | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [selectedGamepadIndex, setSelectedGamepadIndex] = useState<number | null>(null)
   const [buttonStates, setButtonStates] = useState<Array<{ pressed: boolean; value: number }>>([])
   const [axisStates, setAxisStates] = useState<number[]>([])
   const [rumbleSettings, setRumbleSettingsState] = useState<RumbleSettings>(() => getRumbleSettings())
   const [supportsRumble, setSupportsRumble] = useState<boolean>(false)
+  const hasLoadedMappings = useRef(false)
 
   // 初始化映射
   useEffect(() => {
@@ -116,19 +99,9 @@ export default function ControllerMapping() {
       return
     }
 
-    // Load saved mappings from localStorage
-    const savedMappings = localStorage.getItem('controller_mappings')
-    if (savedMappings) {
-      try {
-        const parsed = JSON.parse(savedMappings)
-        setMappings(parsed)
-      } catch (e) {
-        console.error('Failed to parse saved mappings:', e)
-        loadDefaultMappings()
-      }
-    } else {
-      loadDefaultMappings()
-    }
+    const loadedMappings = loadControllerMappings()
+    setMappings(loadedMappings)
+    hasLoadedMappings.current = true
   }, [isAuthenticated, navigate])
 
   useEffect(() => {
@@ -218,114 +191,121 @@ export default function ControllerMapping() {
   }, [selectedGamepadIndex])
 
   const loadDefaultMappings = () => {
-    const defaults: Record<ControllerButton, ButtonMapping> = {
-      CROSS: { button: 'CROSS', key: 'Enter' },
-      CIRCLE: { button: 'CIRCLE', key: 'Escape' },
-      TRIANGLE: { button: 'TRIANGLE', key: 'KeyY' },
-      SQUARE: { button: 'SQUARE', key: 'KeyX' },
-      L1: { button: 'L1', key: 'KeyQ' },
-      R1: { button: 'R1', key: 'KeyE' },
-      L2: { button: 'L2', key: 'KeyZ' },
-      R2: { button: 'R2', key: 'KeyC' },
-      L3: { button: 'L3', key: 'KeyF' },
-      R3: { button: 'R3', key: 'KeyV' },
-      DPAD_UP: { button: 'DPAD_UP', key: 'ArrowUp' },
-      DPAD_DOWN: { button: 'DPAD_DOWN', key: 'ArrowDown' },
-      DPAD_LEFT: { button: 'DPAD_LEFT', key: 'ArrowLeft' },
-      DPAD_RIGHT: { button: 'DPAD_RIGHT', key: 'ArrowRight' },
-      OPTIONS: { button: 'OPTIONS', key: 'KeyM' },
-      SHARE: { button: 'SHARE', key: 'KeyN' },
-      TOUCHPAD: { button: 'TOUCHPAD', key: 'KeyT' },
-      PS: { button: 'PS', key: 'KeyP' },
-    }
-    setMappings(defaults)
+    setMappings(getDefaultControllerMappings())
   }
 
-  // Listen for keyboard input
+  const formatKeyDisplay = (code: string, key?: string): string => {
+    const keyMap: Record<string, string> = {
+      Enter: 'Enter',
+      Escape: 'Esc',
+      Space: 'Space',
+      ArrowUp: '↑',
+      ArrowDown: '↓',
+      ArrowLeft: '←',
+      ArrowRight: '→',
+    }
+    return keyMap[code] || (key ? keyMap[key] : undefined) || code.replace(/^Key/, '') || key?.toUpperCase() || code
+  }
+
+  // 监听映射时的键盘 / 鼠标输入
   useEffect(() => {
-    if (!isListening) return
+    if (!isListening && !leftStickListening) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      
-      setMappings(prev => ({
-        ...prev,
-        [isListening]: {
-          button: isListening,
-          key: e.code,
-          isMouse: false,
-        }
-      }))
-      
-      setIsListening(null)
-      
-      // 获取友好的按键名称
-      const keyDisplay = (() => {
-        const keyMap: Record<string, string> = {
-          'Enter': 'Enter',
-          'Escape': 'Esc',
-          'Space': 'Space',
-          'ArrowUp': '↑',
-          'ArrowDown': '↓',
-          'ArrowLeft': '←',
-          'ArrowRight': '→',
-        }
-        return keyMap[e.code] || keyMap[e.key] || e.code.replace(/^Key/, '') || e.key.toUpperCase()
-      })()
-      
-      const buttonName = t(`devices.controllerMapping.buttons.${isListening}`)
-      const titleText = t('devices.controllerMapping.mappingSet')
-      const descriptionText = t('devices.controllerMapping.mappingSetDescription', { 
-        button: buttonName || isListening,
-        key: keyDisplay || '?'
-      })
-      
-      toast({
-        title: titleText,
-        description: descriptionText,
-      })
+      if (isListening) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        setMappings((prev) => ({
+          ...prev,
+          buttons: {
+            ...prev.buttons,
+            [isListening]: {
+              button: isListening,
+              key: e.code,
+              isMouse: false,
+            },
+          },
+        }))
+
+        setIsListening(null)
+
+        const keyDisplay = formatKeyDisplay(e.code, e.key)
+        const buttonName = t(`devices.controllerMapping.buttons.${isListening}`)
+        toast({
+          title: t('devices.controllerMapping.mappingSet'),
+          description: t('devices.controllerMapping.mappingSetDescription', {
+            button: buttonName || isListening,
+            key: keyDisplay || '?',
+          }),
+        })
+        return
+      }
+
+      if (leftStickListening) {
+        e.preventDefault()
+        e.stopPropagation()
+
+        setMappings((prev) => ({
+          ...prev,
+          leftStick: {
+            ...prev.leftStick,
+            [leftStickListening]: e.code,
+          },
+        }))
+        setLeftStickListening(null)
+
+        const keyDisplay = formatKeyDisplay(e.code, e.key)
+        const directionName = t(`devices.controllerMapping.leftStick.directions.${leftStickListening}`)
+        toast({
+          title: t('devices.controllerMapping.leftStick.mappingSet'),
+          description: t('devices.controllerMapping.leftStick.mappingSetDescription', {
+            direction: directionName || leftStickListening,
+            key: keyDisplay || '?',
+          }),
+        })
+      }
     }
 
     const handleMouseDown = (e: MouseEvent) => {
       if (!isListening) return
-      
+
       e.preventDefault()
       e.stopPropagation()
-      
-      setMappings(prev => ({
+
+      setMappings((prev) => ({
         ...prev,
-        [isListening]: {
-          button: isListening,
-          mouseButton: e.button,
-          isMouse: true,
-        }
+        buttons: {
+          ...prev.buttons,
+          [isListening]: {
+            button: isListening,
+            mouseButton: e.button,
+            isMouse: true,
+          },
+        },
       }))
-      
+
       setIsListening(null)
-      
+
       const buttonName = t(`devices.controllerMapping.buttons.${isListening}`)
       const mouseButtonName = t(`devices.controllerMapping.mouseButtons.${e.button}`)
-      const titleText = t('devices.controllerMapping.mappingSet')
-      const descriptionText = t('devices.controllerMapping.mappingSetDescription', { 
-        button: buttonName || isListening,
-        key: mouseButtonName || `鼠标按键${e.button}`
-      })
-      
       toast({
-        title: titleText,
-        description: descriptionText,
+        title: t('devices.controllerMapping.mappingSet'),
+        description: t('devices.controllerMapping.mappingSetDescription', {
+          button: buttonName || isListening,
+          key: mouseButtonName || `鼠标按键${e.button}`,
+        }),
       })
     }
 
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('mousedown', handleMouseDown)
-    
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('mousedown', handleMouseDown)
     }
-  }, [isListening, t, toast])
+  }, [isListening, leftStickListening, t, toast])
 
   const handleGamepadInput = useCallback(
     (event: GamepadInputEvent) => {
@@ -415,6 +395,7 @@ export default function ControllerMapping() {
 
   const handleStartMapping = (button: ControllerButton) => {
     setIsListening(button)
+    setLeftStickListening(null)
     toast({
       title: t('devices.controllerMapping.listening'),
       description: t('devices.controllerMapping.listeningDescription', {
@@ -427,7 +408,10 @@ export default function ControllerMapping() {
   const handleClearMapping = (button: ControllerButton) => {
     setMappings(prev => ({
       ...prev,
-      [button]: { button }
+      buttons: {
+        ...prev.buttons,
+        [button]: { button },
+      }
     }))
     toast({
       title: t('devices.controllerMapping.mappingCleared'),
@@ -437,10 +421,39 @@ export default function ControllerMapping() {
     })
   }
 
+  const handleStartLeftStickMapping = (direction: StickDirection) => {
+    setIsListening(null)
+    setLeftStickListening(direction)
+    toast({
+      title: t('devices.controllerMapping.leftStick.listening'),
+      description: t('devices.controllerMapping.leftStick.listeningDescription', {
+        direction: t(`devices.controllerMapping.leftStick.directions.${direction}`),
+      }),
+      duration: 3000,
+    })
+  }
+
+  const handleClearLeftStickMapping = (direction: StickDirection) => {
+    setLeftStickListening((current) => (current === direction ? null : current))
+    setMappings(prev => ({
+      ...prev,
+      leftStick: {
+        ...prev.leftStick,
+        [direction]: undefined,
+      },
+    }))
+    toast({
+      title: t('devices.controllerMapping.leftStick.mappingCleared'),
+      description: t('devices.controllerMapping.leftStick.mappingClearedDescription', {
+        direction: t(`devices.controllerMapping.leftStick.directions.${direction}`),
+      }),
+    })
+  }
+
   const handleSave = () => {
     setIsSaving(true)
     try {
-      localStorage.setItem('controller_mappings', JSON.stringify(mappings))
+      saveControllerMappings(mappings)
       toast({
         title: t('devices.controllerMapping.saveSuccess'),
         description: t('devices.controllerMapping.saveSuccessDescription'),
@@ -465,25 +478,32 @@ export default function ControllerMapping() {
     })
   }
 
-  const getMappingDisplay = (mapping: ButtonMapping): string => {
+  const getMappingDisplay = (mapping?: ButtonMapping): string => {
+    if (!mapping) {
+      return ''
+    }
     if (mapping.isMouse && mapping.mouseButton !== undefined) {
       return t(`devices.controllerMapping.mouseButtons.${mapping.mouseButton}`)
     }
     if (mapping.key) {
-      // Convert keyboard codes to readable key names
-      const keyMap: Record<string, string> = {
-        'Enter': 'Enter',
-        'Escape': 'Esc',
-        'Space': 'Space',
-        'ArrowUp': '↑',
-        'ArrowDown': '↓',
-        'ArrowLeft': '←',
-        'ArrowRight': '→',
-      }
-      return keyMap[mapping.key] || mapping.key.replace(/^Key/, '')
+      return formatKeyDisplay(mapping.key)
     }
-    return t('devices.controllerMapping.notMapped')
+    return ''
   }
+
+  useEffect(() => {
+    if (!hasLoadedMappings.current) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      saveControllerMappings(mappings)
+    }, 300)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [mappings])
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950">
@@ -760,9 +780,13 @@ export default function ControllerMapping() {
             <CardContent className="p-6">
               <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-6">
                 <PS5ControllerLayout
-                  mappings={mappings}
+                  mappings={mappings.buttons}
+                  leftStickMapping={mappings.leftStick}
                   onButtonClick={handleStartMapping}
+                  onLeftStickDirectionClick={handleStartLeftStickMapping}
+                  onLeftStickDirectionClear={handleClearLeftStickMapping}
                   isListening={isListening}
+                  leftStickListening={leftStickListening}
                 />
               </div>
             </CardContent>
@@ -780,9 +804,12 @@ export default function ControllerMapping() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {(Object.keys(mappings) as ControllerButton[]).map((button) => {
-                  const mapping = mappings[button]
+                {(Object.keys(mappings.buttons) as ControllerButton[]).map((button) => {
+                  const mapping = mappings.buttons[button]
                   const isActive = isListening === button
+                  const hasMapping =
+                    Boolean(mapping?.key) ||
+                    (mapping?.mouseButton !== undefined && mapping?.mouseButton !== null)
                   
                   return (
                     <div
@@ -821,7 +848,7 @@ export default function ControllerMapping() {
                       >
                         {isActive
                           ? t('devices.controllerMapping.listening')
-                          : mapping.key || mapping.mouseButton !== undefined
+                          : hasMapping
                           ? getMappingDisplay(mapping)
                           : t('devices.controllerMapping.mapButton')}
                       </Button>

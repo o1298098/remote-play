@@ -12,7 +12,7 @@ export function AddDeviceCard({ onClick }: AddDeviceCardProps) {
 
   return (
     <Card
-      className="group w-[280px] min-h-[420px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-gray-50 dark:hover:from-gray-700/50 hover:to-blue-50 dark:hover:to-blue-900/20 rounded-2xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl cursor-pointer transition-all duration-300 overflow-hidden relative flex flex-col"
+      className="group w-[280px] min-h-[360px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-gray-50 dark:hover:from-gray-700/50 hover:to-blue-50 dark:hover:to-blue-900/20 rounded-2xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl cursor-pointer transition-all duration-300 overflow-hidden relative flex flex-col"
       onClick={onClick}
     >
       {/* 装饰性渐变背景 */}
@@ -32,15 +32,20 @@ export function AddDeviceCard({ onClick }: AddDeviceCardProps) {
           </div>
         </div>
         {/* 占位空间，与已有主机卡片的状态指示器高度对齐 */}
-        <div className="h-8"></div>
+        <div className="flex justify-center">
+          <div className="invisible flex items-center gap-1.5 px-3 py-1 bg-gray-50 dark:bg-gray-800 rounded-full border border-gray-200 dark:border-gray-700">
+            <span className="w-2 h-2 rounded-full"></span>
+            <span className="text-xs font-medium">{t('devices.console.status.offline')}</span>
+          </div>
+        </div>
       </CardHeader>
       
-      <CardContent className="px-6 pb-6 space-y-4 relative z-10 flex flex-col flex-grow">
-        <div className="space-y-2 flex-grow">
+      <CardContent className="px-6 pb-6 space-y-4 relative z-10 flex flex-col flex-1">
+        <div className="space-y-2">
           <h3 className="text-gray-900 dark:text-white text-lg font-bold group-hover:text-blue-900 dark:group-hover:text-blue-400 transition-colors">
             {t('devices.console.addConsole.title')}
           </h3>
-          <p className="text-gray-500 dark:text-gray-400 text-xs leading-relaxed min-h-[48px] flex items-center">
+          <p className="text-gray-500 dark:text-gray-400 text-xs leading-relaxed min-h-[42px] flex items-center">
             {t('devices.console.addConsole.description')}
           </p>
         </div>

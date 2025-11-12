@@ -1,12 +1,22 @@
 import { useTranslation } from 'react-i18next'
 import { useRef, useEffect, useState } from 'react'
-import { type ControllerButton, type ButtonMapping } from '@/pages/setting/ControllerMapping'
+import {
+  type ControllerButton,
+  type ButtonMapping,
+  type LeftStickMapping,
+  type StickDirection,
+  LEFT_STICK_DIRECTIONS,
+} from '@/types/controller-mapping'
 import controllerSvgUrl from '@/assets/ps5-controller.svg'
 
 interface PS5ControllerLayoutProps {
   mappings: Record<ControllerButton, ButtonMapping>
+  leftStickMapping: LeftStickMapping
   onButtonClick: (button: ControllerButton) => void
+  onLeftStickDirectionClick: (direction: StickDirection) => void
+  onLeftStickDirectionClear: (direction: StickDirection) => void
   isListening: ControllerButton | null
+  leftStickListening: StickDirection | null
 }
 
 interface ButtonPosition {
@@ -73,7 +83,15 @@ const RIGHT_BUTTONS: ControllerButton[] = [
 const LABEL_LIST_START_Y = 80
 const LABEL_ITEM_HEIGHT = 40
 
-export function PS5ControllerLayout({ mappings, onButtonClick, isListening }: PS5ControllerLayoutProps) {
+export function PS5ControllerLayout({
+  mappings,
+  leftStickMapping,
+  onButtonClick,
+  onLeftStickDirectionClick,
+  onLeftStickDirectionClear,
+  isListening,
+  leftStickListening,
+}: PS5ControllerLayoutProps) {
   const { t, i18n } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const leftLabelRef = useRef<HTMLDivElement>(null)
@@ -225,6 +243,37 @@ export function PS5ControllerLayout({ mappings, onButtonClick, isListening }: PS
     return ''
   }
 
+  const formatKeyLabel = (key?: string): string => {
+    if (!key) return ''
+    const keyMap: Record<string, string> = {
+      Enter: 'Enter',
+      Escape: 'Esc',
+      Space: 'Space',
+      ArrowUp: '↑',
+      ArrowDown: '↓',
+      ArrowLeft: '←',
+      ArrowRight: '→',
+    }
+    if (keyMap[key]) {
+      return keyMap[key]
+    }
+    if (key.startsWith('Key')) {
+      return key.slice(3)
+    }
+    return key
+  }
+
+  const getLeftStickDirectionLabel = (direction: StickDirection): string =>
+    t(`devices.controllerMapping.leftStick.directions.${direction}`)
+
+  const getLeftStickDisplay = (direction: StickDirection): string => {
+    const keyCode = leftStickMapping[direction]
+    if (!keyCode) {
+      return t('devices.controllerMapping.notMapped')
+    }
+    return formatKeyLabel(keyCode)
+  }
+
   const getLabelColor = (button: ControllerButton): string => {
     if (isListening === button) return '#2563eb' // blue-600
     const mapping = mappings[button]
@@ -350,6 +399,99 @@ export function PS5ControllerLayout({ mappings, onButtonClick, isListening }: PS
               )
             })}
           </div>
+        </div>
+      </div>
+
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ zIndex: 3 }}>
+        <div className="rounded-lg border border-blue-100 dark:border-blue-900/40 bg-white/70 dark:bg-slate-900/60 p-4 shadow-sm">
+          <div className="flex flex-col">
+            <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+              {t('devices.controllerMapping.leftStick.title')}
+            </h4>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {t('devices.controllerMapping.leftStick.description')}
+            </p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {LEFT_STICK_DIRECTIONS.map((direction) => {
+              const isActive = leftStickListening === direction
+              const hasMapping = Boolean(leftStickMapping[direction])
+              const display = getLeftStickDisplay(direction)
+
+              return (
+                <div
+                  key={direction}
+                  className={`rounded-lg border px-3 py-2 cursor-pointer transition-all ${
+                    isActive
+                      ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30 shadow-sm'
+                      : hasMapping
+                      ? 'border-blue-200/70 dark:border-blue-700/50 bg-white dark:bg-slate-900 hover:border-blue-400 dark:hover:border-blue-500'
+                      : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-900 hover:border-blue-300/70 dark:hover:border-blue-500/50'
+                  }`}
+                  onClick={() => onLeftStickDirectionClick(direction)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {getLeftStickDirectionLabel(direction)}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-base font-semibold ${
+                          isActive
+                            ? 'text-blue-600 dark:text-blue-400'
+                            : hasMapping
+                            ? 'text-blue-600 dark:text-blue-400'
+                            : 'text-gray-400 dark:text-gray-500'
+                        }`}
+                      >
+                        {isActive ? t('devices.controllerMapping.listening') : display}
+                      </span>
+                      {hasMapping && (
+                        <button
+                          type="button"
+                          className="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onLeftStickDirectionClear(direction)
+                          }}
+                        >
+                          {t('devices.controllerMapping.leftStick.clear')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {t('devices.controllerMapping.leftStick.mapHint')}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-slate-900/60 p-4 shadow-sm">
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+            {t('devices.controllerMapping.rightStick.title')}
+          </h4>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {t('devices.controllerMapping.rightStick.description')}
+          </p>
+
+          <ul className="mt-4 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+            <li className="flex items-center justify-between rounded-md bg-gray-100/70 dark:bg-slate-800/60 px-3 py-2">
+              <span>{t('devices.controllerMapping.rightStick.axisX')}</span>
+              <span className="font-semibold text-blue-600 dark:text-blue-400">
+                {t('devices.controllerMapping.rightStick.axisXValue')}
+              </span>
+            </li>
+            <li className="flex items-center justify-between rounded-md bg-gray-100/70 dark:bg-slate-800/60 px-3 py-2">
+              <span>{t('devices.controllerMapping.rightStick.axisY')}</span>
+              <span className="font-semibold text-blue-600 dark:text-blue-400">
+                {t('devices.controllerMapping.rightStick.axisYValue')}
+              </span>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
