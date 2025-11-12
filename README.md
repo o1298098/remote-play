@@ -14,11 +14,7 @@ PSRP is implemented as an ASP.NET Core service that bridges PlayStation Remote P
 
 ![Devices overview](./RemotePlay.Web/docs/images/devices-overview.png)
 
-<p align="center">
-  <video src="https://minioapi.o1298098.xyz/remoteplay/remoteplaydemo.mp4" controls width="720">
-    Your browser does not support the demo video.
-  </video>
-</p>
+https://github.com/user-attachments/assets/0a8f075f-7577-4fbc-bdd2-e6741669eb2d
 
 ## Tech Stack
 - **Backend**: ASP.NET Core 10, SignalR, EF Core, Npgsql, gRPC/Protobuf, FFmpeg, BouncyCastle, Concentus, SIPSorcery.

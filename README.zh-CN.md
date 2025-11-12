@@ -14,11 +14,7 @@ PSRP 基于 ASP.NET Core，结合 SignalR/WebRTC 串流管线、React 前端与 
 
 ![设备总览](./RemotePlay.Web/docs/images/devices-overview.png)
 
-<p align="center">
-  <video src="https://minioapi.o1298098.xyz/remoteplay/remoteplaydemo.mp4" controls width="720">
-    您的浏览器暂不支持直接播放演示视频。
-  </video>
-</p>
+https://github.com/user-attachments/assets/0a8f075f-7577-4fbc-bdd2-e6741669eb2d
 
 ## 技术栈
 - **后端**：ASP.NET Core 10、SignalR、EF Core、Npgsql、gRPC/Protobuf、FFmpeg、BouncyCastle、Concentus、SIPSorcery。
