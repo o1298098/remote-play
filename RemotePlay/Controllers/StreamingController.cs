@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.Base;
+using RemotePlay.Models.Streaming;
+using RemotePlay.Services.Streaming.AV;
 using RemotePlay.Services.Streaming;
 
 namespace RemotePlay.Controllers
@@ -68,6 +70,65 @@ namespace RemotePlay.Controllers
                 });
             }
         }
+
+        [HttpGet("session/{sessionId:guid}/health")]
+        public async Task<ActionResult<ResponseModel>> GetStreamHealth(Guid sessionId)
+        {
+            if (sessionId == Guid.Empty)
+            {
+                return BadRequest(new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "SessionId 不能为空"
+                });
+            }
+
+            var stream = await _streamingService.GetStreamAsync(sessionId);
+            if (stream == null)
+            {
+                return NotFound(new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "远程播放流不存在或已结束"
+                });
+            }
+
+            var (snapshot, stats) = stream.GetStreamHealth();
+            var dto = new StreamHealthDto
+            {
+                Timestamp = snapshot.Timestamp,
+                Status = snapshot.LastStatus.ToString(),
+                Message = snapshot.Message,
+                ConsecutiveFailures = snapshot.ConsecutiveFailures,
+                TotalRecoveredFrames = snapshot.TotalRecoveredFrames,
+                TotalFrozenFrames = snapshot.TotalFrozenFrames,
+                VideoReceived = stats.VideoReceived,
+                VideoLost = stats.VideoLost,
+                AudioReceived = stats.AudioReceived,
+                AudioLost = stats.AudioLost
+            };
+
+            return Ok(new ApiSuccessResponse<StreamHealthDto>
+            {
+                Success = true,
+                Data = dto,
+                Message = "获取流健康状态成功"
+            });
+        }
+    }
+
+    public class StreamHealthDto
+    {
+        public DateTime Timestamp { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public string? Message { get; set; }
+        public int ConsecutiveFailures { get; set; }
+        public int TotalRecoveredFrames { get; set; }
+        public int TotalFrozenFrames { get; set; }
+        public int VideoReceived { get; set; }
+        public int VideoLost { get; set; }
+        public int AudioReceived { get; set; }
+        public int AudioLost { get; set; }
     }
 }
 

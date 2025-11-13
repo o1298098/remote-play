@@ -7,12 +7,28 @@ using System.Linq;
 
 namespace RemotePlay.Services.Streaming.AV
 {
+    public enum FrameProcessStatus
+    {
+        Success,
+        Recovered,
+        Frozen,
+        Dropped
+    }
+
+    public readonly record struct FrameProcessInfo(
+        int FrameIndex,
+        FrameProcessStatus Status,
+        bool RecoveredByFec,
+        bool ReusedLastFrame,
+        string? Reason);
+
     public sealed class AVStream
     {
         private readonly ILogger<AVStream> _logger;
         private readonly string _type; // "video" 或 "audio"
         private readonly Action<byte[]> _callbackDone;
         private readonly Action<int, int> _callbackCorrupt;
+        private readonly Action<FrameProcessInfo>? _frameResultCallback;
 
         public byte[] Header { get; private set; }
 
@@ -26,6 +42,12 @@ namespace RemotePlay.Services.Streaming.AV
         private bool _frameBadOrder = false;
         private int _lastComplete = 0;
         private readonly List<int> _missing = new();
+        private int _fallbackCounter = 0;
+
+        private byte[]? _lastGoodVideoFrame;
+        private int _fecAttempts = 0;
+        private int _fecSuccess = 0;
+        private int _fecFailures = 0;
 
         private readonly object _lock = new(); // 多线程安全锁
 
@@ -37,6 +59,7 @@ namespace RemotePlay.Services.Streaming.AV
             byte[] header,
             Action<byte[]> callbackDone,
             Action<int, int> callbackCorrupt,
+            Action<FrameProcessInfo>? frameResultCallback,
             ILogger<AVStream> logger)
         {
             if (avType != TYPE_VIDEO && avType != TYPE_AUDIO)
@@ -45,6 +68,7 @@ namespace RemotePlay.Services.Streaming.AV
             _type = avType;
             _callbackDone = callbackDone;
             _callbackCorrupt = callbackCorrupt;
+            _frameResultCallback = frameResultCallback;
             _logger = logger;
 
             // 视频 header 添加 64 字节 padding
@@ -102,6 +126,7 @@ namespace RemotePlay.Services.Streaming.AV
             _packets.Clear();
             _frame = packet.FrameIndex;
             _lastUnit = -1;
+            _fallbackCounter = 0;
         }
 
         private void HandleMissingPacket(int index, int unitIndex)
@@ -122,6 +147,40 @@ namespace RemotePlay.Services.Streaming.AV
             _lost = (_lost + (missed > 0 ? missed : 1)) & 0xFFFF;
 
             _lastUnit = unitIndex - 1;
+        }
+
+        private void TriggerFallback(AVPacket packet, string reason)
+        {
+            if (_type != TYPE_VIDEO)
+                return;
+
+            _fallbackCounter++;
+
+            _frameBadOrder = true;
+            _missing.Clear();
+            _packets.Clear();
+            _lastUnit = -1;
+
+            _logger.LogWarning("⚠️ Video frame {Frame} fallback triggered: {Reason}", packet.FrameIndex, reason);
+
+            if (_callbackCorrupt != null)
+            {
+                try
+                {
+                    int start = _lastComplete + 1;
+                    if (start > packet.FrameIndex)
+                        start = packet.FrameIndex;
+                    _callbackCorrupt.Invoke(start, packet.FrameIndex);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to invoke corrupt callback for frame {Frame}", packet.FrameIndex);
+                }
+            }
+
+            bool reused = TryReplayLastFrame();
+            var status = reused ? FrameProcessStatus.Frozen : FrameProcessStatus.Dropped;
+            _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, status, false, reused, reason));
         }
 
         private void AddPacketData(AVPacket packet, byte[] decryptedData)
@@ -154,6 +213,19 @@ namespace RemotePlay.Services.Streaming.AV
 
             if (shouldAssemble && !_frameBadOrder)
                 AssembleFrame(packet);
+            else if (_type == TYPE_VIDEO && _frameBadOrder && packet.IsLastSrc && packet.UnitsFec == 0)
+            {
+                if (_packetLossSoftThresholdReached(packet))
+                    TriggerFallback(packet, "missing source units with no FEC available");
+            }
+        }
+
+        private bool _packetLossSoftThresholdReached(AVPacket packet)
+        {
+            if (_missing.Count == 0)
+                return false;
+            int allowableMissing = Math.Max(1, packet.UnitsSrc / 8);
+            return _missing.Count > allowableMissing || _fallbackCounter >= 3;
         }
 
         private void HandleFecPacket(AVPacket packet)
@@ -163,28 +235,38 @@ namespace RemotePlay.Services.Streaming.AV
 
             if (_missing.Count > packet.UnitsFec)
             {
+                _fecAttempts++;
+                _fecFailures++;
                 _logger.LogWarning("⚠️ FEC insufficient: missing={Missing}, fec={Fec}", _missing.Count, packet.UnitsFec);
+                if (_fallbackCounter >= 3 || _missing.Count > packet.UnitsSrc / 4)
+                    TriggerFallback(packet, $"missing={_missing.Count}, fec={packet.UnitsFec}");
                 return;
             }
 
+            _fecAttempts++;
             bool recovered = FecRecovery.TryRecover(_packets, _missing, packet.UnitsSrc, packet.UnitsFec, _logger);
             if (recovered)
             {
-                AssembleFrame(packet);
+                _fecSuccess++;
+                _frameBadOrder = false;
+                _missing.Clear();
+                AssembleFrame(packet, true);
             }
             else if (_missing.Count > 0)
             {
+                _fecFailures++;
                 _logger.LogWarning("🚫 FEC recovery failed for frame {Frame}", packet.FrameIndex);
+                TriggerFallback(packet, "FEC recovery failed");
             }
         }
 
-        private void AssembleFrame(AVPacket packet)
+        private void AssembleFrame(AVPacket packet, bool recoveredByFec = false)
         {
-            _lastComplete = packet.FrameIndex;
-
             if (_type == TYPE_VIDEO && (_packets.Count == 0 || _packets[0] == null || _packets[0].Length == 0))
             {
                 _logger.LogWarning("⚠️ Frame {Frame} first packet missing, skipping", packet.FrameIndex);
+                if (_fallbackCounter >= 2)
+                    TriggerFallback(packet, "first unit missing");
                 return;
             }
 
@@ -193,21 +275,28 @@ namespace RemotePlay.Services.Streaming.AV
             if (_type == TYPE_VIDEO && frameData.Length == 0)
             {
                 _logger.LogWarning("⚠️ Video frame {Frame} is empty, skipping", packet.FrameIndex);
+                if (_fallbackCounter >= 2)
+                    TriggerFallback(packet, "assembled frame is empty");
                 return;
             }
 
             if (_type == TYPE_VIDEO)
             {
-                var composedFrame = ArrayPool<byte>.Shared.Rent(Header.Length + frameData.Length);
-                Header.AsSpan().CopyTo(composedFrame.AsSpan(0, Header.Length));
-                frameData.AsSpan().CopyTo(composedFrame.AsSpan(Header.Length));
-                _callbackDone(composedFrame[..(Header.Length + frameData.Length)]);
-                ArrayPool<byte>.Shared.Return(composedFrame);
+                int finalLen = Header.Length + frameData.Length;
+                var composedFrame = new byte[finalLen];
+                Buffer.BlockCopy(Header, 0, composedFrame, 0, Header.Length);
+                Buffer.BlockCopy(frameData, 0, composedFrame, Header.Length, frameData.Length);
+                _lastGoodVideoFrame = composedFrame;
+                _callbackDone(composedFrame);
+                var status = recoveredByFec ? FrameProcessStatus.Recovered : FrameProcessStatus.Success;
+                _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, status, recoveredByFec, false, null));
             }
             else
             {
                 _callbackDone(frameData);
             }
+
+            _lastComplete = packet.FrameIndex;
         }
 
         private static byte[] ConcatPackets(List<byte[]> packets, int srcCount, bool skipFirstTwoBytes)
@@ -242,20 +331,52 @@ namespace RemotePlay.Services.Streaming.AV
                 }
             }
 
-            var result = buf[..total];
+            var result = new byte[total];
+            Buffer.BlockCopy(buf, 0, result, 0, total);
             ArrayPool<byte>.Shared.Return(buf);
             return result;
         }
 
-        public void ResetCounters()
+        public (int received, int lost) ConsumeAndResetCounters()
         {
             lock (_lock)
             {
-                _lost = _received = 0;
+                int received = _received;
+                int lost = _lost;
+                _received = 0;
+                _lost = 0;
+                return (received, lost);
+            }
+        }
+
+        public (int attempts, int success, int failures) ConsumeAndResetFecCounters()
+        {
+            lock (_lock)
+            {
+                int attempts = _fecAttempts;
+                int success = _fecSuccess;
+                int failures = _fecFailures;
+                _fecAttempts = 0;
+                _fecSuccess = 0;
+                _fecFailures = 0;
+                return (attempts, success, failures);
             }
         }
 
         public int Lost => _lost;
         public int Received => _received;
+
+        private bool TryReplayLastFrame()
+        {
+            if (_type != TYPE_VIDEO)
+                return false;
+            if (_lastGoodVideoFrame == null || _lastGoodVideoFrame.Length == 0)
+                return false;
+
+            var clone = new byte[_lastGoodVideoFrame.Length];
+            Buffer.BlockCopy(_lastGoodVideoFrame, 0, clone, 0, clone.Length);
+            _callbackDone(clone);
+            return true;
+        }
     }
 }

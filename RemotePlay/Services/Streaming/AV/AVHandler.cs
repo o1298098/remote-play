@@ -1,9 +1,14 @@
 using Microsoft.Extensions.Logging;
 using RemotePlay.Models.PlayStation;
+using RemotePlay.Models.Streaming;
+using RemotePlay.Services.Streaming;
 using RemotePlay.Utils.Crypto;
+using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace RemotePlay.Services.Streaming.AV
 {
@@ -19,6 +24,8 @@ namespace RemotePlay.Services.Streaming.AV
         private IAVReceiver? _receiver;
 
         private readonly ConcurrentQueue<AVPacket> _queue = new();
+        private ReorderQueue<AVPacket>? _videoReorderQueue;
+        private uint _videoReorderQueueExpected;
         private const int MaxQueueSize = 5000;
         private volatile bool _waiting = false;
 
@@ -36,6 +43,25 @@ namespace RemotePlay.Services.Streaming.AV
         private string? _detectedAudioCodec;
 
         private int _videoFrameCounter = 0;
+        private Action<int, int>? _videoCorruptCallback;
+        private Action<int, int>? _audioCorruptCallback;
+        private Action<StreamHealthEvent>? _healthCallback;
+        private FrameProcessStatus _lastFrameStatus = FrameProcessStatus.Success;
+        private string? _lastHealthMessage;
+        private int _consecutiveVideoFailures = 0;
+        private int _totalRecoveredFrames = 0;
+        private int _totalFrozenFrames = 0;
+        private int _totalDroppedFrames = 0;
+        private int _deltaRecoveredFrames = 0;
+        private int _deltaFrozenFrames = 0;
+        private int _deltaDroppedFrames = 0;
+        private DateTime _lastHealthTimestamp = DateTime.MinValue;
+        private DateTime _lastFrameTimestampUtc = DateTime.MinValue;
+        private readonly Queue<(DateTime Timestamp, FrameProcessStatus Status)> _recentFrameStatuses = new();
+        private readonly Queue<(DateTime Timestamp, double IntervalMs)> _recentFrameIntervals = new();
+        private double _recentIntervalSumMs = 0;
+        private readonly TimeSpan _healthWindow = TimeSpan.FromSeconds(10);
+        private readonly object _healthLock = new();
 
         public AVHandler(
             ILogger<AVHandler> logger,
@@ -49,6 +75,8 @@ namespace RemotePlay.Services.Streaming.AV
             _cipher = cipher;
             _receiver = receiver;
             _ct = ct;
+            ResetVideoReorderQueue();
+            ResetHealthState();
         }
 
         #region Receiver / Cipher / Headers
@@ -96,11 +124,15 @@ namespace RemotePlay.Services.Streaming.AV
                 return;
             }
 
+            ResetVideoReorderQueue();
+            ResetHealthState();
+
             _videoStream = new AVStream(
                 "video",
                 videoHeader ?? Array.Empty<byte>(),
                 HandleVideoFrame,
-                (last, current) => { },
+                InvokeVideoCorrupt,
+                HandleVideoFrameResult,
                 loggerFactory.CreateLogger<AVStream>());
 
             _audioStream = new AVStream(
@@ -113,7 +145,8 @@ namespace RemotePlay.Services.Streaming.AV
                     frame.AsSpan().CopyTo(outBuf.AsSpan(1));
                     try { _receiver?.OnAudioPacket(outBuf.AsSpan(0, frame.Length + 1).ToArray()); } finally { ArrayPool<byte>.Shared.Return(outBuf); }
                 },
-                (last, current) => { },
+                InvokeAudioCorrupt,
+                null,
                 loggerFactory.CreateLogger<AVStream>());
 
             if (_cipher != null)
@@ -139,36 +172,13 @@ namespace RemotePlay.Services.Streaming.AV
                 return;
             }
 
-            // Codec 检测
-            if (packet.Type == HeaderType.VIDEO && _detectedVideoCodec == null) DetectVideoCodec(packet);
-            if (packet.Type == HeaderType.AUDIO && _detectedAudioCodec == null) DetectAudioCodec(packet);
-
-            if (_receiver == null) return;
-
-            // 队列溢出处理
-            if (_queue.Count >= MaxQueueSize)
+            if (packet.Type == HeaderType.VIDEO)
             {
-                while (_queue.TryDequeue(out _)) { }
-                _waiting = true;
-                _logger.LogWarning("⚠️ AV queue overflow, cleared queue, waiting for unit_index=0");
+                _videoReorderQueue?.Push(packet);
             }
-
-            if (_waiting && packet.UnitIndex != 0) return;
-            if (_waiting && packet.UnitIndex == 0) _waiting = false;
-
-            // 低延迟直接处理
-            if (_queue.Count < DirectProcessThreshold && _cipher != null)
+            else
             {
-                try { ProcessSinglePacket(packet); Interlocked.Increment(ref _directProcessCount); return; }
-                catch (Exception ex) { _logger.LogWarning(ex, "⚠️ Direct processing failed, enqueue instead"); }
-            }
-
-            _queue.Enqueue(packet);
-
-            if (_queue.Count > 100 && (_workerTask == null || _workerTask.IsCompleted) && _cipher != null)
-            {
-                _logger.LogError("❌ Queue has {Size} packets but worker not running! Starting...", _queue.Count);
-                StartWorker();
+                HandleOrderedPacket(packet);
             }
         }
 
@@ -199,6 +209,143 @@ namespace RemotePlay.Services.Streaming.AV
                 catch (Exception ex) { _logger.LogError(ex, "❌ Decrypt failed frame={Frame}", packet.FrameIndex); }
             }
             return data;
+        }
+
+        #endregion
+
+        #region Reorder Queue
+
+        public void SetCorruptFrameCallbacks(Action<int, int>? videoCallback, Action<int, int>? audioCallback = null)
+        {
+            _videoCorruptCallback = videoCallback;
+            _audioCorruptCallback = audioCallback;
+        }
+
+        public void SetStreamHealthCallback(Action<StreamHealthEvent>? healthCallback)
+        {
+            _healthCallback = healthCallback;
+        }
+
+        private void ResetHealthState()
+        {
+            lock (_healthLock)
+            {
+                _lastFrameStatus = FrameProcessStatus.Success;
+                _lastHealthMessage = null;
+                _consecutiveVideoFailures = 0;
+                _totalRecoveredFrames = 0;
+                _totalFrozenFrames = 0;
+                _totalDroppedFrames = 0;
+                _deltaRecoveredFrames = 0;
+                _deltaFrozenFrames = 0;
+                _deltaDroppedFrames = 0;
+                _lastHealthTimestamp = DateTime.MinValue;
+                _lastFrameTimestampUtc = DateTime.MinValue;
+                _recentFrameStatuses.Clear();
+                _recentFrameIntervals.Clear();
+                _recentIntervalSumMs = 0;
+            }
+        }
+
+        private void ResetVideoReorderQueue()
+        {
+            _videoReorderQueue = new ReorderQueue<AVPacket>(
+                _logger,
+                pkt => (uint)pkt.Index,
+                HandleOrderedPacket);
+            _videoReorderQueueExpected = 0;
+        }
+
+        private void HandleOrderedPacket(AVPacket packet)
+        {
+            bool isVideo = packet.Type == HeaderType.VIDEO;
+
+            if (packet.Type == HeaderType.VIDEO && _detectedVideoCodec == null)
+                DetectVideoCodec(packet);
+            if (packet.Type == HeaderType.AUDIO && _detectedAudioCodec == null)
+                DetectAudioCodec(packet);
+
+            if (_logger.IsEnabled(LogLevel.Trace))
+            {
+                _logger.LogTrace("Ordered packet: type={Type}, frame={Frame}, unit={Unit}, total={Total}, expected={Expected}, waiting={Waiting}",
+                    packet.Type,
+                    packet.FrameIndex,
+                    packet.UnitIndex,
+                    packet.UnitsTotal,
+                    _videoReorderQueueExpected,
+                    _waiting);
+            }
+
+            if (_receiver == null)
+                return;
+
+            if (isVideo)
+                _videoReorderQueueExpected = (uint)packet.Index;
+
+            if (_queue.Count >= MaxQueueSize)
+            {
+                while (_queue.TryDequeue(out _)) { }
+                _waiting = true;
+                _logger.LogWarning("⚠️ AV queue overflow, cleared queue, waiting for unit_index=0");
+                ResetVideoReorderQueue();
+            }
+
+            if (_waiting)
+            {
+                if (!isVideo || packet.UnitIndex != 0)
+                    return;
+                _waiting = false;
+            }
+
+            if (_queue.Count < DirectProcessThreshold && _cipher != null)
+            {
+                try
+                {
+                    ProcessSinglePacket(packet);
+                    Interlocked.Increment(ref _directProcessCount);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "⚠️ Direct processing failed, enqueue instead");
+                }
+            }
+
+            _queue.Enqueue(packet);
+
+            if (_queue.Count > 100 && (_workerTask == null || _workerTask.IsCompleted) && _cipher != null)
+            {
+                _logger.LogError("❌ Queue has {Size} packets but worker not running! Starting...", _queue.Count);
+                StartWorker();
+            }
+        }
+
+        private void InvokeVideoCorrupt(int start, int end)
+        {
+            if (_videoCorruptCallback == null)
+                return;
+            try
+            {
+                _videoCorruptCallback.Invoke(start, end);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Video corrupt callback failed (start={Start}, end={End})", start, end);
+            }
+        }
+
+        private void InvokeAudioCorrupt(int start, int end)
+        {
+            if (_audioCorruptCallback == null)
+                return;
+            try
+            {
+                _audioCorruptCallback.Invoke(start, end);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Audio corrupt callback failed (start={Start}, end={End})", start, end);
+            }
         }
 
         #endregion
@@ -335,15 +482,201 @@ namespace RemotePlay.Services.Streaming.AV
         {
             _workerCts?.Cancel();
             _queue.Clear();
+            _waiting = false;
+            ResetVideoReorderQueue();
+            ResetHealthState();
         }
 
-        public (int received, int lost) GetStats()
+        public StreamPipelineStats GetAndResetStats()
         {
-            int received = (_videoStream?.Received ?? 0) + (_audioStream?.Received ?? 0);
-            int lost = (_videoStream?.Lost ?? 0) + (_audioStream?.Lost ?? 0);
-            return (received, lost);
+            (int videoReceived, int videoLost) = _videoStream?.ConsumeAndResetCounters() ?? (0, 0);
+            (int audioReceived, int audioLost) = _audioStream?.ConsumeAndResetCounters() ?? (0, 0);
+            (int fecAttempts, int fecSuccess, int fecFailures) = _videoStream?.ConsumeAndResetFecCounters() ?? (0, 0, 0);
+            int pendingPackets = _queue.Count;
+
+            double fecSuccessRate = fecAttempts > 0 ? (double)fecSuccess / fecAttempts : 0.0;
+
+            return new StreamPipelineStats
+            {
+                VideoReceived = videoReceived,
+                VideoLost = videoLost,
+                AudioReceived = audioReceived,
+                AudioLost = audioLost,
+                PendingPackets = pendingPackets,
+                FecAttempts = fecAttempts,
+                FecSuccess = fecSuccess,
+                FecFailures = fecFailures,
+                FecSuccessRate = fecSuccessRate
+            };
+        }
+
+        public StreamHealthSnapshot GetHealthSnapshot(bool resetDeltas = false)
+        {
+            lock (_healthLock)
+            {
+                var now = DateTime.UtcNow;
+                while (_recentFrameStatuses.Count > 0 && now - _recentFrameStatuses.Peek().Timestamp > _healthWindow)
+                    _recentFrameStatuses.Dequeue();
+                while (_recentFrameIntervals.Count > 0 && now - _recentFrameIntervals.Peek().Timestamp > _healthWindow)
+                {
+                    var removed = _recentFrameIntervals.Dequeue();
+                    _recentIntervalSumMs -= removed.IntervalMs;
+                }
+                if (_recentIntervalSumMs < 0)
+                    _recentIntervalSumMs = 0;
+
+                int recentSuccess = 0;
+                int recentRecovered = 0;
+                int recentFrozen = 0;
+                int recentDropped = 0;
+                DateTime oldest = DateTime.MaxValue;
+                DateTime newest = DateTime.MinValue;
+
+                foreach (var entry in _recentFrameStatuses)
+                {
+                    if (entry.Timestamp < oldest)
+                        oldest = entry.Timestamp;
+                    if (entry.Timestamp > newest)
+                        newest = entry.Timestamp;
+
+                    switch (entry.Status)
+                    {
+                        case FrameProcessStatus.Success:
+                            recentSuccess++;
+                            break;
+                        case FrameProcessStatus.Recovered:
+                            recentRecovered++;
+                            break;
+                        case FrameProcessStatus.Frozen:
+                            recentFrozen++;
+                            break;
+                        case FrameProcessStatus.Dropped:
+                            recentDropped++;
+                            break;
+                    }
+                }
+
+                if (_recentFrameStatuses.Count == 0)
+                {
+                    oldest = now;
+                    newest = now;
+                }
+
+                double averageIntervalMs = _recentFrameIntervals.Count > 0
+                    ? _recentIntervalSumMs / _recentFrameIntervals.Count
+                    : 0;
+
+                double recentFps = 0;
+                if (averageIntervalMs > 0)
+                {
+                    recentFps = 1000.0 / averageIntervalMs;
+                }
+                else if (_recentFrameStatuses.Count > 1 && newest > oldest)
+                {
+                    double spanSeconds = Math.Max(0.001, (newest - oldest).TotalSeconds);
+                    recentFps = _recentFrameStatuses.Count / spanSeconds;
+                }
+
+                int deltaRecovered = _deltaRecoveredFrames;
+                int deltaFrozen = _deltaFrozenFrames;
+                int deltaDropped = _deltaDroppedFrames;
+
+                if (resetDeltas)
+                {
+                    _deltaRecoveredFrames = 0;
+                    _deltaFrozenFrames = 0;
+                    _deltaDroppedFrames = 0;
+                }
+
+                return new StreamHealthSnapshot
+                {
+                    Timestamp = _lastHealthTimestamp,
+                    LastStatus = _lastFrameStatus,
+                    Message = _lastHealthMessage,
+                    ConsecutiveFailures = _consecutiveVideoFailures,
+                    TotalRecoveredFrames = _totalRecoveredFrames,
+                    TotalFrozenFrames = _totalFrozenFrames,
+                    TotalDroppedFrames = _totalDroppedFrames,
+                    DeltaRecoveredFrames = deltaRecovered,
+                    DeltaFrozenFrames = deltaFrozen,
+                    DeltaDroppedFrames = deltaDropped,
+                    RecentWindowSeconds = (int)_healthWindow.TotalSeconds,
+                    RecentSuccessFrames = recentSuccess,
+                    RecentRecoveredFrames = recentRecovered,
+                    RecentFrozenFrames = recentFrozen,
+                    RecentDroppedFrames = recentDropped,
+                    RecentFps = recentFps,
+                    AverageFrameIntervalMs = averageIntervalMs,
+                    LastFrameTimestampUtc = _lastFrameTimestampUtc
+                };
+            }
         }
 
         #endregion
+
+        private void HandleVideoFrameResult(FrameProcessInfo info)
+        {
+            StreamHealthEvent healthEvent;
+            lock (_healthLock)
+            {
+                var now = DateTime.UtcNow;
+                _lastFrameStatus = info.Status;
+                _lastHealthMessage = info.Reason;
+                _lastHealthTimestamp = now;
+
+                switch (info.Status)
+                {
+                    case FrameProcessStatus.Success:
+                        _consecutiveVideoFailures = 0;
+                        break;
+                    case FrameProcessStatus.Recovered:
+                        _totalRecoveredFrames++;
+                        _deltaRecoveredFrames++;
+                        _consecutiveVideoFailures = 0;
+                        break;
+                    case FrameProcessStatus.Frozen:
+                        _totalFrozenFrames++;
+                        _deltaFrozenFrames++;
+                        _consecutiveVideoFailures++;
+                        break;
+                    case FrameProcessStatus.Dropped:
+                        _totalDroppedFrames++;
+                        _deltaDroppedFrames++;
+                        _consecutiveVideoFailures++;
+                        break;
+                }
+
+                _recentFrameStatuses.Enqueue((now, info.Status));
+                while (_recentFrameStatuses.Count > 0 && now - _recentFrameStatuses.Peek().Timestamp > _healthWindow)
+                    _recentFrameStatuses.Dequeue();
+
+                if (_lastFrameTimestampUtc != DateTime.MinValue)
+                {
+                    double intervalMs = (now - _lastFrameTimestampUtc).TotalMilliseconds;
+                    if (intervalMs > 0 && intervalMs < 5000)
+                    {
+                        _recentFrameIntervals.Enqueue((now, intervalMs));
+                        _recentIntervalSumMs += intervalMs;
+                        while (_recentFrameIntervals.Count > 0 && now - _recentFrameIntervals.Peek().Timestamp > _healthWindow)
+                        {
+                            var removed = _recentFrameIntervals.Dequeue();
+                            _recentIntervalSumMs -= removed.IntervalMs;
+                        }
+                    }
+                }
+                _lastFrameTimestampUtc = now;
+
+                healthEvent = new StreamHealthEvent(
+                    now,
+                    info.FrameIndex,
+                    info.Status,
+                    _consecutiveVideoFailures,
+                    info.Reason,
+                    info.ReusedLastFrame,
+                    info.RecoveredByFec);
+            }
+
+            _healthCallback?.Invoke(healthEvent);
+        }
     }
 }

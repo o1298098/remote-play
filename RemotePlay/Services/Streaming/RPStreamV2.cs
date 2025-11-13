@@ -1,9 +1,12 @@
 using Microsoft.Extensions.Logging;
 using RemotePlay.Models.PlayStation;
+using RemotePlay.Models.Streaming;
+using RemotePlay.Services.Streaming.AV;
 using RemotePlay.Services.Streaming.AV;
 using RemotePlay.Utils.Crypto;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -124,6 +127,16 @@ namespace RemotePlay.Services.Streaming
 		private byte _currentTriggerIntensityCode = 0xFF;
 		private readonly byte[] _ledState = new byte[3];
 		private byte _playerIndex;
+        private StreamHealthSnapshot _healthSnapshot = default;
+        private StreamPipelineStats _lastPipelineStats = default;
+        private int _consecutiveSevereFailures = 0;
+        private DateTime _lastDegradeAction = DateTime.MinValue;
+        private DateTime _lastKeyframeRequest = DateTime.MinValue;
+        private readonly TimeSpan _keyframeRequestCooldown = TimeSpan.FromSeconds(2);
+        private readonly TimeSpan _idrMetricsWindow = TimeSpan.FromSeconds(30);
+        private readonly Queue<DateTime> _idrRequestHistory = new();
+        private readonly object _idrMetricsLock = new();
+        private int _totalIdrRequests = 0;
 
         #endregion
 
@@ -158,6 +171,22 @@ namespace RemotePlay.Services.Streaming
                 null, // receiver 稍后设置
                 _cancellationToken
             );
+
+            _avHandler.SetCorruptFrameCallbacks(
+                (start, end) =>
+                {
+                    if (_cipher == null || _isStopping)
+                        return;
+
+                    if (end < start)
+                    {
+                        var tmp = start;
+                        start = end;
+                        end = tmp;
+                    }
+                    SendCorrupt(start, end);
+                });
+            _avHandler.SetStreamHealthCallback(OnStreamHealthEvent);
             
             // ✅ 初始化 FeedbackSender 服务
             _feedbackSender = new FeedbackSenderService(
@@ -688,6 +717,25 @@ namespace RemotePlay.Services.Streaming
             {
                 _logger.LogWarning("Failed to parse control packet, len={Len}", data.Length);
                 return;
+            }
+
+            if (_logger.IsEnabled(LogLevel.Trace))
+            {
+                if (packet.ChunkType == ChunkType.DATA)
+                {
+                    _logger.LogTrace("UDP recv DATA chunk: channel={Channel}, tsn={Tsn}, dataType=0x{DataType:X2}, len={Len}",
+                        packet.Channel,
+                        packet.Tsn,
+                        packet.DataType ?? 0,
+                        data.Length);
+                }
+                else
+                {
+                    _logger.LogTrace("UDP recv control chunk: type={ChunkType}, flag={Flag}, len={Len}",
+                        packet.ChunkType,
+                        packet.Flag,
+                        data.Length);
+                }
             }
 
             // 如果 TSN 为 0 或 Data 为空，记录警告
@@ -1299,12 +1347,52 @@ namespace RemotePlay.Services.Streaming
                 // ✅ 发送 IDRREQUEST（使用 GMAC 但不加密 payload）
                 // 使用 SendData 方法，flag=1, channel=1, proto=false
                 SendData(idr, flag: 1, channel: 1, proto: false);
+                RecordIdrRequest();
                 
                 await Task.CompletedTask;  // 保持异步方法签名
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to send IDRREQUEST");
+            }
+        }
+
+        private void RecordIdrRequest()
+        {
+            var now = DateTime.UtcNow;
+            int total;
+            int recent;
+            int windowSeconds = (int)_idrMetricsWindow.TotalSeconds;
+
+            lock (_idrMetricsLock)
+            {
+                _totalIdrRequests++;
+                _lastKeyframeRequest = now;
+                _idrRequestHistory.Enqueue(now);
+                TrimIdrRequestHistory_NoLock(now);
+                total = _totalIdrRequests;
+                recent = _idrRequestHistory.Count;
+            }
+
+            if (_logger.IsEnabled(LogLevel.Trace))
+            {
+                _logger.LogTrace("IDR request recorded. total={Total}, recent({Window}s)={Recent}", total, windowSeconds, recent);
+            }
+        }
+
+        private void TrimIdrRequestHistory_NoLock(DateTime now)
+        {
+            while (_idrRequestHistory.Count > 0 && now - _idrRequestHistory.Peek() > _idrMetricsWindow)
+                _idrRequestHistory.Dequeue();
+        }
+
+        private (int Total, int Recent) GetIdrRequestMetrics()
+        {
+            lock (_idrMetricsLock)
+            {
+                var now = DateTime.UtcNow;
+                TrimIdrRequestHistory_NoLock(now);
+                return (_totalIdrRequests, _idrRequestHistory.Count);
             }
         }
 
@@ -1395,8 +1483,117 @@ namespace RemotePlay.Services.Streaming
         /// </summary>
         private (ushort, ushort) GetPacketStats()
         {
-            // TODO: 实现包统计（如果需要）
-            return (0, 0);
+            if (_avHandler == null)
+                return (0, 0);
+
+            var stats = _avHandler.GetAndResetStats();
+            _lastPipelineStats = stats;
+
+            int totalReceived = stats.VideoReceived + stats.AudioReceived;
+            int totalLost = stats.VideoLost + stats.AudioLost;
+
+            if (totalReceived < 0) totalReceived = 0;
+            if (totalLost < 0) totalLost = 0;
+            if (totalReceived > ushort.MaxValue) totalReceived = ushort.MaxValue;
+            if (totalLost > ushort.MaxValue) totalLost = ushort.MaxValue;
+            return ((ushort)totalReceived, (ushort)totalLost);
+        }
+
+        public (StreamHealthSnapshot Snapshot, StreamPipelineStats PipelineStats) GetStreamHealth()
+        {
+            StreamHealthSnapshot snapshot = _healthSnapshot;
+            if (_avHandler != null)
+            {
+                snapshot = _avHandler.GetHealthSnapshot(resetDeltas: true);
+                _healthSnapshot = snapshot;
+            }
+
+            StreamPipelineStats pipeline = _lastPipelineStats;
+            if (_avHandler != null)
+            {
+                var (totalIdr, recentIdr) = GetIdrRequestMetrics();
+                pipeline = pipeline with
+                {
+                    TotalIdrRequests = totalIdr,
+                    IdrRequestsRecent = recentIdr,
+                    IdrRequestWindowSeconds = (int)_idrMetricsWindow.TotalSeconds,
+                    LastIdrRequestUtc = _lastKeyframeRequest == DateTime.MinValue ? null : _lastKeyframeRequest,
+                    FrameOutputFps = snapshot.RecentFps,
+                    FrameIntervalMs = snapshot.AverageFrameIntervalMs
+                };
+                if (pipeline.FecAttempts > 0 && pipeline.FecSuccessRate <= 0)
+                {
+                    pipeline = pipeline with
+                    {
+                        FecSuccessRate = (double)pipeline.FecSuccess / pipeline.FecAttempts
+                    };
+                }
+                _lastPipelineStats = pipeline;
+            }
+
+            if (_logger.IsEnabled(LogLevel.Trace))
+            {
+                _logger.LogTrace(
+                    "StreamHealth: fps={Fps:F2}, ΔFrozen={DeltaFrozen}, ΔRecovered={DeltaRecovered}, ΔDropped={DeltaDropped}, FEC={FecSuccess}/{FecAttempts}({FecRate:P1}), pending={Pending}, IDR_recent={IdrRecent}",
+                    snapshot.RecentFps,
+                    snapshot.DeltaFrozenFrames,
+                    snapshot.DeltaRecoveredFrames,
+                    snapshot.DeltaDroppedFrames,
+                    pipeline.FecSuccess,
+                    pipeline.FecAttempts,
+                    pipeline.FecSuccessRate,
+                    pipeline.PendingPackets,
+                    pipeline.IdrRequestsRecent);
+            }
+
+            return (snapshot, pipeline);
+        }
+
+        private void OnStreamHealthEvent(StreamHealthEvent evt)
+        {
+            _healthSnapshot = _avHandler?.GetHealthSnapshot() ?? new StreamHealthSnapshot
+            {
+                Timestamp = evt.Timestamp,
+                LastStatus = evt.Status,
+                Message = evt.Message,
+                ConsecutiveFailures = evt.ConsecutiveFailures
+            };
+
+            if (evt.Status == FrameProcessStatus.Success || evt.Status == FrameProcessStatus.Recovered)
+            {
+                _consecutiveSevereFailures = 0;
+                return;
+            }
+
+            if (evt.Status is FrameProcessStatus.Frozen or FrameProcessStatus.Dropped)
+            {
+                _consecutiveSevereFailures = evt.ConsecutiveFailures;
+                if (_consecutiveSevereFailures >= 3)
+                {
+                    _ = TriggerEmergencyRecoveryAsync(evt);
+                }
+            }
+        }
+
+        private async Task TriggerEmergencyRecoveryAsync(StreamHealthEvent evt)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastDegradeAction < TimeSpan.FromSeconds(5))
+                return;
+
+            _lastDegradeAction = now;
+            _logger.LogWarning("⚠️ Stream degradation detected. Frame={Frame}, status={Status}, consecutive={Consecutive}", evt.FrameIndex, evt.Status, evt.ConsecutiveFailures);
+
+            if (_congestionControl != null)
+                _congestionControl.ForceHighLossSample();
+
+            if (evt.FrameIndex > 0)
+                SendCorrupt(evt.FrameIndex, evt.FrameIndex);
+
+            if (DateTime.UtcNow - _lastKeyframeRequest > _keyframeRequestCooldown)
+            {
+                await RequestKeyframeAsync();
+            }
         }
 
         /// <summary>

@@ -24,6 +24,7 @@ namespace RemotePlay.Services.Streaming
         
         #region Fields
         
+        private const uint SEQ_MASK = 0xFFFF;
         private readonly ILogger _logger;
         private readonly Func<T, uint> _getSeqNum;     // 获取序列号的函数
         private readonly Action<T> _outputCallback;     // 输出回调
@@ -93,7 +94,7 @@ namespace RemotePlay.Services.Streaming
         {
             lock (_lock)
             {
-                uint seqNum = _getSeqNum(item);
+                uint seqNum = _getSeqNum(item) & SEQ_MASK;
                 
                 // 首次初始化
                 if (!_initialized)
@@ -117,7 +118,7 @@ namespace RemotePlay.Services.Streaming
                 {
                     // 正好是期望的包，直接输出
                     _outputCallback(item);
-                    _nextExpectedSeq++;
+                    AdvanceExpected();
                     _totalProcessed++;
                     
                     // 尝试输出缓冲区中的后续包
@@ -209,7 +210,7 @@ namespace RemotePlay.Services.Streaming
                 {
                     _outputCallback(entry.Item);
                     _buffer.Remove(_nextExpectedSeq);
-                    _nextExpectedSeq++;
+                    AdvanceExpected();
                     _totalProcessed++;
                 }
                 else
@@ -233,14 +234,15 @@ namespace RemotePlay.Services.Streaming
                 _totalProcessed++;
                 
                 // 跳过缺失的包
-                if (oldest.Key > _nextExpectedSeq)
+                uint skipped = SequenceDistance(_nextExpectedSeq, oldest.Key);
+                if (skipped != 0)
                 {
-                    _totalDropped += (ulong)(oldest.Key - _nextExpectedSeq);
-                    _nextExpectedSeq = oldest.Key + 1;
+                    _totalDropped += skipped;
+                    _nextExpectedSeq = MaskSeq(oldest.Key + 1);
                 }
                 
                 _logger.LogDebug("Buffer overflow: forced output seq={Seq}, skipped={Skipped}",
-                    oldest.Key, oldest.Key - _nextExpectedSeq + 1);
+                    oldest.Key, skipped);
                 
                 // 动态调整队列大小（增大）
                 if (_currentSize < _sizeMax)
@@ -270,14 +272,15 @@ namespace RemotePlay.Services.Streaming
                     _totalProcessed++;
                     
                     // 如果这个包的序列号大于期望值，说明中间有丢包
-                    if (kvp.Key > _nextExpectedSeq)
+                    uint skipped = SequenceDistance(_nextExpectedSeq, kvp.Key);
+                    if (skipped != 0)
                     {
-                        _totalDropped += (ulong)(kvp.Key - _nextExpectedSeq);
+                        _totalDropped += skipped;
                         _logger.LogDebug("Timeout: output seq={Seq}, skipped={Skipped}",
-                            kvp.Key, kvp.Key - _nextExpectedSeq);
+                            kvp.Key, skipped);
                     }
                     
-                    _nextExpectedSeq = kvp.Key + 1;
+                    _nextExpectedSeq = MaskSeq(kvp.Key + 1);
                 }
                 else
                 {
@@ -306,7 +309,20 @@ namespace RemotePlay.Services.Streaming
         {
             // 处理 uint 序列号的循环
             // 假设序列号不会跳跃超过 2^31
-            return (int)(a - b) < 0;
+            uint diff = (a - b) & SEQ_MASK;
+            return diff > (SEQ_MASK >> 1);
+        }
+
+        private uint SequenceDistance(uint from, uint to)
+        {
+            return (to - from) & SEQ_MASK;
+        }
+
+        private static uint MaskSeq(uint value) => value & SEQ_MASK;
+
+        private void AdvanceExpected()
+        {
+            _nextExpectedSeq = MaskSeq(_nextExpectedSeq + 1);
         }
         
         #endregion

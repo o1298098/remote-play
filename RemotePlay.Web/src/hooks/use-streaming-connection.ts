@@ -112,8 +112,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const lastKeyframeRequestRef = useRef<number>(0)
   const pendingKeyframeRequestRef = useRef<boolean>(false)
   const initialKeyframeRequestedRef = useRef<boolean>(false)
+  const remotePlaySessionIdRef = useRef<string | null>(null)
+  const lastStreamHealthRef = useRef<{ frozen: number; recovered: number } | null>(null)
+  const lastHealthToastFrozenRef = useRef<number | null>(null)
+  const lastHealthToastRecoveredRef = useRef<number | null>(null)
+  const healthCheckInFlightRef = useRef<boolean>(false)
+  const lastHealthCheckAtRef = useRef<number>(0)
 
   const KEYFRAME_REQUEST_COOLDOWN_MS = 8000
+  const HEALTH_CHECK_COOLDOWN_MS = 3000
 
   const requestKeyframe = useCallback(
     (reason: string) => {
@@ -194,6 +201,148 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       return true
     },
     [KEYFRAME_REQUEST_COOLDOWN_MS, webrtcSessionId]
+  )
+
+  const resolveWebrtcSessionId = useCallback(() => {
+    if (webrtcSessionIdRef.current) {
+      return webrtcSessionIdRef.current
+    }
+
+    if (webrtcSessionId) {
+      webrtcSessionIdRef.current = webrtcSessionId
+      return webrtcSessionId
+    }
+
+    return null
+  }, [webrtcSessionId])
+
+  const resolveRemotePlaySessionId = useCallback(() => {
+    if (remotePlaySessionIdRef.current) {
+      return remotePlaySessionIdRef.current
+    }
+
+    if (remotePlaySessionId) {
+      remotePlaySessionIdRef.current = remotePlaySessionId
+      return remotePlaySessionId
+    }
+
+    return null
+  }, [remotePlaySessionId])
+
+  const handleStreamHealthCheck = useCallback(
+    async (reason: string) => {
+      const streamSessionId = resolveRemotePlaySessionId()
+      if (!streamSessionId) {
+        return
+      }
+
+      if (!resolveWebrtcSessionId()) {
+        return
+      }
+
+      const now = Date.now()
+      if (healthCheckInFlightRef.current) {
+        return
+      }
+
+      if (now - lastHealthCheckAtRef.current < HEALTH_CHECK_COOLDOWN_MS) {
+        const snapshot = lastStreamHealthRef.current
+        if (snapshot && snapshot.frozen > snapshot.recovered) {
+          if (requestKeyframe(`${reason}-cooldown`)) {
+            lastVideoActivityRef.current = now
+          }
+        }
+        return
+      }
+
+      healthCheckInFlightRef.current = true
+      try {
+        const response = await streamingService.getStreamHealth(streamSessionId)
+        if (!response.success || !response.data) {
+          throw new Error(response.errorMessage || response.message || 'Unavailable stream health data')
+        }
+
+        lastHealthCheckAtRef.current = Date.now()
+        const health = response.data
+        const previous = lastStreamHealthRef.current
+        lastStreamHealthRef.current = {
+          frozen: health.totalFrozenFrames,
+          recovered: health.totalRecoveredFrames,
+        }
+
+        if (health.totalFrozenFrames > health.totalRecoveredFrames) {
+          console.warn('⚠️ 流健康检测到画面冻结，将请求关键帧', {
+            reason,
+            totalFrozenFrames: health.totalFrozenFrames,
+            totalRecoveredFrames: health.totalRecoveredFrames,
+          })
+
+          if (health.totalFrozenFrames !== lastHealthToastFrozenRef.current) {
+            toast({
+              title: t('streaming.connection.toast.streamFrozenTitle'),
+              description: t('streaming.connection.toast.streamFrozenDescription', {
+                frozen: health.totalFrozenFrames,
+                recovered: health.totalRecoveredFrames,
+              }),
+              variant: 'destructive',
+            })
+            lastHealthToastFrozenRef.current = health.totalFrozenFrames
+          }
+
+          if (requestKeyframe(`${reason}-health-frozen`)) {
+            lastVideoActivityRef.current = Date.now()
+          }
+          return
+        }
+
+        let lastHandled = false
+        if (
+          previous &&
+          health.totalRecoveredFrames > previous.recovered &&
+          health.totalRecoveredFrames !== lastHealthToastRecoveredRef.current
+        ) {
+          console.log('✅ 流媒体帧已恢复', {
+            reason,
+            totalRecoveredFrames: health.totalRecoveredFrames,
+            totalFrozenFrames: health.totalFrozenFrames,
+          })
+          toast({
+            title: t('streaming.connection.toast.streamRecoveredTitle'),
+            description: t('streaming.connection.toast.streamRecoveredDescription', {
+              recovered: health.totalRecoveredFrames,
+            }),
+          })
+          lastHealthToastRecoveredRef.current = health.totalRecoveredFrames
+          lastHandled = true
+          lastVideoActivityRef.current = Date.now()
+        }
+
+        if (!lastHandled) {
+          if (requestKeyframe(`${reason}-health-neutral`)) {
+            lastVideoActivityRef.current = Date.now()
+          }
+        }
+      } catch (error) {
+        lastHealthCheckAtRef.current = Date.now()
+        console.warn('⚠️ 获取流健康状态失败，回退到关键帧请求', error)
+        if (error instanceof Error && /不存在或已结束/.test(error.message)) {
+          remotePlaySessionIdRef.current = null
+        }
+        if (requestKeyframe(`${reason}-health-fallback`)) {
+          lastVideoActivityRef.current = Date.now()
+        }
+      } finally {
+        healthCheckInFlightRef.current = false
+      }
+    },
+    [
+      HEALTH_CHECK_COOLDOWN_MS,
+      resolveRemotePlaySessionId,
+      resolveWebrtcSessionId,
+      requestKeyframe,
+      t,
+      toast,
+    ]
   )
 
   const applyReceiverLatencyHints = useCallback((receiver: RTCRtpReceiver) => {
@@ -1539,6 +1688,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   }, [webrtcSessionId])
 
   useEffect(() => {
+    remotePlaySessionIdRef.current = remotePlaySessionId
+  }, [remotePlaySessionId])
+
+  useEffect(() => {
     if (keyframeMonitorIntervalRef.current !== null) {
       window.clearInterval(keyframeMonitorIntervalRef.current)
       keyframeMonitorIntervalRef.current = null
@@ -1548,14 +1701,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       return
     }
 
-    const maybeEnsureSessionId = () => {
-      if (!webrtcSessionIdRef.current) {
-        webrtcSessionIdRef.current = webrtcSessionId
-      }
-      return webrtcSessionIdRef.current
-    }
-
-    if (!maybeEnsureSessionId()) {
+    if (!resolveWebrtcSessionId()) {
       return
     }
 
@@ -1630,12 +1776,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         return
       }
 
-      if (requestKeyframe('monitor-stall')) {
-        lastVideoActivityRef.current = now
-        console.warn('⚠️ 检测到视频播放停滞，已请求关键帧', {
-          inactivityMs: inactivity,
-        })
-      }
+      void handleStreamHealthCheck('monitor-stall')
     }
 
     keyframeMonitorIntervalRef.current = window.setInterval(checkStall, 1000)
@@ -1646,7 +1787,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         keyframeMonitorIntervalRef.current = null
       }
     }
-  }, [isConnected, webrtcSessionId, videoRef, requestKeyframe])
+  }, [handleStreamHealthCheck, isConnected, resolveWebrtcSessionId, videoRef])
 
   useEffect(() => {
     isStatsEnabledRef.current = isStatsEnabled

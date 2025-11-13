@@ -46,6 +46,19 @@ export interface LatencyStats {
   sampleCount?: number
 }
 
+export interface StreamHealth {
+  timestamp: string
+  status: string
+  message?: string | null
+  consecutiveFailures: number
+  totalRecoveredFrames: number
+  totalFrozenFrames: number
+  videoReceived: number
+  videoLost: number
+  audioReceived: number
+  audioLost: number
+}
+
 /**
  * 串流服务
  */
@@ -137,6 +150,15 @@ export const streamingService = {
   requestKeyframe: async (sessionId: string): Promise<ApiResponse<boolean>> => {
     return apiRequest<boolean>(`/webrtc/session/${encodeURIComponent(sessionId)}/keyframe`, {
       method: 'POST',
+    })
+  },
+
+  /**
+   * 获取流健康状态
+   */
+  getStreamHealth: async (sessionId: string): Promise<ApiResponse<StreamHealth>> => {
+    return apiRequest<StreamHealth>(`/streaming/session/${encodeURIComponent(sessionId)}/health`, {
+      method: 'GET',
     })
   },
 }

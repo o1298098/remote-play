@@ -31,6 +31,7 @@ namespace RemotePlay.Services.Streaming
         private ushort _packetsLost = 0;
         
         private readonly object _statsLock = new object();
+        private (ushort received, ushort lost)? _overrideSample;
         
         private bool _isRunning = false;
         
@@ -186,6 +187,13 @@ namespace RemotePlay.Services.Streaming
                             received = _packetsReceived;
                             lost = _packetsLost;
                         }
+
+                        if (_overrideSample.HasValue)
+                        {
+                            received = _overrideSample.Value.received;
+                            lost = _overrideSample.Value.lost;
+                            _overrideSample = null;
+                        }
                     }
                     
                     // 构造并发送拥塞包
@@ -276,6 +284,14 @@ namespace RemotePlay.Services.Streaming
         }
         
         #endregion
+
+        public void ForceHighLossSample(ushort received = 5, ushort lost = 5)
+        {
+            lock (_statsLock)
+            {
+                _overrideSample = (received, lost);
+            }
+        }
     }
 }
 
