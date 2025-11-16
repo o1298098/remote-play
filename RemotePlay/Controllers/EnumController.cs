@@ -30,6 +30,7 @@ namespace RemotePlay.Controllers
         /// </summary>
         /// <param name="type">可选，指定要查询的枚举类型。</param>
         /// <param name="cancellationToken">请求取消标记。</param>
+
         [HttpGet]
         public async Task<ActionResult<ApiSuccessResponse<object>>> GetAllAsync(
             [FromQuery] string? type,

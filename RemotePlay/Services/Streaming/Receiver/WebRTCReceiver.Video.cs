@@ -49,6 +49,24 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
 
+                // ✅ 对齐帧时间戳策略：在每帧开始时只更新一次时间戳
+                {
+                    var now = DateTime.UtcNow;
+                    if (_videoPacketCount > 0)
+                    {
+                        var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
+                        if (elapsed > 0)
+                        {
+                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
+                        }
+                        else
+                        {
+                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
+                        }
+                    }
+                    _lastVideoPacketTime = now;
+                }
+
                 SendVideoRTP(videoData);
 
                 _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
@@ -181,25 +199,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     try
                     {
-                        var now = DateTime.UtcNow;
-                        if (_videoPacketCount > 0)
-                        {
-                            var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                            if (elapsed > 0)
-                            {
-                                _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                            }
-                            else
-                            {
-                                _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                            }
-                        }
-                        _lastVideoPacketTime = now;
-
                         if (_cachedSendVideoMethod != null)
                         {
                             _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, data });
-                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
                             return;
                         }
                     }
@@ -217,8 +219,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                         data.Length > 0 ? Convert.ToHexString(data.Take(Math.Min(16, data.Length)).ToArray()) : "empty");
                 }
 
-                foreach (var nalUnit in nalUnits)
+                for (int i = 0; i < nalUnits.Count; i++)
                 {
+                    var nalUnit = nalUnits[i];
                     if (nalUnit.Length == 0) continue;
 
                     bool isVideoFrame = false;
@@ -240,31 +243,15 @@ namespace RemotePlay.Services.Streaming.Receiver
                         }
                     }
 
-                    if (isVideoFrame)
-                    {
-                        var now = DateTime.UtcNow;
-                        if (_videoPacketCount > 0)
-                        {
-                            var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                            if (elapsed > 0)
-                            {
-                                _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                            }
-                            else
-                            {
-                                _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                            }
-                        }
-                        _lastVideoPacketTime = now;
-                    }
-
                     if (nalUnit.Length > RTP_MTU - 12)
                     {
                         SendFragmentedNalUnit(nalUnit);
                     }
                     else
                     {
-                        SendSingleNalUnit(nalUnit);
+                        // 最后一个 NAL 作为帧结束，设置 Marker
+                        bool isLastNal = (i == nalUnits.Count - 1);
+                        SendSingleNalUnit(nalUnit, isLastNal);
                     }
                 }
             }
@@ -354,7 +341,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             return nalUnits;
         }
 
-        private void SendSingleNalUnit(byte[] nalUnit)
+        private void SendSingleNalUnit(byte[] nalUnit, bool isFrameEnd)
         {
             if (_peerConnection == null || _videoTrack == null || nalUnit.Length == 0) return;
 
@@ -363,11 +350,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 var rtpPacket = new RTPPacket(12 + nalUnit.Length);
                 rtpPacket.Header.Version = 2;
 
-                int payloadType = 96;
-                if (_detectedVideoFormat == "hevc")
-                {
-                    payloadType = 97;
-                }
+                int payloadType = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
 
                 rtpPacket.Header.PayloadType = (byte)payloadType;
                 rtpPacket.Header.SequenceNumber = _videoSequenceNumber;
@@ -375,7 +358,7 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                 rtpPacket.Header.Timestamp = _videoTimestamp;
                 rtpPacket.Header.SyncSource = _videoSsrc;
-                rtpPacket.Header.MarkerBit = 0;
+                rtpPacket.Header.MarkerBit = isFrameEnd ? 1 : 0;
 
                 Buffer.BlockCopy(nalUnit, 0, rtpPacket.Payload, 0, nalUnit.Length);
 
@@ -457,7 +440,33 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 {
                                     var parameters = method.GetParameters();
 
-                                    if (parameters.Length == 6)
+                                    // ✅ 优先使用 5 参数版本（由库管理 SSRC），兼容性更好
+                                    if (parameters.Length == 5)
+                                    {
+                                        if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
+                                            parameters[1].ParameterType == typeof(byte[]) &&
+                                            parameters[2].ParameterType == typeof(uint) &&
+                                            parameters[3].ParameterType == typeof(int) &&
+                                            parameters[4].ParameterType == typeof(int))
+                                        {
+                                            int payloadTypeInt = (int)rtpPacket.Header.PayloadType;
+                                            if (payloadTypeInt < 0 || payloadTypeInt > 127)
+                                            {
+                                                payloadTypeInt = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
+                                            }
+
+                                            method.Invoke(_peerConnection, new object[] {
+                                                SDPMediaTypesEnum.video,
+                                                rtpBytes,
+                                                rtpPacket.Header.Timestamp,
+                                                payloadTypeInt,
+                                                (int)rtpPacket.Header.SyncSource
+                                            });
+                                            rtpSent = true;
+                                            break;
+                                        }
+                                    }
+                                    else if (parameters.Length == 6)
                                     {
                                         if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
                                             parameters[1].ParameterType == typeof(byte[]) &&
@@ -468,7 +477,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         {
                                             ushort seqNum = _videoSequenceNumber;
 
-                                            int payloadTypeInt = _detectedVideoFormat == "hevc" ? 97 : 96;
+                                            int payloadTypeInt = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
                                             if (rtpPacket.Header.PayloadType < 0 || rtpPacket.Header.PayloadType > 127)
                                             {
                                                 _logger.LogWarning("⚠️ RTP Header PayloadType 超出范围: {PayloadType}, 使用计算值: {Computed}",
@@ -479,6 +488,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                                 payloadTypeInt = (int)rtpPacket.Header.PayloadType;
                                             }
 
+                                            // ✅ 避免手动指定 SSRC，使用 5 参数版本更稳；6 参数只作为后备
                                             int ssrcInt = (int)(_videoSsrc & 0x7FFFFFFF);
 
                                             try
@@ -510,32 +520,6 @@ namespace RemotePlay.Services.Streaming.Receiver
                                             }
                                         }
                                     }
-                                    else if (parameters.Length == 5)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                            parameters[1].ParameterType == typeof(byte[]) &&
-                                            parameters[2].ParameterType == typeof(uint) &&
-                                            parameters[3].ParameterType == typeof(int) &&
-                                            parameters[4].ParameterType == typeof(int))
-                                        {
-                                            int payloadTypeInt = (int)rtpPacket.Header.PayloadType;
-                                            if (payloadTypeInt < 0 || payloadTypeInt > 127)
-                                            {
-                                                _logger.LogWarning("⚠️ PayloadType 超出范围: {PayloadType}, 使用默认值 96", payloadTypeInt);
-                                                payloadTypeInt = 96;
-                                            }
-
-                                            method.Invoke(_peerConnection, new object[] {
-                                                SDPMediaTypesEnum.video,
-                                                rtpBytes,
-                                                rtpPacket.Header.Timestamp,
-                                                payloadTypeInt,
-                                                (int)rtpPacket.Header.SyncSource
-                                            });
-                                            rtpSent = true;
-                                            break;
-                                        }
-                                    }
                                     else if (parameters.Length == 2)
                                     {
                                         if (parameters[0].ParameterType == typeof(byte[]) &&
@@ -548,7 +532,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         else if (parameters[0].ParameterType == typeof(byte[]) &&
                                                  parameters[1].ParameterType == typeof(int))
                                         {
-                                            method.Invoke(_peerConnection, new object[] { rtpBytes, 96 });
+                                            method.Invoke(_peerConnection, new object[] { rtpBytes, payloadType });
                                             rtpSent = true;
                                             break;
                                         }
@@ -689,7 +673,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     var rtpPacket = new RTPPacket(12 + 2 + fragmentLength);
                     rtpPacket.Header.Version = 2;
-                    rtpPacket.Header.PayloadType = 96;
+                    rtpPacket.Header.PayloadType = (byte)(_detectedVideoFormat == "hevc" ? 97 : 96);
 
                     rtpPacket.Header.SequenceNumber = _videoSequenceNumber;
                     _videoSequenceNumber++;
@@ -708,7 +692,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     else if (i == fragmentCount - 1)
                     {
                         fuHeader |= 0x40;
-                        rtpPacket.Header.MarkerBit = 1;
+                        rtpPacket.Header.MarkerBit = 1; // 最后一片标记帧结束
                     }
                     else
                     {
@@ -721,15 +705,58 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                     try
                     {
-                        byte[] rtpBytes = rtpPacket.GetBytes();
+                        // ✅ 优先使用 5 参数 SendRtpRaw（由库管理 SSRC），兼容性更好
+                        var sendRtpRawMethods = _peerConnection.GetType().GetMethods()
+                            .Where(m => m.Name == "SendRtpRaw")
+                            .ToList();
 
-                        try
+                        bool sent = false;
+                        foreach (var method in sendRtpRawMethods)
                         {
-                            var sendRtpRawMethods = _peerConnection.GetType().GetMethods()
+                            try
+                            {
+                                var parameters = method.GetParameters();
+                                if (parameters.Length == 5 &&
+                                    parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
+                                    parameters[1].ParameterType == typeof(byte[]) &&
+                                    parameters[2].ParameterType == typeof(uint) &&
+                                    parameters[3].ParameterType == typeof(int) &&
+                                    parameters[4].ParameterType == typeof(int))
+                                {
+                                    int payloadTypeInt = rtpPacket.Header.PayloadType;
+                                    if (payloadTypeInt < 0 || payloadTypeInt > 127)
+                                    {
+                                        payloadTypeInt = (_detectedVideoFormat == "hevc") ? 97 : 96;
+                                    }
+                                    // 传入纯负载，由库封包
+                                    var payloadOnly = new byte[2 + fragmentLength];
+                                    payloadOnly[0] = fuIndicator;
+                                    payloadOnly[1] = fuHeader;
+                                    Buffer.BlockCopy(nalUnit, fragmentStart, payloadOnly, 2, fragmentLength);
+
+                                    int markerBit = rtpPacket.Header.MarkerBit;
+                                    method.Invoke(_peerConnection, new object[] {
+                                        SDPMediaTypesEnum.video,
+                                        payloadOnly,
+                                        rtpPacket.Header.Timestamp,
+                                        markerBit,
+                                        payloadTypeInt
+                                    });
+                                    sent = true;
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+
+                        if (!sent)
+                        {
+                            // 后备：发送完整 RTP 字节（2 参数版本）
+                            var rtpBytes = rtpPacket.GetBytes();
+                            var methods2 = _peerConnection.GetType().GetMethods()
                                 .Where(m => m.Name == "SendRtpRaw" && m.GetParameters().Length == 2)
                                 .ToList();
-
-                            foreach (var method in sendRtpRawMethods)
+                            foreach (var method in methods2)
                             {
                                 try
                                 {
@@ -739,20 +766,24 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
                                         {
                                             method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video });
-                                            return;
+                                            sent = true;
+                                            break;
                                         }
                                         else if (parameters[1].ParameterType == typeof(int))
                                         {
-                                            method.Invoke(_peerConnection, new object[] { rtpBytes, 96 });
-                                            return;
+                                            method.Invoke(_peerConnection, new object[] { rtpBytes, (int)rtpPacket.Header.PayloadType });
+                                            sent = true;
+                                            break;
                                         }
                                     }
                                 }
                                 catch { }
                             }
                         }
-                        catch (Exception)
+
+                        if (!sent)
                         {
+                            _logger.LogWarning("⚠️ 分片视频 RTP 包已构建但未发送（未匹配到 SendRtpRaw 方法）");
                         }
                     }
                     catch (Exception sendEx)
@@ -856,4 +887,5 @@ namespace RemotePlay.Services.Streaming.Receiver
         }
     }
 }
+
 

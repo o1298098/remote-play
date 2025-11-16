@@ -88,6 +88,10 @@ namespace RemotePlay.Services.Streaming.Receiver
         private const int VIDEO_FRAME_RATE = 60; // 假设 60fps（用于初始计算）
         private const double VIDEO_TIMESTAMP_INCREMENT = VIDEO_CLOCK_RATE / (double)VIDEO_FRAME_RATE; // 每帧时间戳增量
         
+        // ✅ 协商后的动态负载类型（默认 H264=96, HEVC=97，协商成功后将覆盖）
+        private int _negotiatedPtH264 = 96;
+        private int _negotiatedPtHevc = 97;
+        
         public event EventHandler? OnDisconnected;
         
         // ✅ 关键帧请求事件：当收到来自浏览器的 RTCP PLI/FIR 反馈时触发
@@ -156,6 +160,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                     // 连接建立后，获取 RTP 通道
                     InitializeRtpChannels();
                     
+                    // ✅ 解析 SDP，获取浏览器协商的 H264/HEVC Payload Type
+                    TryDetectNegotiatedVideoPayloadTypes();
+                    
                     // ✅ 检测浏览器实际选择的音频编解码器
                     DetectSelectedAudioCodec();
                 }
@@ -210,6 +217,60 @@ namespace RemotePlay.Services.Streaming.Receiver
             
             // 创建视频和音频轨道
             InitializeTracks();
+        }
+        
+        /// <summary>
+        /// 从 SDP 中解析 H264/H265 的动态负载类型（payload type）
+        /// </summary>
+        private void TryDetectNegotiatedVideoPayloadTypes()
+        {
+            try
+            {
+                string sdp = "";
+                if (_peerConnection?.localDescription?.sdp != null)
+                {
+                    sdp = _peerConnection.localDescription.sdp.ToString() ?? "";
+                }
+                // 若本地为空，尝试远端
+                if (string.IsNullOrWhiteSpace(sdp) && _peerConnection?.remoteDescription?.sdp != null)
+                {
+                    sdp = _peerConnection.remoteDescription.sdp.ToString() ?? "";
+                }
+                if (string.IsNullOrWhiteSpace(sdp))
+                {
+                    return;
+                }
+                
+                // 解析 a=rtpmap:<pt> H264/90000 或 H265/90000
+                var lines = sdp.Split('\n');
+                foreach (var raw in lines)
+                {
+                    var line = raw.Trim();
+                    if (!line.StartsWith("a=rtpmap:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    
+                    // a=rtpmap:96 H264/90000
+                    var parts = line.Substring("a=rtpmap:".Length).Split(' ');
+                    if (parts.Length < 2) continue;
+                    if (!int.TryParse(parts[0], out var pt)) continue;
+                    
+                    var codecPart = parts[1].ToLowerInvariant();
+                    if (codecPart.StartsWith("h264/"))
+                    {
+                        _negotiatedPtH264 = pt;
+                        _logger.LogInformation("✅ 协商的 H264 PayloadType: {Pt}", pt);
+                    }
+                    else if (codecPart.StartsWith("h265/") || codecPart.StartsWith("hevc/"))
+                    {
+                        _negotiatedPtHevc = pt;
+                        _logger.LogInformation("✅ 协商的 HEVC PayloadType: {Pt}", pt);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "⚠️ 解析视频 PayloadType 失败，继续使用默认值 (H264=96, HEVC=97)");
+            }
         }
         
         /// <summary>

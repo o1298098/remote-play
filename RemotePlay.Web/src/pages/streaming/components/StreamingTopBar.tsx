@@ -1,18 +1,20 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Activity } from 'lucide-react'
+import { ArrowLeft, Activity, RotateCw } from 'lucide-react'
 
 interface StreamingTopBarProps {
   onBack: () => void
   isStatsEnabled?: boolean
   onStatsToggle?: (enabled: boolean) => void
+  onRefresh?: () => void
 }
 
 export function StreamingTopBar({
   onBack,
   isStatsEnabled = false,
   onStatsToggle,
+  onRefresh,
 }: StreamingTopBarProps) {
   const { t } = useTranslation()
   const [isVisible, setIsVisible] = useState(false)
@@ -121,7 +123,28 @@ export function StreamingTopBar({
               <ArrowLeft className="h-6 w-6" />
             </Button>
 
-            {onStatsToggle && (
+            <div className="flex items-center gap-2">
+              {onRefresh && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onRefresh()}
+                  className="rounded-full shadow-none bg-transparent text-white hover:bg-transparent hover:text-white focus-visible:ring-0 focus-visible:ring-offset-0 opacity-80 hover:opacity-100"
+                  style={{
+                    pointerEvents: 'auto',
+                    backdropFilter: 'none',
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    boxShadow: 'none',
+                  }}
+                  aria-label={t('streaming.refresh.label', '刷新串流')}
+                  title={t('streaming.refresh.label', '刷新串流')}
+                >
+                  <RotateCw className="h-5 w-5 text-white" />
+                </Button>
+              )}
+
+              {onStatsToggle && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -149,7 +172,8 @@ export function StreamingTopBar({
               >
                 <Activity className="h-5 w-5 text-white" />
               </Button>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>

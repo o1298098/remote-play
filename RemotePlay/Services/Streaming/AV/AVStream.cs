@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using RemotePlay.Utils;
+using RemotePlay.Services.Streaming.AV.Bitstream;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
@@ -49,6 +50,19 @@ namespace RemotePlay.Services.Streaming.AV
         private int _fecSuccess = 0;
         private int _fecFailures = 0;
 
+        // ✅ P 帧 fallback 相关（参考 chiaki-ng）
+        private ReferenceFrameManager? _referenceFrameManager;
+        private BitstreamParser? _bitstreamParser;
+        private string? _detectedCodec;
+
+        // ✅ 帧超时机制（参考 chiaki-ng，避免长时间等待不完整的帧）
+        private DateTime _frameStartTime = DateTime.MinValue; // 帧开始时间
+        private const int FRAME_TIMEOUT_MS = 500; // 帧超时时间（毫秒），参考视频帧率 30fps = 33ms/frame，设置 500ms 允许网络抖动和乱序
+        private int _frameTimeoutDropped = 0; // 超时丢弃的帧数
+
+        // ✅ 流统计（参考 chiaki-ng 的 ChiakiStreamStats）
+        private readonly StreamStats _streamStats = new StreamStats();
+
         private readonly object _lock = new(); // 多线程安全锁
 
         public const string TYPE_VIDEO = "video";
@@ -78,6 +92,10 @@ namespace RemotePlay.Services.Streaming.AV
                 Header = new byte[header.Length + padding.Length];
                 Buffer.BlockCopy(header, 0, Header, 0, header.Length);
                 Buffer.BlockCopy(padding, 0, Header, header.Length, padding.Length);
+
+                // ✅ 初始化参考帧管理器和 bitstream 解析器（参考 chiaki-ng）
+                _referenceFrameManager = new ReferenceFrameManager(null); // Logger 可选
+                // BitstreamParser 会在检测到 codec 后初始化
             }
             else
             {
@@ -95,8 +113,13 @@ namespace RemotePlay.Services.Streaming.AV
                 // 检测新帧
                 if (packet.FrameIndex != _frame)
                 {
-                    if (_lastComplete + 1 != packet.FrameIndex)
+                    // ✅ 只在视频流时报告帧索引跳跃，且只在已有完整帧的情况下报告
+                    // 音频流的帧索引跳跃是正常的，不应该触发 corrupt callback
+                    // 会话开始时（_lastComplete <= 0）的帧索引跳跃也是正常的
+                    if (_type == TYPE_VIDEO && _lastComplete > 0 && _lastComplete + 1 != packet.FrameIndex)
+                    {
                         _callbackCorrupt(_lastComplete + 1, packet.FrameIndex);
+                    }
 
                     SetNewFrame(packet);
                     _frame = packet.FrameIndex;
@@ -127,6 +150,28 @@ namespace RemotePlay.Services.Streaming.AV
             _frame = packet.FrameIndex;
             _lastUnit = -1;
             _fallbackCounter = 0;
+            
+            // ✅ 仅对视频流记录帧开始时间（用于超时检查）
+            // 音频流不需要超时检测，因为音频帧小且处理快，丢包会导致爆音
+            if (_type == TYPE_VIDEO)
+            {
+                _frameStartTime = DateTime.UtcNow;
+            }
+            else
+            {
+                _frameStartTime = DateTime.MinValue; // 音频流不设置超时
+            }
+            
+            // ✅ 如果帧索引跳跃过大，重置参考帧管理器（流可能已不同步）
+            if (_type == TYPE_VIDEO && _lastComplete > 0)
+            {
+                int gap = packet.FrameIndex - _lastComplete;
+                if (gap > 10) // 如果跳跃超过 10 帧，重置参考帧
+                {
+                    _logger.LogWarning("⚠️ 帧索引跳跃过大 ({Gap} 帧)，重置参考帧管理器", gap);
+                    _referenceFrameManager?.Reset();
+                }
+            }
         }
 
         private void HandleMissingPacket(int index, int unitIndex)
@@ -160,6 +205,15 @@ namespace RemotePlay.Services.Streaming.AV
             _missing.Clear();
             _packets.Clear();
             _lastUnit = -1;
+            _frameStartTime = DateTime.MinValue; // ✅ 重置帧开始时间，避免影响下一个帧
+
+            // ✅ 如果连续 fallback 次数过多，重置参考帧管理器
+            if (_fallbackCounter >= 5)
+            {
+                _logger.LogWarning("⚠️ 连续 fallback 次数过多 ({Count})，重置参考帧管理器", _fallbackCounter);
+                _referenceFrameManager?.Reset();
+                _fallbackCounter = 0; // 重置计数器
+            }
 
             _logger.LogWarning("⚠️ Video frame {Frame} fallback triggered: {Reason}", packet.FrameIndex, reason);
 
@@ -200,19 +254,70 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void HandleSrcPacket(AVPacket packet)
         {
-            bool shouldAssemble = false;
-
-            if (packet.IsLastSrc && !_frameBadOrder)
-                shouldAssemble = true;
-            else if (!_frameBadOrder && _packets.Count >= packet.UnitsSrc)
+            // ✅ 检查帧超时（仅适用于视频流，参考 chiaki-ng，避免长时间等待不完整的帧）
+            // 音频流不应该有超时检测，因为音频帧小且处理快，丢包会导致爆音
+            if (_type == TYPE_VIDEO && _frameStartTime != DateTime.MinValue)
             {
-                int validPackets = _packets.Take(packet.UnitsSrc).Count(p => p != null && p.Length > 0);
-                if (validPackets >= packet.UnitsSrc - 1)
-                    shouldAssemble = true;
+                var elapsed = (DateTime.UtcNow - _frameStartTime).TotalMilliseconds;
+                if (elapsed > FRAME_TIMEOUT_MS)
+                {
+                    _logger.LogWarning("⚠️ 帧 {Frame} 超时 ({Elapsed}ms > {Timeout}ms)，触发 fallback", 
+                        packet.FrameIndex, elapsed, FRAME_TIMEOUT_MS);
+                    _frameTimeoutDropped++;
+                    TriggerFallback(packet, $"frame timeout ({elapsed:F0}ms)");
+                    return;
+                }
             }
 
-            if (shouldAssemble && !_frameBadOrder)
-                AssembleFrame(packet);
+            // ✅ 提前触发策略（对齐 chiaki-ng：“宁可丢帧，也不阻塞帧流”）
+            // 如果已经检测到乱序/缺失，且缺失超过软阈值，并且没有可用 FEC，直接触发 fallback（无需等待本帧最后一个单元）
+            if (_type == TYPE_VIDEO && _frameBadOrder && _missing.Count > 0 && packet.UnitsFec == 0)
+            {
+                if (_packetLossSoftThresholdReached(packet))
+                {
+                    _logger.LogWarning("⚠️ 提前触发 fallback（缺失超过阈值，避免等待到帧尾）: frame={Frame}, missing={Missing}, unitsSrc={UnitsSrc}",
+                        packet.FrameIndex, _missing.Count, packet.UnitsSrc);
+                    TriggerFallback(packet, "early fallback due to missing units beyond threshold");
+                    return;
+                }
+            }
+
+            bool shouldAssemble = false;
+
+            // ✅ 音频流：即使有乱序也尝试组装（音频容错性更高）
+            // 视频流：只有在没有乱序时才组装（乱序可能导致解码问题）
+            if (_type == TYPE_AUDIO)
+            {
+                // 音频流：只要有足够的包就尝试组装，即使有乱序
+                if (packet.IsLastSrc || _packets.Count >= packet.UnitsSrc)
+                {
+                    int validPackets = _packets.Take(packet.UnitsSrc).Count(p => p != null && p.Length > 0);
+                    if (validPackets >= packet.UnitsSrc - 1)
+                        shouldAssemble = true;
+                }
+            }
+            else
+            {
+                // 视频流：只有在没有乱序时才组装
+                if (packet.IsLastSrc && !_frameBadOrder)
+                    shouldAssemble = true;
+                else if (!_frameBadOrder && _packets.Count >= packet.UnitsSrc)
+                {
+                    int validPackets = _packets.Take(packet.UnitsSrc).Count(p => p != null && p.Length > 0);
+                    if (validPackets >= packet.UnitsSrc - 1)
+                        shouldAssemble = true;
+                }
+            }
+
+            if (shouldAssemble)
+            {
+                // 音频流：即使有乱序也组装
+                // 视频流：只有在没有乱序时才组装
+                if (_type == TYPE_AUDIO || !_frameBadOrder)
+                {
+                    AssembleFrame(packet);
+                }
+            }
             else if (_type == TYPE_VIDEO && _frameBadOrder && packet.IsLastSrc && packet.UnitsFec == 0)
             {
                 if (_packetLossSoftThresholdReached(packet))
@@ -230,6 +335,21 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void HandleFecPacket(AVPacket packet)
         {
+            // ✅ 检查帧超时（仅适用于视频流，参考 chiaki-ng）
+            // 音频流不应该有超时检测，因为音频帧小且处理快，丢包会导致爆音
+            if (_type == TYPE_VIDEO && _frameStartTime != DateTime.MinValue)
+            {
+                var elapsed = (DateTime.UtcNow - _frameStartTime).TotalMilliseconds;
+                if (elapsed > FRAME_TIMEOUT_MS)
+                {
+                    _logger.LogWarning("⚠️ 帧 {Frame} 在 FEC 处理时超时 ({Elapsed}ms > {Timeout}ms)，触发 fallback", 
+                        packet.FrameIndex, elapsed, FRAME_TIMEOUT_MS);
+                    _frameTimeoutDropped++;
+                    TriggerFallback(packet, $"frame timeout during FEC ({elapsed:F0}ms)");
+                    return;
+                }
+            }
+
             if (!_frameBadOrder && _missing.Count == 0) return;
             if (!packet.IsLast) return;
 
@@ -286,17 +406,68 @@ namespace RemotePlay.Services.Streaming.AV
                 var composedFrame = new byte[finalLen];
                 Buffer.BlockCopy(Header, 0, composedFrame, 0, Header.Length);
                 Buffer.BlockCopy(frameData, 0, composedFrame, Header.Length, frameData.Length);
+
+                // ✅ 检查 P 帧参考帧（参考 chiaki-ng 的 chiaki_video_receiver_flush_frame）
+                bool frameRecovered = recoveredByFec;
+                bool pFrameFallback = false;
+                bool hasAlternativeRef = false;
+
+                try
+                {
+                    pFrameFallback = CheckPFrameReferenceFrame(composedFrame, packet.FrameIndex, out hasAlternativeRef);
+                }
+                catch (Exception ex)
+                {
+                    // 如果 P 帧检查失败，记录日志但继续处理（不影响音频）
+                    _logger.LogWarning(ex, "⚠️ P 帧参考帧检查失败，继续处理帧 {Frame}", packet.FrameIndex);
+                }
+
+                if (pFrameFallback && !hasAlternativeRef)
+                {
+                    // 缺少参考帧且找不到替代，触发 fallback
+                    _logger.LogWarning("⚠️ P 帧 {Frame} 缺少参考帧且无替代，触发 fallback", packet.FrameIndex);
+                    TriggerFallback(packet, "missing reference frame for P-frame");
+                    return;
+                }
+                else if (pFrameFallback && hasAlternativeRef)
+                {
+                    // 找到替代参考帧，记录但继续处理
+                    // 注意：由于 bitstream 修改复杂，当前不修改 bitstream
+                    // 依赖解码器的容错能力
+                    _logger.LogWarning("⚠️ P 帧 {Frame} 缺少原始参考帧，但找到替代参考帧（依赖解码器容错）", packet.FrameIndex);
+                    frameRecovered = true; // 标记为恢复
+                }
+
                 _lastGoodVideoFrame = composedFrame;
                 _callbackDone(composedFrame);
-                var status = recoveredByFec ? FrameProcessStatus.Recovered : FrameProcessStatus.Success;
-                _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, status, recoveredByFec, false, null));
+
+                // ✅ 记录流统计（参考 chiaki-ng: chiaki_stream_stats_frame）
+                _streamStats.RecordFrame((ulong)composedFrame.Length);
+
+                // ✅ 添加参考帧（参考 chiaki-ng 的 add_ref_frame）
+                try
+                {
+                    _referenceFrameManager?.AddReferenceFrame(packet.FrameIndex);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "⚠️ 添加参考帧失败，帧 {Frame}", packet.FrameIndex);
+                }
+
+                var status = frameRecovered ? FrameProcessStatus.Recovered : FrameProcessStatus.Success;
+                _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, status, frameRecovered, false, null));
             }
             else
             {
+                // ✅ 音频处理：直接回调，不受 P 帧检查影响
                 _callbackDone(frameData);
+
+                // ✅ 记录流统计（参考 chiaki-ng: chiaki_stream_stats_frame）
+                _streamStats.RecordFrame((ulong)frameData.Length);
             }
 
             _lastComplete = packet.FrameIndex;
+            _frameStartTime = DateTime.MinValue; // ✅ 重置帧开始时间，准备处理下一个帧
         }
 
         private static byte[] ConcatPackets(List<byte[]> packets, int srcCount, bool skipFirstTwoBytes)
@@ -337,15 +508,17 @@ namespace RemotePlay.Services.Streaming.AV
             return result;
         }
 
-        public (int received, int lost) ConsumeAndResetCounters()
+        public (int received, int lost, int timeoutDropped) ConsumeAndResetCounters()
         {
             lock (_lock)
             {
                 int received = _received;
                 int lost = _lost;
+                int timeoutDropped = _frameTimeoutDropped;
                 _received = 0;
                 _lost = 0;
-                return (received, lost);
+                _frameTimeoutDropped = 0;
+                return (received, lost, timeoutDropped);
             }
         }
 
@@ -365,6 +538,147 @@ namespace RemotePlay.Services.Streaming.AV
 
         public int Lost => _lost;
         public int Received => _received;
+
+        /// <summary>
+        /// 获取流统计信息（参考 chiaki-ng 的 ChiakiStreamStats）
+        /// </summary>
+        public StreamStats GetStreamStats()
+        {
+            return _streamStats;
+        }
+
+        /// <summary>
+        /// 获取并重置流统计信息（参考 chiaki-ng: chiaki_stream_stats_reset）
+        /// </summary>
+        public (ulong frames, ulong bytes) GetAndResetStreamStats()
+        {
+            return _streamStats.GetAndReset();
+        }
+
+        /// <summary>
+        /// 检查 P 帧的参考帧（参考 chiaki-ng 的 chiaki_video_receiver_flush_frame）
+        /// 返回 (是否缺少参考帧, 是否找到替代参考帧)
+        /// </summary>
+        private bool CheckPFrameReferenceFrame(byte[] composedFrame, int frameIndex, out bool hasAlternativeRef)
+        {
+            hasAlternativeRef = false;
+
+            if (_type != TYPE_VIDEO || _referenceFrameManager == null)
+                return false;
+
+            // 延迟初始化 BitstreamParser（需要知道 codec）
+            if (_bitstreamParser == null)
+            {
+                // 从 header 检测 codec
+                _detectedCodec = DetectCodecFromHeader(Header);
+                if (_detectedCodec != null)
+                {
+                    _bitstreamParser = new BitstreamParser(_detectedCodec, null); // Logger 可选
+                }
+                else
+                {
+                    // 默认使用 h264
+                    _bitstreamParser = new BitstreamParser("h264", null); // Logger 可选
+                }
+            }
+
+            // 解析 slice header
+            if (!_bitstreamParser.ParseSlice(composedFrame, out var slice))
+                return false;
+
+            // 只处理 P 帧
+            if (slice.SliceType != SliceType.P)
+                return false;
+
+            // 检查参考帧
+            if (slice.ReferenceFrame == 0xFF)
+            {
+                // I 帧或无效，不需要参考帧
+                return false;
+            }
+
+            // 计算参考帧索引（参考 chiaki-ng）
+            int refFrameIndex = frameIndex - (int)slice.ReferenceFrame - 1;
+
+            // 检查参考帧是否存在
+            if (_referenceFrameManager.HasReferenceFrame(refFrameIndex))
+            {
+                // 参考帧存在，正常
+                return false;
+            }
+
+            // 参考帧不存在，尝试查找替代参考帧（参考 chiaki-ng）
+            int alternativeRefFrame = _referenceFrameManager.FindAvailableReferenceFrame(frameIndex, slice.ReferenceFrame);
+            if (alternativeRefFrame >= 0)
+            {
+                hasAlternativeRef = true;
+                _logger.LogWarning("⚠️ P 帧 {Frame} 缺少参考帧 {RefFrame}，找到替代参考帧 {AltRefFrame}",
+                    frameIndex, refFrameIndex, frameIndex - alternativeRefFrame - 1);
+                // 注意：由于 bitstream 修改复杂，当前不修改 bitstream
+                // 依赖解码器的容错能力
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ P 帧 {Frame} 缺少参考帧 {RefFrame}，且无替代参考帧",
+                    frameIndex, refFrameIndex);
+            }
+
+            return true; // 缺少参考帧
+        }
+
+        /// <summary>
+        /// 从 header 检测 codec
+        /// </summary>
+        private string? DetectCodecFromHeader(byte[] header)
+        {
+            if (header == null || header.Length < 10)
+                return null;
+
+            // 查找 NAL unit
+            for (int i = 0; i < header.Length - 4; i++)
+            {
+                if (header[i] == 0x00 && header[i + 1] == 0x00)
+                {
+                    int offset = 0;
+                    if (header[i + 2] == 0x01)
+                        offset = 3;
+                    else if (header[i + 2] == 0x00 && header[i + 3] == 0x01)
+                        offset = 4;
+                    else
+                        continue;
+
+                    if (i + offset >= header.Length)
+                        continue;
+
+                    byte nal = header[i + offset];
+                    
+                    // H.265/HEVC: NAL type 在低 6 位
+                    if ((nal & 0x7E) == 0x40 || (nal & 0x7E) == 0x42 || (nal & 0x7E) == 0x44)
+                        return "hevc";
+                    
+                    // H.264: NAL type 在低 5 位
+                    if ((nal & 0x1F) is 5 or 7 or 8)
+                        return "h264";
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 更新 header（用于 profile 切换时）
+        /// </summary>
+        public void UpdateHeader(byte[] newHeader)
+        {
+            lock (_lock)
+            {
+                if (_type == TYPE_VIDEO)
+                {
+                    Header = newHeader;
+                    _logger.LogDebug("AVStream header 已更新，长度={Length}", newHeader.Length);
+                }
+            }
+        }
 
         private bool TryReplayLastFrame()
         {

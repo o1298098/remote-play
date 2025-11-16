@@ -32,14 +32,21 @@ namespace RemotePlay.Models.Streaming
         public double RecentFps { get; init; }
         public double AverageFrameIntervalMs { get; init; }
         public DateTime LastFrameTimestampUtc { get; init; }
+        
+        // ✅ 流统计和码率（参考 chiaki-ng 的 ChiakiStreamStats）
+        public ulong TotalFrames { get; init; } // 总帧数
+        public ulong TotalBytes { get; init; } // 总字节数
+        public double MeasuredBitrateMbps { get; init; } // 测量码率（Mbps）
     }
 
     public readonly record struct StreamPipelineStats
     {
         public int VideoReceived { get; init; }
         public int VideoLost { get; init; }
+        public int VideoTimeoutDropped { get; init; } // ✅ 视频帧超时丢弃数（参考 chiaki-ng）
         public int AudioReceived { get; init; }
         public int AudioLost { get; init; }
+        public int AudioTimeoutDropped { get; init; } // ✅ 音频帧超时丢弃数（参考 chiaki-ng）
         public int PendingPackets { get; init; }
         public int TotalIdrRequests { get; init; }
         public int IdrRequestsRecent { get; init; }

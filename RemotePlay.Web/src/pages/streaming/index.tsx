@@ -70,6 +70,7 @@ export default function Streaming() {
     connectionStats,
     isStatsMonitoringEnabled,
     setStatsMonitoring,
+    refreshStream,
   } = useStreamingConnection({
     hostId,
     deviceName,
@@ -103,6 +104,7 @@ export default function Streaming() {
             navigate('/devices')
           }}
           isStatsEnabled={isStatsMonitoringEnabled}
+          onRefresh={isConnected ? () => { refreshStream() } : undefined}
         />
         <StreamingLoading />
       </div>
@@ -119,6 +121,7 @@ export default function Streaming() {
           }}
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
+          onRefresh={isConnected ? () => { refreshStream() } : undefined}
         />
       )}
 

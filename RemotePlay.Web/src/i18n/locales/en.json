@@ -440,7 +440,13 @@
         "connectedTitle": "Connected",
         "connectedDescription": "Video stream connected",
         "connectFailedTitle": "Connection failed",
-        "controllerFailedTitle": "Controller connection failed"
+        "controllerFailedTitle": "Controller connection failed",
+        "streamFrozenTitle": "Playback frozen detected",
+        "streamFrozenDescription": "Frozen frames: {{frozen}}, recovered: {{recovered}}. Requested a new keyframe.",
+        "streamRecoveredTitle": "Playback recovering",
+        "streamRecoveredDescription": "Recovered {{recovered}} frames. Video should resume shortly.",
+        "streamRateLimitedTitle": "Keyframe request throttled",
+        "streamRateLimitedDescription": "Too many IDR requests in {{window}}s ({{requested}}). Waiting before requesting again."
       },
       "errors": {
         "missingDeviceInfo": "Device information is missing",

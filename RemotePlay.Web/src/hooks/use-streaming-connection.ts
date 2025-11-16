@@ -114,13 +114,14 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const initialKeyframeRequestedRef = useRef<boolean>(false)
   const remotePlaySessionIdRef = useRef<string | null>(null)
   const lastStreamHealthRef = useRef<{ frozen: number; recovered: number } | null>(null)
-  const lastHealthToastFrozenRef = useRef<number | null>(null)
-  const lastHealthToastRecoveredRef = useRef<number | null>(null)
   const healthCheckInFlightRef = useRef<boolean>(false)
   const lastHealthCheckAtRef = useRef<number>(0)
+  const lastNeutralHealthKeyframeRef = useRef<number>(0)
 
   const KEYFRAME_REQUEST_COOLDOWN_MS = 8000
   const HEALTH_CHECK_COOLDOWN_MS = 3000
+  // 过去用于自动触发 neutral 关键帧的冷却时间（已不再使用）
+  // const HEALTH_NEUTRAL_KEYFRAME_COOLDOWN_MS = 5000
 
   const requestKeyframe = useCallback(
     (reason: string) => {
@@ -203,6 +204,32 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     [KEYFRAME_REQUEST_COOLDOWN_MS, webrtcSessionId]
   )
 
+  // 向外暴露的手动刷新方法（请求关键帧）
+  const refreshStream = useCallback(() => {
+    const ok = requestKeyframe('manual-refresh')
+    if (!ok) {
+      try {
+        toast({
+          title: t('streaming.refresh.unavailableTitle', '无法刷新'),
+          description: t('streaming.refresh.unavailableDesc', '当前会话不可用或仍在冷却中'),
+          variant: 'destructive',
+        })
+      } catch {
+        // ignore toast failure in environments without i18n/toast
+      }
+    } else {
+      try {
+        toast({
+          title: t('streaming.refresh.sentTitle', '已发送刷新请求'),
+          description: t('streaming.refresh.sentDesc', '请稍候，尝试恢复画面'),
+        })
+      } catch {
+        // ignore
+      }
+    }
+    return ok
+  }, [requestKeyframe, t, toast])
+
   const resolveWebrtcSessionId = useCallback(() => {
     if (webrtcSessionIdRef.current) {
       return webrtcSessionIdRef.current
@@ -230,7 +257,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   }, [remotePlaySessionId])
 
   const handleStreamHealthCheck = useCallback(
-    async (reason: string) => {
+    async (reason: string, context?: { forceNeutral?: boolean }) => {
       const streamSessionId = resolveRemotePlaySessionId()
       if (!streamSessionId) {
         return
@@ -245,12 +272,20 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         return
       }
 
+      const forceNeutral = context?.forceNeutral ?? false
+
       if (now - lastHealthCheckAtRef.current < HEALTH_CHECK_COOLDOWN_MS) {
         const snapshot = lastStreamHealthRef.current
         if (snapshot && snapshot.frozen > snapshot.recovered) {
-          if (requestKeyframe(`${reason}-cooldown`)) {
-            lastVideoActivityRef.current = now
-          }
+          // 冻结时不再自动请求关键帧，只记录最后活动时间用于节流
+          lastVideoActivityRef.current = now
+          return
+        }
+
+        if (forceNeutral) {
+          // 冷却期内的 neutral 不再自动请求关键帧
+          // 仅更新最后活动时间，避免短时间内重复触发
+          lastVideoActivityRef.current = now
         }
         return
       }
@@ -265,72 +300,57 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         lastHealthCheckAtRef.current = Date.now()
         const health = response.data
         const previous = lastStreamHealthRef.current
+        
+        // 计算增量值（基于之前存储的值）
+        const deltaFrozen = previous ? Math.max(0, health.totalFrozenFrames - previous.frozen) : 0
+        const deltaRecovered = previous ? Math.max(0, health.totalRecoveredFrames - previous.recovered) : 0
+        
         lastStreamHealthRef.current = {
           frozen: health.totalFrozenFrames,
           recovered: health.totalRecoveredFrames,
         }
 
-        if (health.totalFrozenFrames > health.totalRecoveredFrames) {
-          console.warn('⚠️ 流健康检测到画面冻结，将请求关键帧', {
+        const hasNewFreeze = deltaFrozen > 0
+        const hasNewRecovery = deltaRecovered > 0
+
+        if (hasNewFreeze || health.totalFrozenFrames > health.totalRecoveredFrames) {
+          console.warn('⚠️ 流健康检测到画面冻结（已禁用自动关键帧请求）', {
             reason,
             totalFrozenFrames: health.totalFrozenFrames,
             totalRecoveredFrames: health.totalRecoveredFrames,
+            deltaFrozenFrames: deltaFrozen,
           })
 
-          if (health.totalFrozenFrames !== lastHealthToastFrozenRef.current) {
-            toast({
-              title: t('streaming.connection.toast.streamFrozenTitle'),
-              description: t('streaming.connection.toast.streamFrozenDescription', {
-                frozen: health.totalFrozenFrames,
-                recovered: health.totalRecoveredFrames,
-              }),
-              variant: 'destructive',
-            })
-            lastHealthToastFrozenRef.current = health.totalFrozenFrames
-          }
-
-          if (requestKeyframe(`${reason}-health-frozen`)) {
-            lastVideoActivityRef.current = Date.now()
-          }
+          // 不再自动请求关键帧，仅更新活动时间
+          lastVideoActivityRef.current = Date.now()
           return
         }
 
         let lastHandled = false
-        if (
-          previous &&
-          health.totalRecoveredFrames > previous.recovered &&
-          health.totalRecoveredFrames !== lastHealthToastRecoveredRef.current
-        ) {
+        if (hasNewRecovery || (previous && health.totalRecoveredFrames > previous.recovered)) {
           console.log('✅ 流媒体帧已恢复', {
             reason,
             totalRecoveredFrames: health.totalRecoveredFrames,
             totalFrozenFrames: health.totalFrozenFrames,
+            deltaRecoveredFrames: deltaRecovered,
           })
-          toast({
-            title: t('streaming.connection.toast.streamRecoveredTitle'),
-            description: t('streaming.connection.toast.streamRecoveredDescription', {
-              recovered: health.totalRecoveredFrames,
-            }),
-          })
-          lastHealthToastRecoveredRef.current = health.totalRecoveredFrames
           lastHandled = true
           lastVideoActivityRef.current = Date.now()
         }
 
-        if (!lastHandled) {
-          if (requestKeyframe(`${reason}-health-neutral`)) {
-            lastVideoActivityRef.current = Date.now()
-          }
+        if (!lastHandled && (health.totalFrozenFrames > 0 || forceNeutral)) {
+          // 不再自动请求 neutral 关键帧，仅更新时间与 neutral 时间戳
+          lastVideoActivityRef.current = Date.now()
+          lastNeutralHealthKeyframeRef.current = now
         }
       } catch (error) {
         lastHealthCheckAtRef.current = Date.now()
-        console.warn('⚠️ 获取流健康状态失败，回退到关键帧请求', error)
+        console.warn('⚠️ 获取流健康状态失败（已禁用自动关键帧回退）', error)
         if (error instanceof Error && /不存在或已结束/.test(error.message)) {
           remotePlaySessionIdRef.current = null
         }
-        if (requestKeyframe(`${reason}-health-fallback`)) {
-          lastVideoActivityRef.current = Date.now()
-        }
+        // 不再自动回退请求关键帧，仅更新活动时间
+        lastVideoActivityRef.current = Date.now()
       } finally {
         healthCheckInFlightRef.current = false
       }
@@ -1776,7 +1796,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         return
       }
 
-      void handleStreamHealthCheck('monitor-stall')
+      void handleStreamHealthCheck('monitor-stall', { forceNeutral: true })
     }
 
     keyframeMonitorIntervalRef.current = window.setInterval(checkStall, 1000)
@@ -1857,6 +1877,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     connectionStats,
     isStatsMonitoringEnabled: isStatsEnabled,
     setStatsMonitoring,
+    refreshStream,
   }
 }
 

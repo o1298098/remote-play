@@ -102,10 +102,33 @@ namespace RemotePlay.Controllers
                 ConsecutiveFailures = snapshot.ConsecutiveFailures,
                 TotalRecoveredFrames = snapshot.TotalRecoveredFrames,
                 TotalFrozenFrames = snapshot.TotalFrozenFrames,
+                TotalDroppedFrames = snapshot.TotalDroppedFrames,
+                DeltaRecoveredFrames = snapshot.DeltaRecoveredFrames,
+                DeltaFrozenFrames = snapshot.DeltaFrozenFrames,
+                DeltaDroppedFrames = snapshot.DeltaDroppedFrames,
+                RecentWindowSeconds = snapshot.RecentWindowSeconds,
+                RecentSuccessFrames = snapshot.RecentSuccessFrames,
+                RecentRecoveredFrames = snapshot.RecentRecoveredFrames,
+                RecentFrozenFrames = snapshot.RecentFrozenFrames,
+                RecentDroppedFrames = snapshot.RecentDroppedFrames,
+                RecentFps = snapshot.RecentFps,
+                AverageFrameIntervalMs = snapshot.AverageFrameIntervalMs,
+                LastFrameTimestampUtc = snapshot.LastFrameTimestampUtc == DateTime.MinValue ? null : snapshot.LastFrameTimestampUtc,
                 VideoReceived = stats.VideoReceived,
                 VideoLost = stats.VideoLost,
                 AudioReceived = stats.AudioReceived,
-                AudioLost = stats.AudioLost
+                AudioLost = stats.AudioLost,
+                PendingPackets = stats.PendingPackets,
+                TotalIdrRequests = stats.TotalIdrRequests,
+                IdrRequestsRecent = stats.IdrRequestsRecent,
+                IdrRequestWindowSeconds = stats.IdrRequestWindowSeconds,
+                LastIdrRequestUtc = stats.LastIdrRequestUtc,
+                FecAttempts = stats.FecAttempts,
+                FecSuccess = stats.FecSuccess,
+                FecFailures = stats.FecFailures,
+                FecSuccessRate = stats.FecSuccessRate,
+                FrameOutputFps = stats.FrameOutputFps,
+                FrameIntervalMs = stats.FrameIntervalMs
             };
 
             return Ok(new ApiSuccessResponse<StreamHealthDto>
@@ -125,10 +148,33 @@ namespace RemotePlay.Controllers
         public int ConsecutiveFailures { get; set; }
         public int TotalRecoveredFrames { get; set; }
         public int TotalFrozenFrames { get; set; }
+        public int TotalDroppedFrames { get; set; }
+        public int DeltaRecoveredFrames { get; set; }
+        public int DeltaFrozenFrames { get; set; }
+        public int DeltaDroppedFrames { get; set; }
+        public int RecentWindowSeconds { get; set; }
+        public int RecentSuccessFrames { get; set; }
+        public int RecentRecoveredFrames { get; set; }
+        public int RecentFrozenFrames { get; set; }
+        public int RecentDroppedFrames { get; set; }
+        public double RecentFps { get; set; }
+        public double AverageFrameIntervalMs { get; set; }
+        public DateTime? LastFrameTimestampUtc { get; set; }
         public int VideoReceived { get; set; }
         public int VideoLost { get; set; }
         public int AudioReceived { get; set; }
         public int AudioLost { get; set; }
+        public int PendingPackets { get; set; }
+        public int TotalIdrRequests { get; set; }
+        public int IdrRequestsRecent { get; set; }
+        public int IdrRequestWindowSeconds { get; set; }
+        public DateTime? LastIdrRequestUtc { get; set; }
+        public int FecAttempts { get; set; }
+        public int FecSuccess { get; set; }
+        public int FecFailures { get; set; }
+        public double FecSuccessRate { get; set; }
+        public double FrameOutputFps { get; set; }
+        public double FrameIntervalMs { get; set; }
     }
 }
 

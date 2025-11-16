@@ -2,7 +2,8 @@ using Microsoft.Extensions.Logging;
 using RemotePlay.Models.PlayStation;
 using RemotePlay.Models.Streaming;
 using RemotePlay.Services.Streaming.AV;
-using RemotePlay.Services.Streaming.AV;
+using RemotePlay.Services.Streaming.Quality;
+using RemotePlay.Services.Streaming.Emergency;
 using RemotePlay.Utils.Crypto;
 using System;
 using System.Collections.Concurrent;
@@ -81,6 +82,7 @@ namespace RemotePlay.Services.Streaming
         private uint _tagRemote = 0;
         private bool _isReady = false;
         private bool _isStopping = false;
+        private bool _isReconnecting = false; // ✅ 标记是否正在进行流重置/重连
 
         // 加密
         private StreamECDH? _ecdh;
@@ -112,8 +114,21 @@ namespace RemotePlay.Services.Streaming
         private FeedbackSenderService? _feedbackSender;
         private CongestionControlService? _congestionControl;
         
+        // ✅ 自适应流管理器
+        private AdaptiveStreamManager? _adaptiveStreamManager;
+        
+        // ✅ Emergency 恢复服务（参考 chiaki-ng）
+        private EmergencyRecoveryService? _emergencyRecovery;
+        
         // 心跳循环任务
         private Task? _heartbeatLoopTask;
+        
+        // 长时间卡顿检测任务
+        private Task? _stallCheckTask;
+        
+        // ✅ 数据包接收监控（用于检测无数据包情况）
+        private DateTime _lastPacketReceivedTime = DateTime.MinValue;
+        private readonly object _packetReceiveLock = new();
         
         // 断开连接回调
         private Func<Task>? _onDisconnectCallback;
@@ -130,13 +145,23 @@ namespace RemotePlay.Services.Streaming
         private StreamHealthSnapshot _healthSnapshot = default;
         private StreamPipelineStats _lastPipelineStats = default;
         private int _consecutiveSevereFailures = 0;
+        private int _consecutiveSuccessFrames = 0; // ✅ 连续成功帧数（用于更严格的流健康恢复判断）
+        private int _lastFallbackFrameIndex = -1; // ✅ 最后一次 fallback 的帧索引（用于判断是否真正恢复）
+        private DateTime _lastFallbackTime = DateTime.MinValue; // ✅ 最后一次 fallback 的时间（用于判断是否真正恢复）
         private DateTime _lastDegradeAction = DateTime.MinValue;
         private DateTime _lastKeyframeRequest = DateTime.MinValue;
-        private readonly TimeSpan _keyframeRequestCooldown = TimeSpan.FromSeconds(2);
+		private readonly TimeSpan _keyframeRequestCooldown = TimeSpan.FromSeconds(1.0); // 冷却时间 1 秒，避免过度请求
         private readonly TimeSpan _idrMetricsWindow = TimeSpan.FromSeconds(30);
         private readonly Queue<DateTime> _idrRequestHistory = new();
         private readonly object _idrMetricsLock = new();
         private int _totalIdrRequests = 0;
+        
+        // ✅ 流健康恢复阈值（需要连续成功多次才认为恢复）
+        private const int RECOVERY_SUCCESS_THRESHOLD = 10; // ✅ 增加到 10 帧，更严格的恢复判断
+        private const int RECOVERY_FRAME_INDEX_THRESHOLD = 3; // ✅ 需要在 fallback 后至少处理 3 个新帧才认为恢复
+        private static readonly TimeSpan RECOVERY_MIN_DURATION = TimeSpan.FromSeconds(2); // ✅ 需要至少 2 秒的稳定时间才认为恢复
+        // ✅ 当 cipher 未就绪时延迟发送 IDR 的挂起标记
+        private bool _idrPending = false;
 
         #endregion
 
@@ -202,7 +227,25 @@ namespace RemotePlay.Services.Streaming
                 GetPacketStats        // 获取包统计回调（可选）
             );
 
-			}
+            // ✅ 初始化 AdaptiveStreamManager
+            _adaptiveStreamManager = new AdaptiveStreamManager(
+                _loggerFactory.CreateLogger<AdaptiveStreamManager>());
+
+            // 将 manager 传递给 AVHandler
+            _avHandler.SetAdaptiveStreamManager(_adaptiveStreamManager, OnProfileSwitched);
+
+            // ✅ 设置请求关键帧回调（用于超时恢复）
+            _avHandler.SetRequestKeyframeCallback(RequestKeyframeAsync);
+
+            // ✅ 初始化 EmergencyRecoveryService（参考 chiaki-ng）
+            _emergencyRecovery = new EmergencyRecoveryService(
+                _loggerFactory.CreateLogger<EmergencyRecoveryService>(),
+                ReconnectTakionAsync,  // 重建 Takion 连接回调
+                ResetStreamStateAsync, // 重置流状态回调
+                OnEmergencyRecoveryEvent, // 恢复事件回调
+                RequestKeyframeAsync // 请求关键帧回调
+            );
+        }
 
         #endregion
 
@@ -245,12 +288,13 @@ namespace RemotePlay.Services.Streaming
             }
             
             _isStopping = true;
+            _isReconnecting = false; // ✅ 清除重连标志
             _logger.LogInformation("Stopping RPStream");
 
             try
             {
-                // ✅ 先停止心跳循环
-                _isReady = false; // 停止心跳循环
+                // ✅ 先停止心跳循环和卡顿检测任务
+                _isReady = false; // 停止心跳循环和卡顿检测任务
                 
                 // ✅ 先停止 Feedback 和 Congestion 服务
                 if (_feedbackSender != null)
@@ -280,12 +324,20 @@ namespace RemotePlay.Services.Streaming
                 _logger.LogWarning(ex, "Error during disconnect");
             }
 
-            // 等待接收循环退出（最多等待 1 秒）
-            if (_receiveLoopTask != null)
+            // ✅ 等待所有任务退出（最多等待 1 秒）
+            var tasksToWait = new List<Task>();
+            if (_receiveLoopTask != null && !_receiveLoopTask.IsCompleted)
+                tasksToWait.Add(_receiveLoopTask);
+            if (_heartbeatLoopTask != null && !_heartbeatLoopTask.IsCompleted)
+                tasksToWait.Add(_heartbeatLoopTask);
+            if (_stallCheckTask != null && !_stallCheckTask.IsCompleted)
+                tasksToWait.Add(_stallCheckTask);
+            
+            if (tasksToWait.Count > 0)
             {
                 try
                 {
-                    await Task.WhenAny(_receiveLoopTask, Task.Delay(1000));
+                    await Task.WhenAny(Task.WhenAll(tasksToWait), Task.Delay(1000));
                 }
                 catch { }
             }
@@ -380,7 +432,8 @@ namespace RemotePlay.Services.Streaming
         public void SendCorrupt(int start, int end)
         {
             var data = ProtoHandler.CorruptFrame(start, end);
-            SendData(data, channel: 1, flag: 2, proto: true);
+			// 与 chiaki-ng 对齐：CORRUPTFRAME 使用 flag=1, channel=2
+			SendData(data, channel: 2, flag: 1, proto: true);
         }
 
         /// <summary>
@@ -651,10 +704,46 @@ namespace RemotePlay.Services.Streaming
                         break;
                     }
                     
-                    var result = await _udpClient.ReceiveAsync(_cancellationToken);
-                    if (result.Buffer != null && result.Buffer.Length > 0)
+                    // ✅ 关键修复：添加超时机制防止 ReceiveAsync 无限阻塞
+                    // 使用 Task.WhenAny 实现超时，防止网络异常时接收循环卡死
+                    var receiveTask = _udpClient.ReceiveAsync(_cancellationToken).AsTask();
+                    var timeoutTask = Task.Delay(5000, _cancellationToken); // 5秒超时
+                    var completedTask = await Task.WhenAny(receiveTask, timeoutTask);
+                    
+                    if (completedTask == timeoutTask)
                     {
-                        HandleReceivedData(result.Buffer);
+                        // 超时：检查是否真的卡死（可能是网络问题）
+                        // 如果正在停止，直接退出
+                        if (_isStopping || _cancellationToken.IsCancellationRequested)
+                        {
+                            break;
+                        }
+                        
+                        // ✅ 记录超时但继续重试（允许网络临时中断）
+                        if (_isReady) // 只在流就绪后记录，避免初始化阶段日志过多
+                        {
+                            _logger.LogWarning("UDP receive timeout (5s), continuing to retry...");
+                        }
+                        
+                        // ✅ 不更新最后数据包接收时间，让卡顿检测发现无数据包
+                        // 这样 StartStallCheckTask 可以检测到长时间无数据包并触发恢复
+                        
+                        continue;
+                    }
+                    
+                    // 正常接收到数据
+                    if (receiveTask.IsCompletedSuccessfully)
+                    {
+                        var result = await receiveTask;
+                        if (result.Buffer != null && result.Buffer.Length > 0)
+                        {
+                            HandleReceivedData(result.Buffer);
+                        }
+                    }
+                    else
+                    {
+                        // 如果接收任务失败，会由外层 catch 处理
+                        await receiveTask;
                     }
                 }
                 catch (OperationCanceledException)
@@ -666,6 +755,19 @@ namespace RemotePlay.Services.Streaming
                     // UDP 客户端已被释放，退出循环
                     _logger.LogDebug("UDP client disposed, exiting receive loop");
                     break;
+                }
+                catch (SocketException ex)
+                {
+                    // ✅ 处理 Socket 异常（网络问题）
+                    if (_isStopping)
+                    {
+                        _logger.LogDebug("Stopping, exiting receive loop");
+                        break;
+                    }
+                    
+                    // Socket 错误：等待后重试
+                    _logger.LogWarning(ex, "Socket error in receive loop (error={ErrorCode}), retrying in 500ms", ex.SocketErrorCode);
+                    await Task.Delay(500, _cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -688,6 +790,12 @@ namespace RemotePlay.Services.Streaming
         /// </summary>
         private void HandleReceivedData(byte[] data)
         {
+            // ✅ 更新最后数据包接收时间（用于监控无数据包情况）
+            lock (_packetReceiveLock)
+            {
+                _lastPacketReceivedTime = DateTime.UtcNow;
+            }
+            
             // 检查是否为 AV 包
             if (data.Length > 0 && Packet.IsAv(data[0]))
             {
@@ -950,6 +1058,13 @@ namespace RemotePlay.Services.Streaming
                     break;
 
                 case Protos.TakionMessage.Types.PayloadType.Disconnect:
+                    // ✅ 如果正在进行流重置，忽略 Disconnect 消息（不释放 session）
+                    // 因为流重置期间可能会收到 Disconnect，但这是正常的，不应该释放 session
+                    if (_isReconnecting)
+                    {
+                        _logger.LogInformation("DISCONNECT received during stream reconnection, ignoring (session preserved)");
+                        break;
+                    }
                     _logger.LogWarning("DISCONNECT received from PS5, handling disconnect...");
                     _ = Task.Run(async () => await HandleDisconnectAsync());
                     break;
@@ -1284,6 +1399,24 @@ namespace RemotePlay.Services.Streaming
 
             // 设置就绪状态
             SetReady();
+
+            // ✅ 如果之前有挂起的 IDR 请求，则在 cipher 就绪后立即发送一次
+            if (_idrPending)
+            {
+                _idrPending = false;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(100, _cancellationToken);
+                        await SendIdrRequestAsync();
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }, _cancellationToken);
+            }
         }
         
         /// <summary>
@@ -1299,14 +1432,28 @@ namespace RemotePlay.Services.Streaming
                 // 启动 CongestionControl（66ms 间隔）
                 _congestionControl?.Start();
                 
-                // ✅ 关键修复：发送 IDRREQUEST 请求 PS5 发送 IDR 关键帧
-                // PS5 默认不发送 IDR 帧，必须由客户端主动请求
-              //  _ = Task.Run(async () =>
-              //  {
-              //      await Task.Delay(500);  // 等待服务稳定
-              //      _logger.LogInformation("🎬 开始请求 IDR 关键帧...");
-              //      await StartIdrRequesterAsync();
-              //  });
+                // ✅ 对齐 chiaki-ng：启动周期性 IDR 请求器
+                // 目的：确保定期获得关键帧，避免长时间 P 帧累积导致的恢复困难
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(500, _cancellationToken); // 等待服务稳定
+                        if (!_cancellationToken.IsCancellationRequested)
+                        {
+                            _logger.LogInformation("🎬 启动 IDR 请求循环（对齐 chiaki-ng）");
+                            await StartIdrRequesterAsync();
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // ignore
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "IDR 请求循环启动失败");
+                    }
+                }, _cancellationToken);
             }
             catch (Exception ex)
             {
@@ -1320,6 +1467,19 @@ namespace RemotePlay.Services.Streaming
         /// </summary>
         public async Task RequestKeyframeAsync()
         {
+            // ✅ 添加冷却机制：防止频繁请求关键帧（PS5 可能忽略过于频繁的请求）
+            var now = DateTime.UtcNow;
+            if (_lastKeyframeRequest != DateTime.MinValue && 
+                (now - _lastKeyframeRequest) < _keyframeRequestCooldown)
+            {
+                if (_logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug("⏱️ 关键帧请求冷却中，忽略请求（距离上次请求 {Elapsed}ms < {Cooldown}ms）",
+                        (now - _lastKeyframeRequest).TotalMilliseconds, _keyframeRequestCooldown.TotalMilliseconds);
+                }
+                return;
+            }
+            
             await SendIdrRequestAsync();
         }
         
@@ -1333,6 +1493,12 @@ namespace RemotePlay.Services.Streaming
                 // ✅ 检查前置条件：必须有 cipher（GMAC 需要）
                 if (_cipher == null)
                 {
+                    // 将 IDR 请求标记为挂起，待 cipher 初始化后立即发送一次
+                    _idrPending = true;
+                    if (_logger.IsEnabled(LogLevel.Debug))
+                    {
+                        _logger.LogDebug("⏱️ IDR 请求已挂起：cipher 未初始化");
+                    }
                     return;
                 }
                 
@@ -1348,6 +1514,8 @@ namespace RemotePlay.Services.Streaming
                 // 使用 SendData 方法，flag=1, channel=1, proto=false
                 SendData(idr, flag: 1, channel: 1, proto: false);
                 RecordIdrRequest();
+                
+                _logger.LogDebug("📤 IDR 请求已发送到 PS5");
                 
                 await Task.CompletedTask;  // 保持异步方法签名
             }
@@ -1484,7 +1652,7 @@ namespace RemotePlay.Services.Streaming
         private (ushort, ushort) GetPacketStats()
         {
             if (_avHandler == null)
-                return (0, 0);
+            return (0, 0);
 
             var stats = _avHandler.GetAndResetStats();
             _lastPipelineStats = stats;
@@ -1559,23 +1727,102 @@ namespace RemotePlay.Services.Streaming
                 ConsecutiveFailures = evt.ConsecutiveFailures
             };
 
+            // ✅ 转发到 EmergencyRecoveryService（参考 chiaki-ng）
+            _emergencyRecovery?.OnStreamHealthEvent(evt);
+
+            // ✅ 保留原有的轻度恢复逻辑（用于快速恢复）
             if (evt.Status == FrameProcessStatus.Success || evt.Status == FrameProcessStatus.Recovered)
             {
-                _consecutiveSevereFailures = 0;
+                // ✅ 增加连续成功帧数
+                _consecutiveSuccessFrames++;
+                
+                // ✅ 流健康恢复：需要满足多个条件才认为恢复（避免误判）
+                // 1. 连续成功帧数 >= 阈值
+                // 2. 在 fallback 后至少处理了足够的新帧（frame index > fallback frame index + 阈值）
+                // 3. 距离最后一次 fallback 至少过了最小恢复时间
+                bool hasRecoveryFrames = _lastFallbackFrameIndex < 0 || 
+                    (evt.FrameIndex > _lastFallbackFrameIndex + RECOVERY_FRAME_INDEX_THRESHOLD);
+                bool hasRecoveryDuration = _lastFallbackTime == DateTime.MinValue || 
+                    (DateTime.UtcNow - _lastFallbackTime) >= RECOVERY_MIN_DURATION;
+                
+                if (_consecutiveSevereFailures > 0 && 
+                    _consecutiveSuccessFrames >= RECOVERY_SUCCESS_THRESHOLD &&
+                    hasRecoveryFrames && 
+                    hasRecoveryDuration)
+                {
+                    // ✅ 流真正恢复：禁用持续拥塞模式，恢复正常拥塞报告
+                    _congestionControl?.DisableSustainedCongestion();
+                    _logger.LogInformation("✅ Stream health recovered (consecutive success={Success}, frame={Frame}, fallback frame={FallbackFrame}, duration={Duration}ms), disabling sustained congestion mode", 
+                        _consecutiveSuccessFrames, evt.FrameIndex, _lastFallbackFrameIndex, 
+                        _lastFallbackTime != DateTime.MinValue ? (DateTime.UtcNow - _lastFallbackTime).TotalMilliseconds : 0);
+                    
+                    // ✅ 恢复后主动请求关键帧，确保流真正恢复
+                    if (DateTime.UtcNow - _lastKeyframeRequest > _keyframeRequestCooldown)
+                    {
+                        _ = RequestKeyframeAsync();
+                    }
+                    
+                    _consecutiveSevereFailures = 0;
+                    _consecutiveSuccessFrames = 0; // 重置连续成功计数
+                    _lastFallbackFrameIndex = -1; // 重置 fallback 帧索引
+                    _lastFallbackTime = DateTime.MinValue; // 重置 fallback 时间
+                }
+                else if (_consecutiveSevereFailures > 0)
+                {
+                    // ✅ 部分恢复：记录但不禁用持续拥塞模式（需要更多成功帧或时间）
+                    if (_consecutiveSuccessFrames % 5 == 0) // 每 5 帧记录一次，避免日志过多
+                    {
+                        _logger.LogDebug("Stream health improving (consecutive success={Success}/{Threshold}, frame={Frame}, fallback frame={FallbackFrame}, has frames={HasFrames}, has duration={HasDuration}), keeping sustained congestion mode", 
+                            _consecutiveSuccessFrames, RECOVERY_SUCCESS_THRESHOLD, evt.FrameIndex, _lastFallbackFrameIndex, 
+                            hasRecoveryFrames, hasRecoveryDuration);
+                    }
+                }
+                else
+                {
+                    // ✅ 流正常：重置连续成功计数和 fallback 信息
+                    _consecutiveSuccessFrames = 0;
+                    _lastFallbackFrameIndex = -1;
+                    _lastFallbackTime = DateTime.MinValue;
+                }
                 return;
             }
 
             if (evt.Status is FrameProcessStatus.Frozen or FrameProcessStatus.Dropped)
             {
+                // ✅ 失败帧：重置连续成功计数，增加连续失败计数
+                _consecutiveSuccessFrames = 0;
                 _consecutiveSevereFailures = evt.ConsecutiveFailures;
+                
+                // ✅ 记录 fallback 信息（用于判断是否真正恢复）
+                // 所有 Frozen/Dropped 状态都可能是由 fallback 触发的，记录帧索引和时间
+                _lastFallbackFrameIndex = evt.FrameIndex;
+                _lastFallbackTime = DateTime.UtcNow;
+                
+                // ✅ 被动降档触发：连续失败 >= 3 次时，启用持续拥塞模式以触发主机降档
                 if (_consecutiveSevereFailures >= 3)
                 {
-                    _ = TriggerEmergencyRecoveryAsync(evt);
+                    if (!_congestionControl?.IsSustainedCongestionEnabled() ?? false)
+                    {
+                        // ✅ 启用持续拥塞模式：持续报告高丢失（received=5, lost=5）以触发主机被动降档
+                        _congestionControl?.EnableSustainedCongestion(received: 5, lost: 5);
+                        _logger.LogWarning("⚠️ Stream degradation detected (consecutive={Consecutive}, frame={Frame}), enabling sustained congestion mode to trigger passive degradation", 
+                            _consecutiveSevereFailures, evt.FrameIndex);
+                    }
+                    
+                    // 轻度恢复：连续失败 2-4 次时触发快速恢复（不重建连接）
+                    // 降低阈值，更早触发关键帧请求
+                    if (_consecutiveSevereFailures >= 2 && _consecutiveSevereFailures < 5)
+                    {
+                        _ = TriggerLightRecoveryAsync(evt);
+                    }
                 }
             }
         }
 
-        private async Task TriggerEmergencyRecoveryAsync(StreamHealthEvent evt)
+        /// <summary>
+        /// 轻度恢复（快速恢复，不重建连接）
+        /// </summary>
+        private async Task TriggerLightRecoveryAsync(StreamHealthEvent evt)
         {
             var now = DateTime.UtcNow;
             if (now - _lastDegradeAction < TimeSpan.FromSeconds(5))
@@ -1632,8 +1879,30 @@ namespace RemotePlay.Services.Streaming
                 return;
             }
 
-            // 提取视频和音频头
-            var rawVideoHeader = streamInfo.Resolution?.FirstOrDefault()?.VideoHeader?.ToByteArray() ?? Array.Empty<byte>();
+            // ✅ 解析所有 resolutions 并设置到 AdaptiveStreamManager
+            var profiles = new List<VideoProfile>();
+            if (streamInfo.Resolution != null && streamInfo.Resolution.Count > 0)
+            {
+                for (int i = 0; i < streamInfo.Resolution.Count; i++)
+                {
+                    var resolution = streamInfo.Resolution[i];
+                    var header = resolution.VideoHeader?.ToByteArray() ?? Array.Empty<byte>();
+                    if (header.Length > 0)
+                    {
+                        var profile = new VideoProfile(i, (int)resolution.Width, (int)resolution.Height, header);
+                        profiles.Add(profile);
+                    }
+                }
+            }
+
+            // 设置到 AdaptiveStreamManager
+            if (_adaptiveStreamManager != null && profiles.Count > 0)
+            {
+                _adaptiveStreamManager.SetProfiles(profiles);
+            }
+
+            // 提取第一个视频和音频头（用于向后兼容）
+            var rawVideoHeader = profiles.Count > 0 ? profiles[0].Header : Array.Empty<byte>();
             var audioHeader = streamInfo.AudioHeader?.ToByteArray() ?? Array.Empty<byte>();
 
             // 视频 header 需要添加 FFMPEG_PADDING（64字节）
@@ -1677,6 +1946,50 @@ namespace RemotePlay.Services.Streaming
             
             // ✅ 设置就绪状态
             SetReady();
+            
+            // ✅ 启动兜底：STREAMINFO 后延迟 200–300ms 主动请求一次关键帧
+            // 目的：确保启动阶段快速获得首个 IDR，避免初期黑屏/冻结
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(250, _cancellationToken);
+                    if (!_cancellationToken.IsCancellationRequested)
+                    {
+                        await RequestKeyframeAsync();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // ignore
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Initial IDR request fallback failed");
+                }
+            }, _cancellationToken);
+        }
+
+        /// <summary>
+        /// Profile 切换回调 - 当检测到 adaptive_stream_index 变化时调用
+        /// </summary>
+        private void OnProfileSwitched(VideoProfile newProfile)
+        {
+            if (_receiver == null || newProfile == null)
+                return;
+
+            try
+            {
+                _logger.LogInformation("🔄 Profile 切换: {Width}x{Height}, 更新 receiver header", 
+                    newProfile.Width, newProfile.Height);
+                
+                // 更新 receiver 的 header（带 padding）
+                _receiver.OnStreamInfo(newProfile.HeaderWithPadding, _cachedAudioHeader ?? Array.Empty<byte>());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 更新 receiver header 失败");
+            }
         }
         
         /// <summary>
@@ -1717,7 +2030,9 @@ namespace RemotePlay.Services.Streaming
             // 只在第一次设置就绪状态时启动，避免重复调用产生警告
             if (firstTimeReady)
             {
-            StartHeartbeatLoop();
+                StartHeartbeatLoop();
+                // ✅ 关键修复：启动长时间卡顿检测任务（用于检测串流卡死）
+                StartStallCheckTask();
             }
         }
         
@@ -1778,6 +2093,26 @@ namespace RemotePlay.Services.Streaming
                             if (consecutiveFailures >= 3)
                             {
                                 _logger.LogError(ex, "Heartbeat failed {Count} times consecutively", consecutiveFailures);
+                                
+                                // ✅ 关键修复：如果心跳连续失败超过 10 次，尝试恢复
+                                // 这可能是 UDP 客户端或网络出现了问题
+                                if (consecutiveFailures >= 10)
+                                {
+                                    _logger.LogWarning("⚠️ Heartbeat failed {Count} times consecutively, attempting recovery...", consecutiveFailures);
+                                    
+                                    // ✅ 检查 UDP 客户端状态
+                                    if (_udpClient == null || _remoteEndPoint == null)
+                                    {
+                                        _logger.LogError("❌ UDP client or remote endpoint is null, cannot recover heartbeat");
+                                        break; // 无法恢复，退出循环
+                                    }
+                                    
+                                    // ✅ 重置连续失败计数，继续尝试（可能是临时网络问题）
+                                    consecutiveFailures = 0;
+                                    
+                                    // ✅ 等待更长时间后重试
+                                    await Task.Delay(2000, _cancellationToken);
+                                }
                             }
                         }
                         
@@ -1966,6 +2301,255 @@ namespace RemotePlay.Services.Streaming
         {
             _ackCallback = callback;
             _ackCallbackTsn = tsn;
+        }
+
+        #endregion
+
+        #region Emergency Recovery Methods (参考 chiaki-ng)
+
+        /// <summary>
+        /// 重建 Takion 连接（参考 chiaki-ng: chiaki_stream_connection_run）
+        /// </summary>
+        private async Task<bool> ReconnectTakionAsync()
+        {
+            try
+            {
+                _logger.LogInformation("🔄 Reconnecting Takion connection...");
+
+                // ✅ 设置重连标志，防止 Disconnect 消息释放 session
+                _isReconnecting = true;
+
+                // ✅ 步骤 1: 重置状态（但保留 tag_remote）
+                var savedTagRemote = _tagRemote;
+                _isReady = false;
+                _cipher = null;
+                _ecdh = null;
+                _state = STATE_INIT;
+
+                // ✅ 步骤 2: 停止现有服务
+                if (_feedbackSender != null)
+                {
+                    await _feedbackSender.StopAsync();
+                }
+                if (_congestionControl != null)
+                {
+                    await _congestionControl.StopAsync();
+                }
+
+                // ✅ 步骤 3: 重新发送 INIT（参考 chiaki-ng: chiaki_takion_send_init）
+                _tagRemote = savedTagRemote; // 恢复 tag_remote
+                _tsn = 1; // 重置 TSN
+                SendInit();
+
+                // ✅ 步骤 4: 等待 INIT_ACK 和 COOKIE_ACK（最多等待 10 秒，增加超时时间以提高成功率）
+                // 注意：INIT_ACK 会设置 _tagRemote，然后发送 COOKIE，COOKIE_ACK 会触发 SendBig()
+                // 我们可以通过检查 _ecdh 是否已创建来判断是否收到了 COOKIE_ACK（因为 SendBig() 会创建 _ecdh）
+                var cookieAckReceived = false;
+                var startTime = DateTime.UtcNow;
+                
+                while (!cookieAckReceived && (DateTime.UtcNow - startTime).TotalSeconds < 10)
+                {
+                    await Task.Delay(100, _cancellationToken);
+                    // ✅ 检查是否已发送 BIG（通过检查 _ecdh 是否已创建）
+                    // SendBig() 会创建 _ecdh，而 SendBig() 是在 HandleCookieAck() 中调用的
+                    // 所以如果 _ecdh 不为 null，说明已收到 COOKIE_ACK
+                    if (_ecdh != null)
+                    {
+                        cookieAckReceived = true;
+                        _logger.LogInformation("✅ INIT_ACK and COOKIE_ACK received during reconnection: tagRemote={TagRemote}, ecdh created", _tagRemote);
+                    }
+                }
+
+                if (!cookieAckReceived)
+                {
+                    _logger.LogError("❌ Takion reconnection failed: INIT_ACK/COOKIE_ACK timeout (waited 10s, tagRemote={TagRemote}, ecdh={Ecdh})", 
+                        _tagRemote, _ecdh != null);
+                    _isReconnecting = false;
+                    return false;
+                }
+
+                // ✅ 步骤 6: 等待 BANG（最多等待 10 秒，增加超时时间以提高成功率）
+                var bangReceived = false;
+                startTime = DateTime.UtcNow;
+                while (!bangReceived && (DateTime.UtcNow - startTime).TotalSeconds < 10)
+                {
+                    await Task.Delay(100, _cancellationToken);
+                    if (_cipher != null && _isReady)
+                    {
+                        bangReceived = true;
+                        _logger.LogInformation("✅ BANG received during reconnection: cipher ready, isReady={IsReady}", _isReady);
+                    }
+                }
+
+                if (!bangReceived)
+                {
+                    _logger.LogError("❌ Takion reconnection failed: BANG timeout (waited 10s, cipher={Cipher}, isReady={IsReady})", 
+                        _cipher != null, _isReady);
+                    _isReconnecting = false;
+                    return false;
+                }
+
+                // ✅ 步骤 7: 重新设置 AVHandler 的 cipher（这会触发 worker 重新启动）
+                // 注意：HandleBang 可能已经设置了 cipher，但我们需要确保 AVHandler 知道
+                // 这很重要，因为 ResetStreamStateAsync 没有调用 Stop()，所以 worker 可能还在运行
+                // 但 cipher 被重置了，需要重新设置
+                if (_avHandler != null && _cipher != null && _receiver != null)
+                {
+                    _avHandler.SetCipher(_cipher);
+                    _logger.LogInformation("✅ AVHandler cipher reset after emergency recovery");
+                }
+
+                // ✅ 步骤 8: 重新启动 FeedbackSender 和 CongestionControl 服务
+                // 注意：HandleBang 可能已经启动了这些服务（如果它在等待循环中被调用）
+                // 但为了确保在紧急恢复后服务正常运行，我们显式检查并启动
+                if (_feedbackSender != null && _cipher != null)
+                {
+                    // Start() 方法有保护机制，如果已运行则不会重复启动
+                    _feedbackSender.Start();
+                    _logger.LogInformation("✅ FeedbackSender restarted after emergency recovery");
+                }
+                
+                if (_congestionControl != null && _cipher != null)
+                {
+                    // Start() 方法有保护机制，如果已运行则不会重复启动
+                    _congestionControl.Start();
+                    _logger.LogInformation("✅ CongestionControl restarted after emergency recovery");
+                }
+
+                _logger.LogInformation("✅ Takion reconnection successful (session and controller preserved)");
+                
+                // ✅ 清除重连标志
+                _isReconnecting = false;
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Takion reconnection exception");
+                
+                // ✅ 即使失败也要清除重连标志
+                _isReconnecting = false;
+                
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 重置流状态（参考 chiaki-ng: stream_connection 状态重置）
+        /// ⚠️ 注意：只重置流处理相关的状态，不影响会话和控制器
+        /// </summary>
+        private async Task ResetStreamStateAsync()
+        {
+            try
+            {
+                _logger.LogInformation("🔄 Resetting stream state (preserving session and controller)...");
+
+                // ✅ 重置 AVHandler 的内部状态（不清空队列，不停止 worker）
+                // 注意：不调用 Stop()，因为 Stop() 会停止 worker，影响后续处理
+                // 只重置健康状态和重排序队列，保持 worker 运行
+                if (_avHandler != null)
+                {
+                    // AVHandler 没有公开的 Reset 方法，我们只能通过重新设置 cipher 来触发状态重置
+                    // 但此时 cipher 可能为 null，所以我们需要在 ReconnectTakionAsync 成功后重新设置
+                    // 这里只清理缓存和重置统计信息
+                }
+
+                // ✅ 重置自适应流管理器
+                _adaptiveStreamManager?.Reset();
+
+                // ✅ 清理缓存（但保留 headers，因为重新设置 headers 会重置 AVStream）
+                // 注意：不清理 _cachedVideoHeader 和 _cachedAudioHeader，因为重新设置 headers 会重置 AVStream
+
+                // ✅ 重置统计信息
+                _consecutiveSevereFailures = 0;
+                _consecutiveSuccessFrames = 0; // ✅ 重置连续成功计数
+                _lastFallbackFrameIndex = -1; // ✅ 重置 fallback 帧索引
+                _lastFallbackTime = DateTime.MinValue; // ✅ 重置 fallback 时间
+                _lastDegradeAction = DateTime.MinValue;
+                _lastKeyframeRequest = DateTime.MinValue;
+
+                // ✅ 禁用持续拥塞模式（恢复正常拥塞报告）
+                _congestionControl?.DisableSustainedCongestion();
+
+                // ✅ 等待一小段时间确保清理完成
+                await Task.Delay(100, _cancellationToken);
+
+                _logger.LogInformation("✅ Stream state reset completed (session and controller preserved)");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Stream state reset exception");
+            }
+        }
+
+        /// <summary>
+        /// 处理 Emergency 恢复事件
+        /// </summary>
+        private void OnEmergencyRecoveryEvent(EmergencyRecoveryEvent evt)
+        {
+            _logger.LogInformation("🚨 Emergency recovery event: type={Type}, attempt={Attempt}, reason={Reason}",
+                evt.Type, evt.Attempt, evt.Reason);
+
+            // 可以在这里添加更多的事件处理逻辑，比如通知前端等
+        }
+
+        /// <summary>
+        /// 启动长时间卡顿检测任务（参考 chiaki-ng）
+        /// </summary>
+        private void StartStallCheckTask()
+        {
+            if (_stallCheckTask != null && !_stallCheckTask.IsCompleted)
+                return;
+
+            _stallCheckTask = Task.Run(async () =>
+            {
+                while (!_cancellationToken.IsCancellationRequested && !_isStopping)
+                {
+                    try
+                    {
+                        await Task.Delay(2000, _cancellationToken); // 每 2 秒检查一次
+
+                        if (_isReady && _emergencyRecovery != null)
+                        {
+                            // ✅ 检查长时间卡顿（无新帧）
+                            _emergencyRecovery.CheckLongStall();
+                            
+                            // ✅ 检查无数据包情况（更早触发恢复）
+                            lock (_packetReceiveLock)
+                            {
+                                if (_lastPacketReceivedTime != DateTime.MinValue)
+                                {
+                                    var elapsed = (DateTime.UtcNow - _lastPacketReceivedTime).TotalSeconds;
+                                    // 如果超过3秒没有收到任何数据包，触发恢复（比长时间卡顿检测更早）
+                                    if (elapsed > 3.0)
+                                    {
+                                        _logger.LogWarning("⚠️ No packets received for {Elapsed:F1}s, triggering recovery", elapsed);
+                                        // 创建虚拟事件触发恢复
+                                        var noPacketEvent = new StreamHealthEvent(
+                                            Timestamp: DateTime.UtcNow,
+                                            FrameIndex: 0,
+                                            Status: FrameProcessStatus.Dropped,
+                                            ConsecutiveFailures: _consecutiveSevereFailures + 1,
+                                            Message: $"No packets received: {elapsed:F1}s",
+                                            ReusedLastFrame: false,
+                                            RecoveredByFec: false
+                                        );
+                                        _emergencyRecovery.OnStreamHealthEvent(noPacketEvent);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error in stall check task");
+                    }
+                }
+            }, _cancellationToken);
         }
 
         #endregion

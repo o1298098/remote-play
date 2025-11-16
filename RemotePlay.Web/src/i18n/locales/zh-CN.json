@@ -440,7 +440,13 @@
         "connectedTitle": "连接成功",
         "connectedDescription": "视频流已连接",
         "connectFailedTitle": "连接失败",
-        "controllerFailedTitle": "控制器连接失败"
+        "controllerFailedTitle": "控制器连接失败",
+        "streamFrozenTitle": "检测到画面卡顿",
+        "streamFrozenDescription": "累计冻结帧 {{frozen}}，已恢复 {{recovered}} 帧，已尝试重新获取关键帧。",
+        "streamRecoveredTitle": "画面恢复中",
+        "streamRecoveredDescription": "已恢复 {{recovered}} 帧，画面正在恢复。",
+        "streamRateLimitedTitle": "关键帧请求过于频繁",
+        "streamRateLimitedDescription": "{{window}} 秒内已请求 {{requested}} 次，稍后将自动重试。"
       },
       "errors": {
         "missingDeviceInfo": "缺少设备信息",
