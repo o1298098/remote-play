@@ -25,10 +25,12 @@ namespace RemotePlay.Services.Streaming.Emergency
         private const int SEVERE_FAILURE_THRESHOLD = 3; // 连续严重失败次数
         // ✅ 缩短长时间卡顿阈值：从10秒降低到5秒，更快检测无数据包情况
         private const int LONG_STALL_THRESHOLD_SECONDS = 5; // 长时间卡顿阈值（秒）
-        private const int RECOVERY_COOLDOWN_SECONDS = 30; // 恢复冷却时间（秒），避免频繁重连
+        private const int RECOVERY_COOLDOWN_SECONDS = 10; // 恢复冷却时间（秒），避免频繁重连
         private const int MAX_RECOVERY_ATTEMPTS = 3; // 最大恢复尝试次数
         private const int KEYFRAME_REQUEST_THRESHOLD = 2; // 关键帧请求阈值（连续失败次数）
         private const int KEYFRAME_REQUEST_COOLDOWN_SECONDS = 1; // 关键帧请求冷却时间（秒）
+        // 功能开关：暂时禁用重连，仅执行轻量恢复（请求IDR + 重置状态），避免拖垮宿主
+        private const bool ENABLE_TAKION_RECONNECT = false;
 
         #endregion
 
@@ -290,10 +292,18 @@ namespace RemotePlay.Services.Streaming.Emergency
                 // ✅ 步骤 1: 重置流状态（参考 chiaki-ng: stream_connection 状态重置）
                 _logger.LogInformation("Step 1: Resetting stream state...");
                 await _resetStreamStateCallback();
-
-                // ✅ 步骤 2: 重建 Takion 连接（参考 chiaki-ng: chiaki_stream_connection_run）
-                _logger.LogInformation("Step 2: Reconnecting Takion connection...");
-                bool reconnectSuccess = await _reconnectTakionCallback();
+                
+                // ✅ 步骤 2:（可选）重建 Takion 连接
+                bool reconnectSuccess = true;
+                if (ENABLE_TAKION_RECONNECT)
+                {
+                    _logger.LogInformation("Step 2: Reconnecting Takion connection...");
+                    reconnectSuccess = await _reconnectTakionCallback();
+                }
+                else
+                {
+                    _logger.LogInformation("Step 2: Skipped (Takion reconnect disabled, using light recovery only)");
+                }
 
                 if (reconnectSuccess)
                 {

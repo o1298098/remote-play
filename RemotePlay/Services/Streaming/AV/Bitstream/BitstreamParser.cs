@@ -170,8 +170,9 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
         /// 由于 bitstream 修改非常复杂，当前实现返回 false
         /// 实际应用中，如果解码器支持，可以在解码前进行修改
         /// </summary>
-        public bool SetReferenceFrame(byte[] frameData, uint newReferenceFrame)
+        public bool SetReferenceFrame(byte[] frameData, uint newReferenceFrame, out byte[] modifiedFrameData)
         {
+            modifiedFrameData = frameData;
             // TODO: 实现完整的 bitstream 修改逻辑
             // 这需要：
             // 1. 解析 RBSP

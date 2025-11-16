@@ -114,6 +114,11 @@ namespace RemotePlay.Controllers
                 RecentFps = snapshot.RecentFps,
                 AverageFrameIntervalMs = snapshot.AverageFrameIntervalMs,
                 LastFrameTimestampUtc = snapshot.LastFrameTimestampUtc == DateTime.MinValue ? null : snapshot.LastFrameTimestampUtc,
+                TotalFrames = snapshot.TotalFrames,
+                TotalBytes = snapshot.TotalBytes,
+                MeasuredBitrateMbps = snapshot.MeasuredBitrateMbps,
+                FramesLost = snapshot.FramesLost,
+                FrameIndexPrev = snapshot.FrameIndexPrev,
                 VideoReceived = stats.VideoReceived,
                 VideoLost = stats.VideoLost,
                 AudioReceived = stats.AudioReceived,
@@ -160,6 +165,12 @@ namespace RemotePlay.Controllers
         public double RecentFps { get; set; }
         public double AverageFrameIntervalMs { get; set; }
         public DateTime? LastFrameTimestampUtc { get; set; }
+        // ✅ 新增：流统计与码率
+        public ulong TotalFrames { get; set; }
+        public ulong TotalBytes { get; set; }
+        public double MeasuredBitrateMbps { get; set; }
+        public int FramesLost { get; set; }
+        public int FrameIndexPrev { get; set; }
         public int VideoReceived { get; set; }
         public int VideoLost { get; set; }
         public int AudioReceived { get; set; }

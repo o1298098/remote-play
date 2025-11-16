@@ -37,6 +37,13 @@ namespace RemotePlay.Models.Streaming
         public ulong TotalFrames { get; init; } // 总帧数
         public ulong TotalBytes { get; init; } // 总字节数
         public double MeasuredBitrateMbps { get; init; } // 测量码率（Mbps）
+
+        // ✅ 帧丢失统计（参考 chiaki-ng 的 frames_lost）
+        // 语义：自上次快照以来丢失的帧数量（delta），便于窗口化观察
+        public int FramesLost { get; init; }
+
+        // ✅ 上一个至少部分解码的帧索引（参考 chiaki-ng 的 frame_index_prev）
+        public int FrameIndexPrev { get; init; }
     }
 
     public readonly record struct StreamPipelineStats

@@ -2320,11 +2320,12 @@ namespace RemotePlay.Services.Streaming
                 _isReconnecting = true;
 
                 // ✅ 步骤 1: 重置状态（但保留 tag_remote）
-                var savedTagRemote = _tagRemote;
                 _isReady = false;
                 _cipher = null;
                 _ecdh = null;
                 _state = STATE_INIT;
+                // 关键修复：重连开始时必须清空 tag_remote，等待 INIT_ACK 重新分配
+                _tagRemote = 0;
 
                 // ✅ 步骤 2: 停止现有服务
                 if (_feedbackSender != null)
@@ -2336,20 +2337,48 @@ namespace RemotePlay.Services.Streaming
                     await _congestionControl.StopAsync();
                 }
 
+                // ✅ 步骤 2.5: 重新创建 UDP 客户端与远端端点，避免套接字/路径异常导致一直无包
+                try
+                {
+                    _udpClient?.Dispose();
+                }
+                catch { }
+                _udpClient = null;
+                InitializeUdpClient();
+                _remoteEndPoint = new IPEndPoint(IPAddress.Parse(_host), _port);
+                
+                // ✅ 如果接收循环未运行，重新启动接收循环
+                if (_receiveLoopTask == null || _receiveLoopTask.IsCompleted)
+                {
+                    _receiveLoopTask = Task.Run(ReceiveLoopAsync, _cancellationToken);
+                    _logger.LogInformation("✅ Receive loop restarted after UDP client recreation");
+                }
+
                 // ✅ 步骤 3: 重新发送 INIT（参考 chiaki-ng: chiaki_takion_send_init）
-                _tagRemote = savedTagRemote; // 恢复 tag_remote
                 _tsn = 1; // 重置 TSN
                 SendInit();
 
-                // ✅ 步骤 4: 等待 INIT_ACK 和 COOKIE_ACK（最多等待 10 秒，增加超时时间以提高成功率）
+                // ✅ 步骤 4: 等待 INIT_ACK 和 COOKIE_ACK（最多等待 10 秒，期间每1秒重发 INIT 以提高成功率）
                 // 注意：INIT_ACK 会设置 _tagRemote，然后发送 COOKIE，COOKIE_ACK 会触发 SendBig()
                 // 我们可以通过检查 _ecdh 是否已创建来判断是否收到了 COOKIE_ACK（因为 SendBig() 会创建 _ecdh）
                 var cookieAckReceived = false;
                 var startTime = DateTime.UtcNow;
+                var lastInitResend = DateTime.MinValue;
                 
                 while (!cookieAckReceived && (DateTime.UtcNow - startTime).TotalSeconds < 10)
                 {
                     await Task.Delay(100, _cancellationToken);
+                    
+                    // 每 1 秒重发一次 INIT（防丢包/路径变化）
+                    if ((DateTime.UtcNow - lastInitResend).TotalSeconds >= 1)
+                    {
+                        try
+                        {
+                            SendInit();
+                        }
+                        catch { }
+                        lastInitResend = DateTime.UtcNow;
+                    }
                     // ✅ 检查是否已发送 BIG（通过检查 _ecdh 是否已创建）
                     // SendBig() 会创建 _ecdh，而 SendBig() 是在 HandleCookieAck() 中调用的
                     // 所以如果 _ecdh 不为 null，说明已收到 COOKIE_ACK
@@ -2421,6 +2450,16 @@ namespace RemotePlay.Services.Streaming
                 // ✅ 清除重连标志
                 _isReconnecting = false;
                 
+                // ✅ 重连成功后，主动请求一次关键帧，加速恢复首帧
+                try
+                {
+                    _ = RequestKeyframeAsync();
+                }
+                catch
+                {
+                    // ignore
+                }
+                
                 return true;
             }
             catch (Exception ex)
@@ -2490,7 +2529,7 @@ namespace RemotePlay.Services.Streaming
             _logger.LogInformation("🚨 Emergency recovery event: type={Type}, attempt={Attempt}, reason={Reason}",
                 evt.Type, evt.Attempt, evt.Reason);
 
-            // 可以在这里添加更多的事件处理逻辑，比如通知前端等
+            // 提示：若多次失败，可由上层协调会话重建，但这里不直接触发断开以避免影响宿主可用性
         }
 
         /// <summary>
@@ -2520,21 +2559,31 @@ namespace RemotePlay.Services.Streaming
                                 if (_lastPacketReceivedTime != DateTime.MinValue)
                                 {
                                     var elapsed = (DateTime.UtcNow - _lastPacketReceivedTime).TotalSeconds;
-                                    // 如果超过3秒没有收到任何数据包，触发恢复（比长时间卡顿检测更早）
-                                    if (elapsed > 3.0)
+                                    // 如果超过8秒没有收到任何数据包，触发恢复（提高阈值，避免频繁触发）
+                                    if (elapsed > 8.0)
                                     {
-                                        _logger.LogWarning("⚠️ No packets received for {Elapsed:F1}s, triggering recovery", elapsed);
-                                        // 创建虚拟事件触发恢复
-                                        var noPacketEvent = new StreamHealthEvent(
-                                            Timestamp: DateTime.UtcNow,
-                                            FrameIndex: 0,
-                                            Status: FrameProcessStatus.Dropped,
-                                            ConsecutiveFailures: _consecutiveSevereFailures + 1,
-                                            Message: $"No packets received: {elapsed:F1}s",
-                                            ReusedLastFrame: false,
-                                            RecoveredByFec: false
-                                        );
-                                        _emergencyRecovery.OnStreamHealthEvent(noPacketEvent);
+                                        // 如果正在恢复中，避免重复触发与日志噪声
+                                        var stats = _emergencyRecovery.GetStats();
+                                        if (!stats.IsRecovering)
+                                        {
+                                            _logger.LogWarning("⚠️ No packets received for {Elapsed:F1}s, triggering recovery (throttled)", elapsed);
+                                            
+                                            // 先尝试轻量唤醒：请求关键帧 + 补发控制器连接
+                                            try { _ = RequestKeyframeAsync(); } catch { }
+                                            try { SendControllerConnection(); } catch { }
+                                            
+                                            // 创建虚拟事件触发恢复
+                                            var noPacketEvent = new StreamHealthEvent(
+                                                Timestamp: DateTime.UtcNow,
+                                                FrameIndex: 0,
+                                                Status: FrameProcessStatus.Dropped,
+                                                ConsecutiveFailures: _consecutiveSevereFailures + 1,
+                                                Message: $"No packets received: {elapsed:F1}s",
+                                                ReusedLastFrame: false,
+                                                RecoveredByFec: false
+                                            );
+                                            _emergencyRecovery.OnStreamHealthEvent(noPacketEvent);
+                                        }
                                     }
                                 }
                             }
@@ -2566,8 +2615,19 @@ namespace RemotePlay.Services.Streaming
 
         public void Dispose()
         {
-            StopAsync().Wait(1000);
-            _avHandler?.Stop();
+            try
+            {
+                // 避免在 Dispose 中同步等待异步导致死锁/卡死
+                _ = Task.Run(() => StopAsync());
+            }
+            catch
+            {
+                // ignore
+            }
+            finally
+            {
+                _avHandler?.Stop();
+            }
         }
 
         #endregion

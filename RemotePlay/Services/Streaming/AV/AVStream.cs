@@ -12,6 +12,8 @@ namespace RemotePlay.Services.Streaming.AV
     {
         Success,
         Recovered,
+        FecSuccess,
+        FecFailed,
         Frozen,
         Dropped
     }
@@ -63,7 +65,26 @@ namespace RemotePlay.Services.Streaming.AV
         // ✅ 流统计（参考 chiaki-ng 的 ChiakiStreamStats）
         private readonly StreamStats _streamStats = new StreamStats();
 
+        // ✅ 帧索引跟踪（参考 chiaki-ng：frame_index_prev / frames_lost）
+        // _frameIndexCur：当前正在组装的帧索引（chiaki: frame_index_cur）
+        // _frameIndexPrev：上一个至少部分解码的帧索引（chiaki: frame_index_prev）
+        // _framesLost：累计丢失的帧数量（chiaki: frames_lost）
+        private int _frameIndexCur = -1;
+        private int _frameIndexPrev = -1;
+        private int _framesLost = 0;
+        private bool _currentFrameAssembled = false;
+
+        // ✅ 音频启动逻辑（参考 chiaki-ng：frame_index_startup）
+        // 启动期内忽略/减少 FEC 干预，避免重复包导致的爆音；成功若干帧后退出启动期
+        private bool _audioStartup = true;
+        private int _audioStartupSuccessFrames = 0;
+        private const int AUDIO_STARTUP_SUCCESS_THRESHOLD = 3;
+
         private readonly object _lock = new(); // 多线程安全锁
+        // 旧帧日志限流（避免热路径刷屏）
+        private DateTime _lastOldPacketLogTime = DateTime.MinValue;
+        private int _oldPacketSuppressed = 0;
+        private static readonly TimeSpan OLD_PKT_LOG_INTERVAL = TimeSpan.FromSeconds(1);
 
         public const string TYPE_VIDEO = "video";
         public const string TYPE_AUDIO = "audio";
@@ -107,6 +128,25 @@ namespace RemotePlay.Services.Streaming.AV
         {
             lock (_lock)
             {
+                // ✅ 旧帧包检测（环回安全）
+                if (_frameIndexCur >= 0 && IsSeq16Older(packet.FrameIndex, _frameIndexCur))
+                {
+                    // 降级为 Debug，并做简单限流与聚合，避免热路径刷屏
+                    var now = DateTime.UtcNow;
+                    if (now - _lastOldPacketLogTime >= OLD_PKT_LOG_INTERVAL)
+                    {
+                        int suppressed = _oldPacketSuppressed;
+                        _oldPacketSuppressed = 0;
+                        _lastOldPacketLogTime = now;
+                        _logger.LogDebug("Drop old frame packet: frame={Frame}, current={Current}, suppressed={Suppressed}", packet.FrameIndex, _frameIndexCur, suppressed);
+                    }
+                    else
+                    {
+                        _oldPacketSuppressed++;
+                    }
+                    return;
+                }
+
                 // 更新计数器
                 _received = (_received + 1) & 0xFFFF;
 
@@ -142,6 +182,14 @@ namespace RemotePlay.Services.Streaming.AV
             }
         }
 
+        // 16 位序列号（0..65535）环回安全“旧帧”判断：
+        // 当 (seq - cur) 在模 2^16 下属于 (0x8001..0xFFFF) 时，seq 视为比 cur 更旧
+        private static bool IsSeq16Older(int seq, int cur)
+        {
+            int diff = (seq - cur) & 0xFFFF;
+            return diff > 0x8000;
+        }
+
         private void SetNewFrame(AVPacket packet)
         {
             _frameBadOrder = false;
@@ -150,6 +198,8 @@ namespace RemotePlay.Services.Streaming.AV
             _frame = packet.FrameIndex;
             _lastUnit = -1;
             _fallbackCounter = 0;
+            _frameIndexCur = packet.FrameIndex;
+            _currentFrameAssembled = false;
             
             // ✅ 仅对视频流记录帧开始时间（用于超时检查）
             // 音频流不需要超时检测，因为音频帧小且处理快，丢包会导致爆音
@@ -160,6 +210,11 @@ namespace RemotePlay.Services.Streaming.AV
             else
             {
                 _frameStartTime = DateTime.MinValue; // 音频流不设置超时
+                
+                // ✅ 音频启动期退出条件之一：frame_index 超过半环（防止长时间保持启动状态）
+                // 参考 chiaki-ng 的 frame_index_startup，采用简单阈值避免误判
+                if (_audioStartup && packet.FrameIndex > (1 << 15))
+                    _audioStartup = false;
             }
             
             // ✅ 如果帧索引跳跃过大，重置参考帧管理器（流可能已不同步）
@@ -170,6 +225,17 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     _logger.LogWarning("⚠️ 帧索引跳跃过大 ({Gap} 帧)，重置参考帧管理器", gap);
                     _referenceFrameManager?.Reset();
+                }
+            }
+
+            // ✅ 统计丢失帧：如果新帧索引比上一个完整帧大于 1，说明中间丢帧
+            if (_lastComplete > 0)
+            {
+                int lost = packet.FrameIndex - _lastComplete - 1;
+                if (lost > 0)
+                {
+                    _framesLost += lost;
+                    _logger.LogDebug("📉 检测到丢失帧：lost={Lost}, last_complete={Last}, current={Cur}", lost, _lastComplete, packet.FrameIndex);
                 }
             }
         }
@@ -298,13 +364,12 @@ namespace RemotePlay.Services.Streaming.AV
             }
             else
             {
-                // 视频流：只有在没有乱序时才组装
-                if (packet.IsLastSrc && !_frameBadOrder)
-                    shouldAssemble = true;
-                else if (!_frameBadOrder && _packets.Count >= packet.UnitsSrc)
+                // 视频流：只有在没有乱序时才组装；并引入“提前刷新”策略（flush_possible）
+                if (!_frameBadOrder)
                 {
-                    int validPackets = _packets.Take(packet.UnitsSrc).Count(p => p != null && p.Length > 0);
-                    if (validPackets >= packet.UnitsSrc - 1)
+                    if (packet.IsLastSrc)
+                        shouldAssemble = true;
+                    else if (IsFlushPossible(packet))
                         shouldAssemble = true;
                 }
             }
@@ -323,6 +388,34 @@ namespace RemotePlay.Services.Streaming.AV
                 if (_packetLossSoftThresholdReached(packet))
                     TriggerFallback(packet, "missing source units with no FEC available");
             }
+        }
+
+        /// <summary>
+        /// 提前刷新判断（flush_possible）
+        /// 参考 chiaki-ng：当收到的源单元数已满足期望（或仅缺少 <=1 个）时可提前刷新
+        /// 仅用于视频，且当前帧未标记乱序
+        /// </summary>
+        private bool IsFlushPossible(AVPacket packet)
+        {
+            if (_type != TYPE_VIDEO)
+                return false;
+            if (_frameBadOrder)
+                return false;
+            if (_packets.Count < packet.UnitsSrc)
+                return false;
+
+            // 统计前 UnitsSrc 个源单元的有效包数量（非空）
+            int validPackets = 0;
+            int limit = Math.Min(packet.UnitsSrc, _packets.Count);
+            for (int i = 0; i < limit; i++)
+            {
+                var p = _packets[i];
+                if (p != null && p.Length > 0)
+                    validPackets++;
+            }
+
+            // 允许最多缺少 1 个源单元即提前刷新（与音频同口径、但仅在未乱序时启用）
+            return validPackets >= packet.UnitsSrc - 1;
         }
 
         private bool _packetLossSoftThresholdReached(AVPacket packet)
@@ -350,7 +443,19 @@ namespace RemotePlay.Services.Streaming.AV
                 }
             }
 
-            if (!_frameBadOrder && _missing.Count == 0) return;
+            // ✅ 音频启动期：忽略 FEC 路径，避免重复包引入的爆音（对齐 chiaki-ng 的启动处理）
+            if (_type == TYPE_AUDIO && _audioStartup)
+                return;
+
+            if (!_frameBadOrder && _missing.Count == 0)
+            {
+                // 未乱序且不缺失，不需要 FEC；但如果已满足 flush_possible，也可直接刷新
+                if (_type == TYPE_VIDEO && IsFlushPossible(packet))
+                {
+                    AssembleFrame(packet);
+                }
+                return;
+            }
             if (!packet.IsLast) return;
 
             if (_missing.Count > packet.UnitsFec)
@@ -358,6 +463,8 @@ namespace RemotePlay.Services.Streaming.AV
                 _fecAttempts++;
                 _fecFailures++;
                 _logger.LogWarning("⚠️ FEC insufficient: missing={Missing}, fec={Fec}", _missing.Count, packet.UnitsFec);
+                // 细化结果：FEC 失败
+                _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, FrameProcessStatus.FecFailed, false, false, $"FEC insufficient: missing={_missing.Count}, fec={packet.UnitsFec}"));
                 if (_fallbackCounter >= 3 || _missing.Count > packet.UnitsSrc / 4)
                     TriggerFallback(packet, $"missing={_missing.Count}, fec={packet.UnitsFec}");
                 return;
@@ -376,12 +483,16 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 _fecFailures++;
                 _logger.LogWarning("🚫 FEC recovery failed for frame {Frame}", packet.FrameIndex);
+                // 细化结果：FEC 失败
+                _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, FrameProcessStatus.FecFailed, false, false, "FEC recovery failed"));
                 TriggerFallback(packet, "FEC recovery failed");
             }
         }
 
         private void AssembleFrame(AVPacket packet, bool recoveredByFec = false)
         {
+            if (_currentFrameAssembled)
+                return;
             if (_type == TYPE_VIDEO && (_packets.Count == 0 || _packets[0] == null || _packets[0].Length == 0))
             {
                 _logger.LogWarning("⚠️ Frame {Frame} first packet missing, skipping", packet.FrameIndex);
@@ -431,10 +542,31 @@ namespace RemotePlay.Services.Streaming.AV
                 }
                 else if (pFrameFallback && hasAlternativeRef)
                 {
-                    // 找到替代参考帧，记录但继续处理
-                    // 注意：由于 bitstream 修改复杂，当前不修改 bitstream
-                    // 依赖解码器的容错能力
-                    _logger.LogWarning("⚠️ P 帧 {Frame} 缺少原始参考帧，但找到替代参考帧（依赖解码器容错）", packet.FrameIndex);
+                    // 尝试修改 bitstream 的参考帧（受控开关，失败则退回容错）
+                    bool rewriteEnabled = true; // 预留：后续可改为配置或运行时开关
+                    if (rewriteEnabled && _bitstreamParser != null)
+                    {
+                        try
+                        {
+                            if (_bitstreamParser.SetReferenceFrame(composedFrame, 0, out var modified))
+                            {
+                                composedFrame = modified;
+                                _logger.LogInformation("🧩 P 帧 {Frame} 参考帧已重写并提交解码", packet.FrameIndex);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("⚠️ P 帧 {Frame} 参考帧重写未生效，继续使用原始帧（依赖解码器容错）", packet.FrameIndex);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "⚠️ P 帧 {Frame} 参考帧重写失败，继续使用原始帧", packet.FrameIndex);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ P 帧 {Frame} 缺少原始参考帧，但找到替代参考帧（依赖解码器容错）", packet.FrameIndex);
+                    }
                     frameRecovered = true; // 标记为恢复
                 }
 
@@ -454,7 +586,7 @@ namespace RemotePlay.Services.Streaming.AV
                     _logger.LogWarning(ex, "⚠️ 添加参考帧失败，帧 {Frame}", packet.FrameIndex);
                 }
 
-                var status = frameRecovered ? FrameProcessStatus.Recovered : FrameProcessStatus.Success;
+                var status = frameRecovered ? FrameProcessStatus.FecSuccess : FrameProcessStatus.Success;
                 _frameResultCallback?.Invoke(new FrameProcessInfo(packet.FrameIndex, status, frameRecovered, false, null));
             }
             else
@@ -467,7 +599,20 @@ namespace RemotePlay.Services.Streaming.AV
             }
 
             _lastComplete = packet.FrameIndex;
+            _frameIndexPrev = packet.FrameIndex; // ✅ 记录至少部分解码成功的上一帧
+            _currentFrameAssembled = true;
             _frameStartTime = DateTime.MinValue; // ✅ 重置帧开始时间，准备处理下一个帧
+
+            // ✅ 音频启动期：累计成功帧，达阈值后退出启动期，恢复正常 FEC 行为
+            if (_type == TYPE_AUDIO && _audioStartup)
+            {
+                _audioStartupSuccessFrames++;
+                if (_audioStartupSuccessFrames >= AUDIO_STARTUP_SUCCESS_THRESHOLD)
+                {
+                    _audioStartup = false;
+                    _logger.LogDebug("🔊 Audio startup completed after {Count} frames", _audioStartupSuccessFrames);
+                }
+            }
         }
 
         private static byte[] ConcatPackets(List<byte[]> packets, int srcCount, bool skipFirstTwoBytes)
@@ -538,6 +683,20 @@ namespace RemotePlay.Services.Streaming.AV
 
         public int Lost => _lost;
         public int Received => _received;
+
+        /// <summary>
+        /// 获取并重置帧索引统计（frame_index_prev / frames_lost）
+        /// </summary>
+        public (int frameIndexPrev, int framesLost) ConsumeAndResetFrameIndexStats()
+        {
+            lock (_lock)
+            {
+                int prev = _frameIndexPrev;
+                int lost = _framesLost;
+                _framesLost = 0;
+                return (prev, lost);
+            }
+        }
 
         /// <summary>
         /// 获取流统计信息（参考 chiaki-ng 的 ChiakiStreamStats）

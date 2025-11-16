@@ -1081,6 +1081,8 @@ namespace RemotePlay.Services.Streaming.AV
                 ulong totalFrames = 0;
                 ulong totalBytes = 0;
                 double measuredBitrateMbps = 0.0;
+                int framesLostDelta = 0;
+                int frameIndexPrev = -1;
 
                 if (_videoStream != null)
                 {
@@ -1100,6 +1102,11 @@ namespace RemotePlay.Services.Streaming.AV
                     // 参考 chiaki-ng: stream_connection->measured_bitrate = chiaki_stream_stats_bitrate(...) / 1000000.0
                     ulong framerate = recentFps > 0 ? (ulong)Math.Round(recentFps) : 30; // 默认 30fps
                     measuredBitrateMbps = stats.GetBitrateMbps(framerate);
+
+                    // ✅ 获取并重置帧索引统计（frames_lost）
+                    var (prev, lost) = _videoStream.ConsumeAndResetFrameIndexStats();
+                    framesLostDelta = lost;
+                    frameIndexPrev = prev;
                 }
 
                 return new StreamHealthSnapshot
@@ -1124,7 +1131,9 @@ namespace RemotePlay.Services.Streaming.AV
                     LastFrameTimestampUtc = _lastFrameTimestampUtc,
                     TotalFrames = totalFrames,
                     TotalBytes = totalBytes,
-                    MeasuredBitrateMbps = measuredBitrateMbps
+                    MeasuredBitrateMbps = measuredBitrateMbps,
+                    FramesLost = framesLostDelta,
+                    FrameIndexPrev = frameIndexPrev
                 };
             }
         }
@@ -1145,16 +1154,16 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     case FrameProcessStatus.Success:
                         // ✅ 跟踪成功帧的索引，用于检测重复帧或黑帧
-                        if (info.FrameIndex > _lastSuccessFrameIndex)
+                        if (_lastSuccessFrameIndex < 0 || SequenceNumber.Less((ushort)_lastSuccessFrameIndex, (ushort)info.FrameIndex))
                         {
                             _lastSuccessFrameIndex = info.FrameIndex;
                             _lastSuccessFrameTimestamp = now;
                         }
                         _consecutiveVideoFailures = 0;
                         break;
-                    case FrameProcessStatus.Recovered:
-                        // ✅ 恢复的帧也认为是成功帧
-                        if (info.FrameIndex > _lastSuccessFrameIndex)
+                    case FrameProcessStatus.FecSuccess:
+                        // 视为恢复成功的一种
+                        if (_lastSuccessFrameIndex < 0 || SequenceNumber.Less((ushort)_lastSuccessFrameIndex, (ushort)info.FrameIndex))
                         {
                             _lastSuccessFrameIndex = info.FrameIndex;
                             _lastSuccessFrameTimestamp = now;
@@ -1162,6 +1171,22 @@ namespace RemotePlay.Services.Streaming.AV
                         _totalRecoveredFrames++;
                         _deltaRecoveredFrames++;
                         _consecutiveVideoFailures = 0;
+                        break;
+                    case FrameProcessStatus.Recovered:
+                        // ✅ 恢复的帧也认为是成功帧
+                        if (_lastSuccessFrameIndex < 0 || SequenceNumber.Less((ushort)_lastSuccessFrameIndex, (ushort)info.FrameIndex))
+                        {
+                            _lastSuccessFrameIndex = info.FrameIndex;
+                            _lastSuccessFrameTimestamp = now;
+                        }
+                        _totalRecoveredFrames++;
+                        _deltaRecoveredFrames++;
+                        _consecutiveVideoFailures = 0;
+                        break;
+                    case FrameProcessStatus.FecFailed:
+                        _totalDroppedFrames++;
+                        _deltaDroppedFrames++;
+                        _consecutiveVideoFailures++;
                         break;
                     case FrameProcessStatus.Frozen:
                         _totalFrozenFrames++;
