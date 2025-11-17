@@ -25,6 +25,8 @@ namespace RemotePlay.Services.Streaming.AV
         private int _frameIndexPrevComplete = 0;
         private int _framesLost = 0;
 
+        private Action<int, int>? _corruptFrameCallback;
+
         private readonly object _lock = new();
 
         public VideoReceiver(ILogger<VideoReceiver>? logger = null)
@@ -33,6 +35,17 @@ namespace RemotePlay.Services.Streaming.AV
             _frameProcessor = new FrameProcessor(null); // FrameProcessor2 使用 ILogger<FrameProcessor2>?
             _referenceFrameManager = new ReferenceFrameManager(null); // ReferenceFrameManager 使用 ILogger<ReferenceFrameManager>?
             _bitstreamParser = new BitstreamParser("h264", null); // BitstreamParser 使用 ILogger<BitstreamParser>?
+        }
+
+        /// <summary>
+        /// 设置 corrupt frame 回调
+        /// </summary>
+        public void SetCorruptFrameCallback(Action<int, int>? callback)
+        {
+            lock (_lock)
+            {
+                _corruptFrameCallback = callback;
+            }
         }
 
         /// <summary>
@@ -109,9 +122,12 @@ namespace RemotePlay.Services.Streaming.AV
                     if (!IsSeq16Older(packet.FrameIndex, nextFrameExpected) && packet.FrameIndex != nextFrameExpected &&
                         !(packet.FrameIndex == 1 && _frameIndexCur < 0))
                     {
+                        int start = nextFrameExpected;
+                        int end = (ushort)(packet.FrameIndex - 1);
                         _logger?.LogWarning("Detected missing or corrupt frame(s) from {From} to {To}", 
-                            nextFrameExpected, packet.FrameIndex - 1);
-                        // TODO: 发送 corrupt frame 通知
+                            start, end);
+                        // 发送 corrupt frame 通知
+                        _corruptFrameCallback?.Invoke(start, end);
                     }
 
                     _frameIndexCur = packet.FrameIndex;
@@ -154,7 +170,8 @@ namespace RemotePlay.Services.Streaming.AV
                 if (flushResult == FlushResult.FecFailed)
                 {
                     ushort nextFrameExpected = (ushort)(_frameIndexPrevComplete + 1);
-                    // TODO: 发送 corrupt frame 通知
+                    // 发送 corrupt frame 通知
+                    _corruptFrameCallback?.Invoke(nextFrameExpected, _frameIndexCur);
                     _framesLost += _frameIndexCur - nextFrameExpected + 1;
                     _frameIndexPrev = _frameIndexCur;
                 }

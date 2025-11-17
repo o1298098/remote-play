@@ -3,6 +3,8 @@ using RemotePlay.Models.Streaming;
 using RemotePlay.Services.Streaming.Quality;
 using RemotePlay.Utils.Crypto;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace RemotePlay.Services.Streaming.AV
 {
@@ -129,6 +131,8 @@ namespace RemotePlay.Services.Streaming.AV
 
             // 初始化 VideoReceiver
             _videoReceiver = new VideoReceiver(loggerFactory.CreateLogger<VideoReceiver>());
+            // 设置 corrupt frame 回调
+            _videoReceiver.SetCorruptFrameCallback(_videoCorruptCallback);
             if (videoProfiles != null && videoProfiles.Length > 0)
             {
                 _videoProfiles = videoProfiles;
@@ -224,6 +228,28 @@ namespace RemotePlay.Services.Streaming.AV
 
                 _videoReceiver.ProcessPacket(packet, decrypted, (frame, recovered, success) =>
                 {
+                    var now = DateTime.UtcNow;
+                    FrameProcessStatus status;
+                    
+                    if (success)
+                    {
+                        if (recovered)
+                        {
+                            status = FrameProcessStatus.Recovered;
+                        }
+                        else
+                        {
+                            status = FrameProcessStatus.Success;
+                        }
+                    }
+                    else
+                    {
+                        status = FrameProcessStatus.Dropped;
+                    }
+                    
+                    // 记录健康状态
+                    RecordFrameStatus(status, now);
+                    
                     if (_receiver != null && success)
                     {
                         var packetData = new byte[1 + frame.Length];
@@ -287,6 +313,8 @@ namespace RemotePlay.Services.Streaming.AV
         {
             _videoCorruptCallback = videoCallback;
             _audioCorruptCallback = audioCallback;
+            // 如果 VideoReceiver 已存在，更新其回调
+            _videoReceiver?.SetCorruptFrameCallback(videoCallback);
         }
 
         public void SetStreamHealthCallback(Action<StreamHealthEvent>? healthCallback)
@@ -333,6 +361,23 @@ namespace RemotePlay.Services.Streaming.AV
         private DateTime _lastTimeoutTime = DateTime.MinValue;
         private const int MAX_CONSECUTIVE_TIMEOUTS = 10; // 连续超时10次后请求关键帧
         private const int TIMEOUT_WINDOW_MS = 2000; // 2秒内的超时才算连续
+
+        // 健康状态跟踪
+        private readonly object _healthLock = new();
+        private FrameProcessStatus _lastStatus = FrameProcessStatus.Success;
+        private int _consecutiveFailures = 0;
+        private int _totalRecoveredFrames = 0;
+        private int _totalFrozenFrames = 0;
+        private int _totalDroppedFrames = 0;
+        private int _deltaRecoveredFrames = 0;
+        private int _deltaFrozenFrames = 0;
+        private int _deltaDroppedFrames = 0;
+        
+        // 最近窗口统计（用于计算 FPS）
+        private readonly Queue<(DateTime timestamp, FrameProcessStatus status)> _recentFrames = new();
+        private const int RECENT_WINDOW_SECONDS = 10;
+        private DateTime _lastFrameTimestamp = DateTime.UtcNow;
+        private readonly List<double> _frameIntervals = new(); // 用于计算平均帧间隔
 
         private void OnReorderQueueTimeout()
         {
@@ -597,35 +642,192 @@ namespace RemotePlay.Services.Streaming.AV
             };
         }
 
+        private void RecordFrameStatus(FrameProcessStatus status, DateTime timestamp)
+        {
+            lock (_healthLock)
+            {
+                _lastStatus = status;
+                
+                // 更新连续失败计数
+                if (status == FrameProcessStatus.Success || status == FrameProcessStatus.Recovered)
+                {
+                    _consecutiveFailures = 0;
+                }
+                else
+                {
+                    _consecutiveFailures++;
+                }
+                
+                // 更新总数和增量
+                switch (status)
+                {
+                    case FrameProcessStatus.Recovered:
+                        _totalRecoveredFrames++;
+                        _deltaRecoveredFrames++;
+                        break;
+                    case FrameProcessStatus.Frozen:
+                        _totalFrozenFrames++;
+                        _deltaFrozenFrames++;
+                        break;
+                    case FrameProcessStatus.Dropped:
+                        _totalDroppedFrames++;
+                        _deltaDroppedFrames++;
+                        break;
+                }
+                
+                // 记录到最近窗口
+                _recentFrames.Enqueue((timestamp, status));
+                
+                // 清理过期记录
+                var cutoff = timestamp.AddSeconds(-RECENT_WINDOW_SECONDS);
+                while (_recentFrames.Count > 0 && _recentFrames.Peek().timestamp < cutoff)
+                {
+                    _recentFrames.Dequeue();
+                }
+                
+                // 计算帧间隔
+                if (_lastFrameTimestamp != DateTime.MinValue)
+                {
+                    var interval = (timestamp - _lastFrameTimestamp).TotalMilliseconds;
+                    if (interval > 0 && interval < 1000) // 过滤异常值
+                    {
+                        _frameIntervals.Add(interval);
+                        // 只保留最近100个间隔
+                        if (_frameIntervals.Count > 100)
+                        {
+                            _frameIntervals.RemoveAt(0);
+                        }
+                    }
+                }
+                _lastFrameTimestamp = timestamp;
+            }
+        }
+
         public StreamHealthSnapshot GetHealthSnapshot(bool resetDeltas = false, bool resetStreamStats = false)
         {
-            // TODO: 实现健康快照（简化版）
-            return new StreamHealthSnapshot
+            lock (_healthLock)
             {
-                Timestamp = DateTime.UtcNow,
-                LastStatus = FrameProcessStatus.Success,
-                Message = null,
-                ConsecutiveFailures = 0,
-                TotalRecoveredFrames = 0,
-                TotalFrozenFrames = 0,
-                TotalDroppedFrames = 0,
-                DeltaRecoveredFrames = 0,
-                DeltaFrozenFrames = 0,
-                DeltaDroppedFrames = 0,
-                RecentWindowSeconds = 10,
-                RecentSuccessFrames = 0,
-                RecentRecoveredFrames = 0,
-                RecentFrozenFrames = 0,
-                RecentDroppedFrames = 0,
-                RecentFps = 0,
-                AverageFrameIntervalMs = 0,
-                LastFrameTimestampUtc = DateTime.UtcNow,
-                TotalFrames = 0,
-                TotalBytes = 0,
-                MeasuredBitrateMbps = 0,
-                FramesLost = 0,
-                FrameIndexPrev = -1
-            };
+                var now = DateTime.UtcNow;
+                
+                // 获取流统计信息
+                ulong totalFrames = 0;
+                ulong totalBytes = 0;
+                double measuredBitrateMbps = 0;
+                int framesLost = 0;
+                int frameIndexPrev = -1;
+                
+                if (_videoReceiver != null)
+                {
+                    // 获取流统计信息
+                    // 注意：GetAndResetStreamStats 会重置统计，所以每次调用都会获取自上次调用以来的增量
+                    var (frames, bytes) = _videoReceiver.GetAndResetStreamStats();
+                    totalFrames = frames;
+                    totalBytes = bytes;
+                    
+                    // 计算码率（假设 60fps）
+                    if (totalFrames > 0 && totalBytes > 0)
+                    {
+                        // 使用公式计算：bitrate = (bytes * 8 * fps) / frames
+                        var bps = (totalBytes * 8UL * 60UL) / totalFrames;
+                        measuredBitrateMbps = bps / 1000000.0;
+                    }
+                    
+                    // 获取帧索引统计（也会重置）
+                    var (prev, lost) = _videoReceiver.ConsumeAndResetFrameIndexStats();
+                    frameIndexPrev = prev;
+                    framesLost = lost;
+                }
+                
+                // 计算最近窗口统计
+                var cutoff = now.AddSeconds(-RECENT_WINDOW_SECONDS);
+                int recentSuccess = 0;
+                int recentRecovered = 0;
+                int recentFrozen = 0;
+                int recentDropped = 0;
+                
+                foreach (var (ts, status) in _recentFrames)
+                {
+                    if (ts >= cutoff)
+                    {
+                        switch (status)
+                        {
+                            case FrameProcessStatus.Success:
+                                recentSuccess++;
+                                break;
+                            case FrameProcessStatus.Recovered:
+                                recentRecovered++;
+                                break;
+                            case FrameProcessStatus.Frozen:
+                                recentFrozen++;
+                                break;
+                            case FrameProcessStatus.Dropped:
+                                recentDropped++;
+                                break;
+                        }
+                    }
+                }
+                
+                // 计算 FPS
+                double recentFps = 0;
+                if (_recentFrames.Count > 0)
+                {
+                    var oldest = _recentFrames.Peek().timestamp;
+                    var windowSeconds = (now - oldest).TotalSeconds;
+                    if (windowSeconds > 0)
+                    {
+                        recentFps = _recentFrames.Count / windowSeconds;
+                    }
+                }
+                
+                // 计算平均帧间隔
+                double avgInterval = 0;
+                if (_frameIntervals.Count > 0)
+                {
+                    avgInterval = _frameIntervals.Average();
+                }
+                
+                // 获取增量值（如果需要重置，先保存再重置）
+                int deltaRecovered = _deltaRecoveredFrames;
+                int deltaFrozen = _deltaFrozenFrames;
+                int deltaDropped = _deltaDroppedFrames;
+                
+                if (resetDeltas)
+                {
+                    _deltaRecoveredFrames = 0;
+                    _deltaFrozenFrames = 0;
+                    _deltaDroppedFrames = 0;
+                }
+                
+                // 注意：GetAndResetStreamStats 和 ConsumeAndResetFrameIndexStats 已经在上面的代码中调用了
+                // 所以 resetStreamStats 参数实际上已经生效了
+                
+                return new StreamHealthSnapshot
+                {
+                    Timestamp = now,
+                    LastStatus = _lastStatus,
+                    Message = _consecutiveFailures > 0 ? $"连续失败 {_consecutiveFailures} 次" : null,
+                    ConsecutiveFailures = _consecutiveFailures,
+                    TotalRecoveredFrames = _totalRecoveredFrames,
+                    TotalFrozenFrames = _totalFrozenFrames,
+                    TotalDroppedFrames = _totalDroppedFrames,
+                    DeltaRecoveredFrames = deltaRecovered,
+                    DeltaFrozenFrames = deltaFrozen,
+                    DeltaDroppedFrames = deltaDropped,
+                    RecentWindowSeconds = RECENT_WINDOW_SECONDS,
+                    RecentSuccessFrames = recentSuccess,
+                    RecentRecoveredFrames = recentRecovered,
+                    RecentFrozenFrames = recentFrozen,
+                    RecentDroppedFrames = recentDropped,
+                    RecentFps = recentFps,
+                    AverageFrameIntervalMs = avgInterval,
+                    LastFrameTimestampUtc = _lastFrameTimestamp,
+                    TotalFrames = totalFrames,
+                    TotalBytes = totalBytes,
+                    MeasuredBitrateMbps = measuredBitrateMbps,
+                    FramesLost = framesLost,
+                    FrameIndexPrev = frameIndexPrev
+                };
+            }
         }
 
         #endregion
