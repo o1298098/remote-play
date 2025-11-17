@@ -51,6 +51,10 @@ namespace RemotePlay.Services.Streaming.AV
             _receiver = receiver;
             _ct = ct;
             ResetVideoReorderQueue();
+            
+            // 重置超时计数
+            _consecutiveTimeouts = 0;
+            _lastTimeoutTime = DateTime.MinValue;
         }
 
         #region Receiver / Cipher / Headers
@@ -118,6 +122,10 @@ namespace RemotePlay.Services.Streaming.AV
             }
 
             ResetVideoReorderQueue();
+            
+            // 重置超时计数
+            _consecutiveTimeouts = 0;
+            _lastTimeoutTime = DateTime.MinValue;
 
             // 初始化 VideoReceiver
             _videoReceiver = new VideoReceiver(loggerFactory.CreateLogger<VideoReceiver>());
@@ -316,7 +324,61 @@ namespace RemotePlay.Services.Streaming.AV
                 sizeMin: 32,
                 sizeMax: 256,
                 timeoutMs: 200,
-                dropStrategy: ReorderQueueDropStrategy.Begin);
+                dropStrategy: ReorderQueueDropStrategy.Begin,
+                timeoutCallback: OnReorderQueueTimeout);
+        }
+
+        // 超时恢复机制：跟踪连续超时次数，超过阈值时请求关键帧
+        private int _consecutiveTimeouts = 0;
+        private DateTime _lastTimeoutTime = DateTime.MinValue;
+        private const int MAX_CONSECUTIVE_TIMEOUTS = 10; // 连续超时10次后请求关键帧
+        private const int TIMEOUT_WINDOW_MS = 2000; // 2秒内的超时才算连续
+
+        private void OnReorderQueueTimeout()
+        {
+            var now = DateTime.UtcNow;
+            
+            // 检查是否在时间窗口内
+            if (_lastTimeoutTime != DateTime.MinValue && 
+                (now - _lastTimeoutTime).TotalMilliseconds > TIMEOUT_WINDOW_MS)
+            {
+                // 超过时间窗口，重置计数
+                _consecutiveTimeouts = 0;
+            }
+
+            _consecutiveTimeouts++;
+            _lastTimeoutTime = now;
+
+            // 如果连续超时次数超过阈值，请求关键帧恢复
+            if (_consecutiveTimeouts >= MAX_CONSECUTIVE_TIMEOUTS)
+            {
+                _logger.LogWarning("⚠️ 连续超时 {Count} 次，请求关键帧恢复视频流", _consecutiveTimeouts);
+                
+                // 重置计数，避免重复请求
+                _consecutiveTimeouts = 0;
+                _lastTimeoutTime = DateTime.MinValue;
+
+                // 异步请求关键帧（不阻塞）
+                if (_requestKeyframeCallback != null)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _requestKeyframeCallback();
+                            _logger.LogInformation("✅ 已请求关键帧恢复视频流");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "❌ 请求关键帧失败");
+                        }
+                    });
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ 未设置 RequestKeyframeCallback，无法请求关键帧");
+                }
+            }
         }
 
         private void HandleOrderedPacket(AVPacket packet)
@@ -493,6 +555,10 @@ namespace RemotePlay.Services.Streaming.AV
             _workerCts?.Cancel();
             _queue.Clear();
             ResetVideoReorderQueue();
+            
+            // 重置超时计数
+            _consecutiveTimeouts = 0;
+            _lastTimeoutTime = DateTime.MinValue;
 
             if (_workerTask != null && !_workerTask.IsCompleted)
             {
