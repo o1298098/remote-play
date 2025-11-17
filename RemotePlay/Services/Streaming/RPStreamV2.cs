@@ -92,7 +92,7 @@ namespace RemotePlay.Services.Streaming
         private StreamCipher? _cipher;
 
         // AV 处理
-        private AVHandler? _avHandler;
+        private AV.AVHandler? _avHandler;
 
         // 接收器
         private IAVReceiver? _receiver;
@@ -181,9 +181,9 @@ namespace RemotePlay.Services.Streaming
             _port = port;
             _cancellationToken = cancellationToken;
 
-            // 初始化 AVHandler
-            _avHandler = new AVHandler(
-                _loggerFactory.CreateLogger<AVHandler>(),
+            // 初始化 AVHandler2
+            _avHandler = new AV.AVHandler(
+                _loggerFactory.CreateLogger<AV.AVHandler>(),
                 _session.HostType,
                 null, // cipher 稍后设置
                 null, // receiver 稍后设置

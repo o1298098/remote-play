@@ -240,6 +240,13 @@ namespace RemotePlay.Services.Streaming
                         {
                             _logger.LogWarning("⚠️ 高丢失率: {Loss:P2}, 报告给PS5: received={Received}, lost={Lost}, total={Total}", 
                                 _packetLoss, received, lost, total);
+                            
+                            // ✅ 诊断：如果丢失率持续很高，记录警告
+                            if (_packetLoss > 0.5) // 超过50%
+                            {
+                                _logger.LogWarning("🚨 严重丢失率: {Loss:P2}，PS5应该降档！请检查：1) 是否有多个profiles 2) PS5是否收到拥塞控制包", 
+                                    _packetLoss);
+                            }
                         }
                     }
                     

@@ -12,6 +12,22 @@ namespace RemotePlay.Models.Streaming
         bool ReusedLastFrame,
         bool RecoveredByFec);
 
+    public enum FrameProcessStatus
+    {
+        Success,
+        Recovered,
+        FecSuccess,
+        FecFailed,
+        Frozen,
+        Dropped
+    }
+
+    public readonly record struct FrameProcessInfo(
+        int FrameIndex,
+        FrameProcessStatus Status,
+        bool RecoveredByFec,
+        bool ReusedLastFrame,
+        string? Reason);
     public readonly record struct StreamHealthSnapshot
     {
         public DateTime Timestamp { get; init; }
