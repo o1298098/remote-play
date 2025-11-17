@@ -33,6 +33,8 @@ namespace RemotePlay.Services.Streaming.Emergency
         public DateTime LastRecoveryAttempt { get; init; }
         public bool IsRecovering { get; init; }
         public double SecondsSinceLastFrame { get; init; }
+        public bool IsInSilentPeriod { get; init; } // ✅ 是否在静默期
+        public bool IsCircuitBreakerActive { get; init; } // ✅ 是否在熔断期
     }
 }
 

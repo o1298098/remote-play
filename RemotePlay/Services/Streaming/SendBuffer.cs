@@ -125,7 +125,23 @@ namespace RemotePlay.Services.Streaming
         
         public void Dispose()
         {
-            StopAsync().Wait();
+            // ✅ 关键修复：使用超时机制，避免 Dispose 阻塞太久
+            try
+            {
+                var stopTask = StopAsync();
+                var timeoutTask = Task.Delay(1000); // 最多等待 1 秒
+                var completedTask = Task.WhenAny(stopTask, timeoutTask).GetAwaiter().GetResult();
+                
+                if (completedTask == timeoutTask)
+                {
+                    // 注意：SendBuffer 可能没有 logger，所以不记录日志
+                }
+            }
+            catch (Exception)
+            {
+                // 忽略异常，继续释放
+            }
+            
             _cts?.Dispose();
             _semaphore.Dispose();
         }

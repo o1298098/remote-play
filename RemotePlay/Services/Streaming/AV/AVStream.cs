@@ -85,6 +85,8 @@ namespace RemotePlay.Services.Streaming.AV
         private DateTime _lastOldPacketLogTime = DateTime.MinValue;
         private int _oldPacketSuppressed = 0;
         private static readonly TimeSpan OLD_PKT_LOG_INTERVAL = TimeSpan.FromSeconds(1);
+        // ✅ 帧超时检查日志限流
+        private DateTime _lastTimeoutCheckLog = DateTime.MinValue;
 
         public const string TYPE_VIDEO = "video";
         public const string TYPE_AUDIO = "audio";
@@ -114,7 +116,7 @@ namespace RemotePlay.Services.Streaming.AV
                 Buffer.BlockCopy(header, 0, Header, 0, header.Length);
                 Buffer.BlockCopy(padding, 0, Header, header.Length, padding.Length);
 
-                // ✅ 初始化参考帧管理器和 bitstream 解析器（参考 chiaki-ng）
+                // ✅ 初始化参考帧管理器和 bitstream 解析器
                 _referenceFrameManager = new ReferenceFrameManager(null); // Logger 可选
                 // BitstreamParser 会在检测到 codec 后初始化
             }
@@ -165,14 +167,18 @@ namespace RemotePlay.Services.Streaming.AV
                     _frame = packet.FrameIndex;
                 }
 
-                // 缺失包检测
+                // ✅ 参考 chiaki-ng：缺失包检测和标记
+                // chiaki-ng 不检查顺序，直接存储到 unit_slots[unit_index]
+                // 我们这里只标记乱序和缺失，实际的缺失检测在 flush 时进行
                 if (packet.UnitIndex != _lastUnit + 1)
                     HandleMissingPacket(packet.Index, packet.UnitIndex);
 
-                _lastUnit += 1;
-
-                // 添加数据
+                // 添加数据（会插入到正确位置，参考 chiaki-ng 的 unit_slots[unit_index]）
                 AddPacketData(packet, decryptedData);
+
+                // ✅ 修复：更新 _lastUnit 应该在 AddPacketData 之后，且应该取最大值
+                // 这样可以正确处理乱序包
+                _lastUnit = Math.Max(_lastUnit, packet.UnitIndex);
 
                 // 处理 SRC / FEC
                 if (!packet.IsFec)
@@ -248,16 +254,29 @@ namespace RemotePlay.Services.Streaming.AV
                 _frameBadOrder = true;
             }
 
-            for (int i = _lastUnit + 1; i < unitIndex; i++)
+            // ✅ 参考 chiaki-ng：不在这里填充缺失的包，缺失的包会在 flush 时被检测到
+            // 只需要标记缺失的包位置（从 _lastUnit + 1 到 unitIndex - 1）
+            // 注意：如果包乱序到达（unitIndex < _lastUnit），需要标记从 unitIndex + 1 到 _lastUnit 之间的缺失
+            if (unitIndex > _lastUnit + 1)
             {
-                _packets.Add(Array.Empty<byte>());
-                _missing.Add(i);
+                // 正常情况：unitIndex 大于 _lastUnit，标记中间的缺失
+                for (int i = _lastUnit + 1; i < unitIndex; i++)
+                {
+                    if (!_missing.Contains(i))
+                    {
+                        _missing.Add(i);
+                    }
+                }
+            }
+            else if (unitIndex < _lastUnit)
+            {
+                // 乱序情况：unitIndex 小于 _lastUnit，说明这个包是之前缺失的
+                // 不需要额外标记，因为缺失的包已经在之前标记过了
+                // 但需要确保这个位置在 missing 列表中（如果之前标记过）
             }
 
             int missed = index - _lastIndex - 1;
             _lost = (_lost + (missed > 0 ? missed : 1)) & 0xFFFF;
-
-            _lastUnit = unitIndex - 1;
         }
 
         private void TriggerFallback(AVPacket packet, string reason)
@@ -272,6 +291,7 @@ namespace RemotePlay.Services.Streaming.AV
             _packets.Clear();
             _lastUnit = -1;
             _frameStartTime = DateTime.MinValue; // ✅ 重置帧开始时间，避免影响下一个帧
+            _currentFrameAssembled = false; // ✅ 关键修复：重置帧组装标志，允许后续帧继续组装
 
             // ✅ 如果连续 fallback 次数过多，重置参考帧管理器
             if (_fallbackCounter >= 5)
@@ -305,16 +325,38 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void AddPacketData(AVPacket packet, byte[] decryptedData)
         {
+            // ✅ 修复：包应该插入到 _packets[unitIndex] 位置，而不是追加到末尾
+            // 这样可以正确处理乱序包（参考 chiaki-ng 的逻辑）
+            // 确保列表有足够的空间
+            while (_packets.Count <= packet.UnitIndex)
+            {
+                _packets.Add(Array.Empty<byte>());
+            }
+
+            byte[] data;
             if (_type == TYPE_AUDIO)
             {
                 int size = packet.AudioUnitSize > 0 ? Math.Min(packet.AudioUnitSize, decryptedData.Length) : decryptedData.Length;
-                var trimmed = new byte[size];
-                Buffer.BlockCopy(decryptedData, 0, trimmed, 0, size);
-                _packets.Add(trimmed);
+                data = new byte[size];
+                Buffer.BlockCopy(decryptedData, 0, data, 0, size);
             }
             else
             {
-                _packets.Add(decryptedData);
+                data = decryptedData;
+            }
+
+            // ✅ 插入到正确位置（如果该位置已有数据，说明是重复包，保留第一个）
+            if (_packets[packet.UnitIndex] == null || _packets[packet.UnitIndex].Length == 0)
+            {
+                _packets[packet.UnitIndex] = data;
+                // 如果这个 unit 之前在 missing 列表中，移除它
+                _missing.Remove(packet.UnitIndex);
+            }
+            else
+            {
+                // 重复包，记录警告但保留第一个
+                _logger.LogDebug("⚠️ Duplicate packet received: frame={Frame}, unit={Unit}", 
+                    packet.FrameIndex, packet.UnitIndex);
             }
         }
 
@@ -392,7 +434,7 @@ namespace RemotePlay.Services.Streaming.AV
 
         /// <summary>
         /// 提前刷新判断（flush_possible）
-        /// 参考 chiaki-ng：当收到的源单元数已满足期望（或仅缺少 <=1 个）时可提前刷新
+        /// 参考 chiaki-ng：units_source_received + units_fec_received >= units_source_expected
         /// 仅用于视频，且当前帧未标记乱序
         /// </summary>
         private bool IsFlushPossible(AVPacket packet)
@@ -401,21 +443,27 @@ namespace RemotePlay.Services.Streaming.AV
                 return false;
             if (_frameBadOrder)
                 return false;
-            if (_packets.Count < packet.UnitsSrc)
-                return false;
 
-            // 统计前 UnitsSrc 个源单元的有效包数量（非空）
-            int validPackets = 0;
-            int limit = Math.Min(packet.UnitsSrc, _packets.Count);
-            for (int i = 0; i < limit; i++)
+            // ✅ 参考 chiaki-ng：统计已收到的源包数（前 UnitsSrc 个位置）
+            int unitsSourceReceived = 0;
+            for (int i = 0; i < packet.UnitsSrc && i < _packets.Count; i++)
             {
-                var p = _packets[i];
-                if (p != null && p.Length > 0)
-                    validPackets++;
+                if (_packets[i] != null && _packets[i].Length > 0)
+                    unitsSourceReceived++;
             }
 
-            // 允许最多缺少 1 个源单元即提前刷新（与音频同口径、但仅在未乱序时启用）
-            return validPackets >= packet.UnitsSrc - 1;
+            // ✅ 参考 chiaki-ng：统计已收到的 FEC 包数（UnitsSrc 之后的位置）
+            int unitsFecReceived = 0;
+            int fecStart = packet.UnitsSrc;
+            int fecEnd = Math.Min(packet.UnitsTotal, _packets.Count);
+            for (int i = fecStart; i < fecEnd; i++)
+            {
+                if (_packets[i] != null && _packets[i].Length > 0)
+                    unitsFecReceived++;
+            }
+
+            // ✅ chiaki-ng 的逻辑：units_source_received + units_fec_received >= units_source_expected
+            return (unitsSourceReceived + unitsFecReceived) >= packet.UnitsSrc;
         }
 
         private bool _packetLossSoftThresholdReached(AVPacket packet)
@@ -571,6 +619,14 @@ namespace RemotePlay.Services.Streaming.AV
                 }
 
                 _lastGoodVideoFrame = composedFrame;
+                
+                // ✅ 添加诊断日志（限流，每50帧记录一次）
+                if (_logger.IsEnabled(LogLevel.Trace) && packet.FrameIndex % 50 == 0)
+                {
+                    _logger.LogTrace("✅ Assembling video frame {Frame}: len={Len}, recovered={Recovered}", 
+                        packet.FrameIndex, composedFrame.Length, frameRecovered);
+                }
+                
                 _callbackDone(composedFrame);
 
                 // ✅ 记录流统计（参考 chiaki-ng: chiaki_stream_stats_frame）
@@ -687,6 +743,84 @@ namespace RemotePlay.Services.Streaming.AV
         /// <summary>
         /// 获取并重置帧索引统计（frame_index_prev / frames_lost）
         /// </summary>
+        /// <summary>
+        /// 检查帧超时（用于后台任务定期检查，即使没有新包到达也能检测卡住的帧）
+        /// </summary>
+        public void CheckFrameTimeout()
+        {
+            if (_type != TYPE_VIDEO)
+                return;
+                
+            lock (_lock)
+            {
+                // ✅ 添加诊断日志（每10秒记录一次，避免刷屏）
+                var now = DateTime.UtcNow;
+                if (_lastTimeoutCheckLog == DateTime.MinValue || (now - _lastTimeoutCheckLog).TotalSeconds >= 10)
+                {
+                    _logger.LogDebug("🔍 帧超时检查：frameStartTime={FrameStartTime}, currentFrameAssembled={Assembled}, frameIndexCur={Frame}, packets={Packets}, missing={Missing}",
+                        _frameStartTime == DateTime.MinValue ? "MinValue" : _frameStartTime.ToString("HH:mm:ss.fff"),
+                        _currentFrameAssembled,
+                        _frameIndexCur,
+                        _packets.Count,
+                        _missing.Count);
+                    _lastTimeoutCheckLog = now;
+                }
+                
+                // 只有在有正在组装的帧时才检查超时
+                if (_frameStartTime == DateTime.MinValue || _currentFrameAssembled)
+                    return;
+                    
+                var elapsed = (DateTime.UtcNow - _frameStartTime).TotalMilliseconds;
+                if (elapsed > FRAME_TIMEOUT_MS)
+                {
+                    int frameIndex = _frameIndexCur >= 0 ? _frameIndexCur : _frame;
+                    
+                    _logger.LogWarning("⚠️ 帧 {Frame} 超时检查：({Elapsed}ms > {Timeout}ms)，触发 fallback (packets={Packets}, missing={Missing})", 
+                        frameIndex, elapsed, FRAME_TIMEOUT_MS, _packets.Count, _missing.Count);
+                    
+                    _frameTimeoutDropped++;
+                    
+                    // ✅ 直接触发 fallback 逻辑，不依赖 packet
+                    _fallbackCounter++;
+                    _frameBadOrder = true;
+                    _missing.Clear();
+                    _packets.Clear();
+                    _lastUnit = -1;
+                    _frameStartTime = DateTime.MinValue;
+                    _currentFrameAssembled = false;
+                    
+                    // ✅ 如果连续 fallback 次数过多，重置参考帧管理器
+                    if (_fallbackCounter >= 5)
+                    {
+                        _logger.LogWarning("⚠️ 连续 fallback 次数过多 ({Count})，重置参考帧管理器", _fallbackCounter);
+                        _referenceFrameManager?.Reset();
+                        _fallbackCounter = 0;
+                    }
+                    
+                    // 触发 corrupt callback
+                    if (_callbackCorrupt != null)
+                    {
+                        try
+                        {
+                            int start = _lastComplete + 1;
+                            if (start > frameIndex)
+                                start = frameIndex;
+                            _callbackCorrupt.Invoke(start, frameIndex);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "❌ Failed to invoke corrupt callback for frame {Frame}", frameIndex);
+                        }
+                    }
+                    
+                    // 尝试重播最后一帧
+                    bool reused = TryReplayLastFrame();
+                    var status = reused ? FrameProcessStatus.Frozen : FrameProcessStatus.Dropped;
+                    _frameResultCallback?.Invoke(new FrameProcessInfo(frameIndex, status, false, reused, $"frame timeout check ({elapsed:F0}ms)"));
+                }
+            }
+        }
+
         public (int frameIndexPrev, int framesLost) ConsumeAndResetFrameIndexStats()
         {
             lock (_lock)

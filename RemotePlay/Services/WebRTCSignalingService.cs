@@ -77,9 +77,9 @@ namespace RemotePlay.Services
                     // 若后续你添加 TURN，这里支持多项
                     iceServers = new List<RTCIceServer>
             {
-                new RTCIceServer { urls = "stun:stun.qcloudtrtc.com:8000" },
-                new RTCIceServer { urls = "stun:stun.alibabacloud.com:3478" },
-                new RTCIceServer { urls = "stun:stun.agora.io:3478" },
+                //new RTCIceServer { urls = "stun:stun.qcloudtrtc.com:8000" },
+                //new RTCIceServer { urls = "stun:stun.alibabacloud.com:3478" },
+               // new RTCIceServer { urls = "stun:stun.agora.io:3478" },
                 new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
             },
                     bundlePolicy = RTCBundlePolicy.max_bundle,

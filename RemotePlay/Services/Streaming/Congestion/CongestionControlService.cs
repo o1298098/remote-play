@@ -15,22 +15,17 @@ namespace RemotePlay.Services.Streaming
     {
         #region Constants
         
-        // ✅ 基础上报间隔（参考 chiaki-ng: 200ms）
-        private const int BASE_SEND_INTERVAL_MS = 200;
-        
-        // ✅ 最小上报间隔（网络状况差时）
-        private const int MIN_SEND_INTERVAL_MS = 100;
-        
-        // ✅ 最大上报间隔（网络状况好时）
-        private const int MAX_SEND_INTERVAL_MS = 500;
-        
-        // ✅ 丢失率阈值（超过此值认为网络状况差）
-        private const double HIGH_LOSS_THRESHOLD = 0.05; // 5%
-        
-        // ✅ 丢失率阈值（低于此值认为网络状况好）
-        private const double LOW_LOSS_THRESHOLD = 0.01; // 1%
+        // ✅ 上报间隔（参考 chiaki-ng: 固定 200ms）
+        private const int CONGESTION_CONTROL_INTERVAL_MS = 200;
         
         private const int CONGESTION_PACKET_SIZE = 15;  // 0x0f bytes
+        
+        // ✅ 默认最大丢失率（如果超过此值，会限制报告的丢失率）
+        // 注意：提高此值可以让PS5看到更高的丢失率，从而触发降档
+        // 原值5%可能过低，导致PS5认为网络状况良好而不降档
+        // 15%、25%、30%仍然不够，完全移除限制（设为1.0），让PS5看到真实的丢失率
+        // 这样PS5可以根据真实的网络状况做出降档决策
+        private const double DEFAULT_PACKET_LOSS_MAX = 1.0; // 100%（完全移除限制，让PS5看到真实的丢失率）
         
         #endregion
 
@@ -41,9 +36,6 @@ namespace RemotePlay.Services.Streaming
         private readonly Func<ulong> _getKeyPosFunc;       // 获取 key_pos 的回调
         private readonly Func<(ushort, ushort)>? _getPacketStatsFunc;  // 获取包统计的回调（可选）
         
-        // ✅ 带宽估算器（滑动窗口）
-        private readonly BandwidthEstimator _bandwidthEstimator;
-        
         private CancellationTokenSource? _cts;
         private Task? _congestionLoop;
         
@@ -52,12 +44,8 @@ namespace RemotePlay.Services.Streaming
         private ushort _packetsLost = 0;
         
         private readonly object _statsLock = new object();
-        private (ushort received, ushort lost)? _overrideSample;
-        private bool _sustainedCongestionMode = false; // ✅ 持续拥塞模式（用于触发被动降档）
-        private (ushort received, ushort lost) _sustainedCongestionSample = (5, 5); // 默认高丢失样本
-        
-        // ✅ 当前自适应上报间隔
-        private int _currentSendIntervalMs = BASE_SEND_INTERVAL_MS;
+        private double _packetLossMax = DEFAULT_PACKET_LOSS_MAX; // ✅ 最大丢失率（超过此值会限制报告的丢失率）
+        private double _packetLoss = 0; // ✅ 当前丢失率
         
         private bool _isRunning = false;
         
@@ -72,19 +60,19 @@ namespace RemotePlay.Services.Streaming
         /// <param name="sendRawFunc">发送原始包的回调函数</param>
         /// <param name="getKeyPosFunc">获取当前 key_pos 的回调函数</param>
         /// <param name="getPacketStatsFunc">获取包统计的回调函数（可选）</param>
+        /// <param name="packetLossMax">最大丢失率（超过此值会限制报告的丢失率，默认 5%）</param>
         public CongestionControlService(
             ILogger<CongestionControlService> logger,
             Func<byte[], Task> sendRawFunc,
             Func<ulong> getKeyPosFunc,
-            Func<(ushort, ushort)>? getPacketStatsFunc = null)
+            Func<(ushort, ushort)>? getPacketStatsFunc = null,
+            double packetLossMax = DEFAULT_PACKET_LOSS_MAX)
         {
             _logger = logger;
             _sendRawFunc = sendRawFunc;
             _getKeyPosFunc = getKeyPosFunc;
             _getPacketStatsFunc = getPacketStatsFunc;
-            
-            // ✅ 初始化带宽估算器（使用 null logger，因为 BandwidthEstimator 的日志是可选的）
-            _bandwidthEstimator = new BandwidthEstimator(null);
+            _packetLossMax = packetLossMax;
         }
         
         /// <summary>
@@ -102,8 +90,8 @@ namespace RemotePlay.Services.Streaming
             _congestionLoop = Task.Run(() => CongestionLoopAsync(_cts.Token), _cts.Token);
             _isRunning = true;
             
-            _logger.LogInformation("✅ CongestionControl started - adaptive interval (base={BaseMs}ms, range={MinMs}-{MaxMs}ms)", 
-                BASE_SEND_INTERVAL_MS, MIN_SEND_INTERVAL_MS, MAX_SEND_INTERVAL_MS);
+            _logger.LogDebug("✅ CongestionControl started (interval={IntervalMs}ms, packet_loss_max={LossMax:P2})", 
+                CONGESTION_CONTROL_INTERVAL_MS, _packetLossMax);
         }
         
         /// <summary>
@@ -128,12 +116,28 @@ namespace RemotePlay.Services.Streaming
             }
             
             _isRunning = false;
-            _logger.LogInformation("CongestionControl stopped");
+            _logger.LogDebug("CongestionControl stopped");
         }
         
         public void Dispose()
         {
-            StopAsync().Wait();
+            // ✅ 关键修复：使用超时机制，避免 Dispose 阻塞太久
+            try
+            {
+                var stopTask = StopAsync();
+                var timeoutTask = Task.Delay(1000); // 最多等待 1 秒
+                var completedTask = Task.WhenAny(stopTask, timeoutTask).GetAwaiter().GetResult();
+                
+                if (completedTask == timeoutTask)
+                {
+                    _logger.LogWarning("⚠️ CongestionControl StopAsync 超时（1秒），强制继续释放");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ CongestionControl Dispose 异常，继续释放");
+            }
+            
             _cts?.Dispose();
         }
         
@@ -150,9 +154,6 @@ namespace RemotePlay.Services.Streaming
             {
                 _packetsReceived++;
             }
-            
-            // ✅ 更新带宽估算器
-            _bandwidthEstimator.AddSample(1, 0, DateTime.UtcNow);
         }
         
         /// <summary>
@@ -164,9 +165,6 @@ namespace RemotePlay.Services.Streaming
             {
                 _packetsLost++;
             }
-            
-            // ✅ 更新带宽估算器
-            _bandwidthEstimator.AddSample(0, 1, DateTime.UtcNow);
         }
         
         /// <summary>
@@ -179,9 +177,6 @@ namespace RemotePlay.Services.Streaming
                 _packetsReceived = 0;
                 _packetsLost = 0;
             }
-            
-            // ✅ 重置带宽估算器
-            _bandwidthEstimator.Reset();
         }
         
         #endregion
@@ -190,24 +185,21 @@ namespace RemotePlay.Services.Streaming
         
         /// <summary>
         /// 拥塞控制主循环
-        /// ✅ 使用自适应上报频率（根据网络状况动态调整）
+        /// ✅ 参考 chiaki-ng：固定 200ms 间隔，限制丢失率不超过最大值
         /// </summary>
         private async Task CongestionLoopAsync(CancellationToken ct)
         {
-            _logger.LogInformation("🔄 CongestionControl loop started (adaptive interval)");
+            _logger.LogDebug("🔄 CongestionControl loop started");
             
             int packetCount = 0;
             var startTime = DateTime.UtcNow;
-            var lastStatsTime = DateTime.UtcNow;
-            ushort lastReceived = 0;
-            ushort lastLost = 0;
             
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    // ✅ 自适应等待间隔
-                    await Task.Delay(_currentSendIntervalMs, ct);
+                    // ✅ 固定间隔（参考 chiaki-ng: 200ms）
+                    await Task.Delay(CONGESTION_CONTROL_INTERVAL_MS, ct);
                     
                     var currentTime = DateTime.UtcNow;
                     
@@ -230,32 +222,26 @@ namespace RemotePlay.Services.Streaming
                             received = _packetsReceived;
                             lost = _packetsLost;
                         }
-
-                        // ✅ 优先使用一次性覆盖样本，否则使用持续拥塞模式
-                        if (_overrideSample.HasValue)
+                        
+                        // ✅ 计算丢失率（参考 chiaki-ng）
+                        ulong total = (ulong)received + (ulong)lost;
+                        _packetLoss = total > 0 ? (double)lost / total : 0;
+                        
+                        // ✅ 关键：如果丢失率超过最大值，限制报告的丢失率（参考 chiaki-ng）
+                        // 注意：当前设置为1.0（100%），完全移除限制，让PS5看到真实的丢失率
+                        if (_packetLoss > _packetLossMax)
                         {
-                            received = _overrideSample.Value.received;
-                            lost = _overrideSample.Value.lost;
-                            _overrideSample = null;
+                            _logger.LogWarning("⚠️ 丢失率超过阈值，限制报告的丢失率 (实际丢失率={Loss:P2} > 最大报告值={Max:P2})", 
+                                _packetLoss, _packetLossMax);
+                            lost = (ushort)(total * _packetLossMax);
+                            received = (ushort)(total - lost);
                         }
-                        else if (_sustainedCongestionMode)
+                        else if (_packetLoss > 0.1) // 如果丢失率超过10%，记录详细信息
                         {
-                            // ✅ 持续拥塞模式：持续报告高丢失以触发主机被动降档
-                            received = _sustainedCongestionSample.received;
-                            lost = _sustainedCongestionSample.lost;
+                            _logger.LogWarning("⚠️ 高丢失率: {Loss:P2}, 报告给PS5: received={Received}, lost={Lost}, total={Total}", 
+                                _packetLoss, received, lost, total);
                         }
                     }
-                    
-                    // ✅ 更新带宽估算器（使用增量统计）
-                    var deltaReceived = (ulong)(received >= lastReceived ? received - lastReceived : received + (ushort.MaxValue - lastReceived));
-                    var deltaLost = (ulong)(lost >= lastLost ? lost - lastLost : lost + (ushort.MaxValue - lastLost));
-                    _bandwidthEstimator.AddSample(deltaReceived, deltaLost, currentTime);
-                    lastReceived = received;
-                    lastLost = lost;
-                    lastStatsTime = currentTime;
-                    
-                    // ✅ 根据带宽估算调整上报频率
-                    UpdateAdaptiveInterval();
                     
                     // 构造并发送拥塞包
                     var packet = BuildCongestionPacket(seqNum, received, lost);
@@ -266,35 +252,17 @@ namespace RemotePlay.Services.Streaming
                     // ✅ 前5个包记录详细统计
                     if (packetCount <= 5)
                     {
-                        string mode = _sustainedCongestionMode ? " [SUSTAINED CONGESTION]" : "";
-                        var bandwidthMbps = _bandwidthEstimator.GetEstimatedBandwidthBps() / (1024.0 * 1024.0);
-                        var lossRate = _bandwidthEstimator.GetEstimatedLossRate() * 100.0;
-                        _logger.LogInformation("📊 Congestion #{Num}: received={Received}, lost={Lost}, seqNum={Seq}, " +
-                            "bandwidth={Bandwidth:F2}Mbps, lossRate={LossRate:F2}%, interval={Interval}ms{Mode}",
-                            packetCount, received, lost, seqNum, bandwidthMbps, lossRate, _currentSendIntervalMs, mode);
+                        _logger.LogDebug("📊 Congestion #{Num}: received={Received}, lost={Lost}, seqNum={Seq}, loss={Loss:P2}", 
+                            packetCount, received, lost, seqNum, _packetLoss);
                     }
                     // 定期日志（每 30 秒）
                     else if (packetCount % 150 == 0) // 约每 30 秒（150 * 200ms）
                     {
                         var elapsed = (currentTime - startTime).TotalSeconds;
                         var rate = packetCount / elapsed;
-                        string mode = _sustainedCongestionMode ? " [SUSTAINED CONGESTION]" : "";
-                        var bandwidthMbps = _bandwidthEstimator.GetEstimatedBandwidthBps() / (1024.0 * 1024.0);
-                        var lossRate = _bandwidthEstimator.GetEstimatedLossRate() * 100.0;
-                        
-                        _logger.LogInformation("📊 CongestionControl: sent {Count} packets ({Rate:F1}/s), " +
-                            "stats: received={Received}, lost={Lost}, bandwidth={Bandwidth:F2}Mbps, " +
-                            "lossRate={LossRate:F2}%, interval={Interval}ms{Mode}",
-                            packetCount, rate, received, lost, bandwidthMbps, lossRate, _currentSendIntervalMs, mode);
-                    }
-                    // ✅ 持续拥塞模式：每 25 包记录一次（约每 5 秒）以便观察
-                    else if (_sustainedCongestionMode && packetCount % 25 == 0)
-                    {
-                        var bandwidthMbps = _bandwidthEstimator.GetEstimatedBandwidthBps() / (1024.0 * 1024.0);
-                        var lossRate = _bandwidthEstimator.GetEstimatedLossRate() * 100.0;
-                        _logger.LogInformation("📊 CongestionControl [SUSTAINED CONGESTION]: received={Received}, lost={Lost}, " +
-                            "bandwidth={Bandwidth:F2}Mbps, lossRate={LossRate:F2}% (triggering passive degradation)",
-                            received, lost, bandwidthMbps, lossRate);
+                        _logger.LogDebug("📊 CongestionControl: sent {Count} packets ({Rate:F1}/s), " +
+                            "stats: received={Received}, lost={Lost}, loss={Loss:P2}",
+                            packetCount, rate, received, lost, _packetLoss);
                     }
                 }
                 catch (OperationCanceledException)
@@ -308,34 +276,7 @@ namespace RemotePlay.Services.Streaming
                 }
             }
             
-            _logger.LogInformation("CongestionControl loop exited (sent {Count} packets)", packetCount);
-        }
-        
-        /// <summary>
-        /// ✅ 根据网络状况更新自适应上报间隔
-        /// </summary>
-        private void UpdateAdaptiveInterval()
-        {
-            var lossRate = _bandwidthEstimator.GetEstimatedLossRate();
-            
-            // ✅ 根据丢失率调整上报频率
-            if (lossRate > HIGH_LOSS_THRESHOLD)
-            {
-                // 网络状况差：更频繁上报（最小间隔）
-                _currentSendIntervalMs = MIN_SEND_INTERVAL_MS;
-            }
-            else if (lossRate < LOW_LOSS_THRESHOLD)
-            {
-                // 网络状况好：降低上报频率（最大间隔）
-                _currentSendIntervalMs = MAX_SEND_INTERVAL_MS;
-            }
-            else
-            {
-                // 网络状况中等：线性插值
-                var ratio = (lossRate - LOW_LOSS_THRESHOLD) / (HIGH_LOSS_THRESHOLD - LOW_LOSS_THRESHOLD);
-                _currentSendIntervalMs = (int)(BASE_SEND_INTERVAL_MS + 
-                    ratio * (MIN_SEND_INTERVAL_MS - BASE_SEND_INTERVAL_MS));
-            }
+            _logger.LogDebug("CongestionControl loop exited (sent {Count} packets)", packetCount);
         }
         
         #endregion
@@ -390,51 +331,6 @@ namespace RemotePlay.Services.Streaming
         
         #endregion
 
-        /// <summary>
-        /// 强制一次高丢失样本（用于快速恢复）
-        /// </summary>
-        public void ForceHighLossSample(ushort received = 5, ushort lost = 5)
-        {
-            lock (_statsLock)
-            {
-                _overrideSample = (received, lost);
-            }
-        }
-
-        /// <summary>
-        /// 启用持续拥塞模式（用于触发被动降档）
-        /// 在此模式下，拥塞控制会持续报告高丢失，直到调用 DisableSustainedCongestion()
-        /// </summary>
-        public void EnableSustainedCongestion(ushort received = 5, ushort lost = 5)
-        {
-            lock (_statsLock)
-            {
-                _sustainedCongestionMode = true;
-                _sustainedCongestionSample = (received, lost);
-            }
-        }
-
-        /// <summary>
-        /// 禁用持续拥塞模式（流健康恢复后调用）
-        /// </summary>
-        public void DisableSustainedCongestion()
-        {
-            lock (_statsLock)
-            {
-                _sustainedCongestionMode = false;
-            }
-        }
-
-        /// <summary>
-        /// 检查是否处于持续拥塞模式
-        /// </summary>
-        public bool IsSustainedCongestionEnabled()
-        {
-            lock (_statsLock)
-            {
-                return _sustainedCongestionMode;
-            }
-        }
     }
 }
 

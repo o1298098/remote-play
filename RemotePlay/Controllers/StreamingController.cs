@@ -74,26 +74,33 @@ namespace RemotePlay.Controllers
         [HttpGet("session/{sessionId:guid}/health")]
         public async Task<ActionResult<ResponseModel>> GetStreamHealth(Guid sessionId)
         {
-            if (sessionId == Guid.Empty)
+            try
             {
-                return BadRequest(new ApiErrorResponse
+                _logger.LogDebug("📊 GetStreamHealth called: sessionId={SessionId}", sessionId);
+                
+                if (sessionId == Guid.Empty)
                 {
-                    Success = false,
-                    ErrorMessage = "SessionId 不能为空"
-                });
-            }
+                    return BadRequest(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "SessionId 不能为空"
+                    });
+                }
 
-            var stream = await _streamingService.GetStreamAsync(sessionId);
-            if (stream == null)
-            {
-                return NotFound(new ApiErrorResponse
+                var stream = await _streamingService.GetStreamAsync(sessionId);
+                if (stream == null)
                 {
-                    Success = false,
-                    ErrorMessage = "远程播放流不存在或已结束"
-                });
-            }
+                    _logger.LogWarning("⚠️ GetStreamHealth: stream not found for sessionId={SessionId}", sessionId);
+                    return NotFound(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "远程播放流不存在或已结束"
+                    });
+                }
 
-            var (snapshot, stats) = stream.GetStreamHealth();
+                _logger.LogDebug("📊 GetStreamHealth: calling stream.GetStreamHealth() for sessionId={SessionId}", sessionId);
+                var (snapshot, stats) = stream.GetStreamHealth();
+                _logger.LogDebug("📊 GetStreamHealth: got health snapshot for sessionId={SessionId}, fps={Fps}", sessionId, stats.FrameOutputFps);
             var dto = new StreamHealthDto
             {
                 Timestamp = snapshot.Timestamp,
@@ -136,12 +143,22 @@ namespace RemotePlay.Controllers
                 FrameIntervalMs = stats.FrameIntervalMs
             };
 
-            return Ok(new ApiSuccessResponse<StreamHealthDto>
+                return Ok(new ApiSuccessResponse<StreamHealthDto>
+                {
+                    Success = true,
+                    Data = dto,
+                    Message = "获取流健康状态成功"
+                });
+            }
+            catch (Exception ex)
             {
-                Success = true,
-                Data = dto,
-                Message = "获取流健康状态成功"
-            });
+                _logger.LogError(ex, "❌ GetStreamHealth failed for sessionId={SessionId}", sessionId);
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "获取流健康状态失败"
+                });
+            }
         }
     }
 

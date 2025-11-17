@@ -46,7 +46,7 @@ namespace RemotePlay.Services.Streaming.Quality
         /// 检测并处理 adaptive_stream_index 变化
         /// 返回 (是否切换, 新 Profile, 是否需要更新 Header)
         /// </summary>
-        public (bool Switched, VideoProfile? NewProfile, bool NeedUpdateHeader) CheckAndHandleSwitch(AVPacket packet, Action<VideoProfile>? onProfileSwitch = null)
+        public (bool Switched, VideoProfile? NewProfile, bool NeedUpdateHeader) CheckAndHandleSwitch(AVPacket packet, Action<VideoProfile, VideoProfile?>? onProfileSwitch = null)
         {
             if (packet.Type != HeaderType.VIDEO)
                 return (false, null, false);
@@ -92,7 +92,7 @@ namespace RemotePlay.Services.Streaming.Quality
                         oldProfile.Index, oldProfile.Width, oldProfile.Height,
                         newProfile.Index, newProfile.Width, newProfile.Height);
 
-                    onProfileSwitch?.Invoke(newProfile);
+                    onProfileSwitch?.Invoke(newProfile, oldProfile);
                     return (true, newProfile, true);
                 }
 

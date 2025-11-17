@@ -2309,8 +2309,33 @@ namespace RemotePlay.Services.Streaming.Receiver
                     _rtcpSubscribedEventKeys.Clear();
                 }
                 
-                _peerConnection?.close();
-                _peerConnection?.Dispose();
+                // ✅ 使用超时机制释放 WebRTC 连接，避免阻塞太久
+                if (_peerConnection != null)
+                {
+                    try
+                    {
+                        var disposeTask = Task.Run(() =>
+                        {
+                            _peerConnection.close();
+                            _peerConnection.Dispose();
+                        });
+                        var timeoutTask = Task.Delay(1000); // 最多等待 1 秒
+                        var completedTask = Task.WhenAny(disposeTask, timeoutTask).GetAwaiter().GetResult();
+                        
+                        if (completedTask == timeoutTask)
+                        {
+                            _logger.LogWarning("⚠️ WebRTC 连接释放超时（1秒），强制继续");
+                        }
+                        else
+                        {
+                            _logger.LogDebug("✅ WebRTC 连接已释放");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 释放 WebRTC 连接时发生异常");
+                    }
+                }
             }
             catch (Exception ex)
             {

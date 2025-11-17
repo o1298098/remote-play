@@ -40,6 +40,10 @@ namespace RemotePlay.Services.Streaming.AV
         private CancellationTokenSource? _workerCts;
         private Task? _workerTask;
         private readonly CancellationToken _ct;
+        
+        // ✅ 帧超时检查任务（用于检测卡住的帧）
+        private CancellationTokenSource? _frameTimeoutCheckCts;
+        private Task? _frameTimeoutCheckTask;
 
         private AVStream? _videoStream;
         private AVStream? _audioStream;
@@ -52,7 +56,7 @@ namespace RemotePlay.Services.Streaming.AV
         private Action<int, int>? _audioCorruptCallback;
         private Action<StreamHealthEvent>? _healthCallback;
         private AdaptiveStreamManager? _adaptiveStreamManager;
-        private Action<VideoProfile>? _profileSwitchCallback;
+        private Action<VideoProfile, VideoProfile?>? _profileSwitchCallback;
         private FrameProcessStatus _lastFrameStatus = FrameProcessStatus.Success;
         private string? _lastHealthMessage;
         private int _consecutiveVideoFailures = 0;
@@ -174,6 +178,9 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 if (_workerTask == null || _workerTask.IsCompleted)
                     StartWorker();
+                    
+                // ✅ 启动帧超时检查任务（用于检测卡住的帧）
+                StartFrameTimeoutCheckTask();
             }
             else
             {
@@ -187,26 +194,42 @@ namespace RemotePlay.Services.Streaming.AV
 
         public void AddPacket(byte[] msg)
         {
-            if (!AVPacket.TryParse(msg, _hostType, out var packet))
+            try
             {
-                _logger.LogWarning("⚠️ Failed to parse AV packet, len={Len}", msg.Length);
-                return;
-            }
-
-            if (packet.Type == HeaderType.VIDEO)
-            {
-                if (_videoReorderQueue == null)
+                if (!AVPacket.TryParse(msg, _hostType, out var packet))
                 {
-                    _logger.LogWarning("⚠️ Video reorder queue is null, cannot process video packet");
+                    _logger.LogWarning("⚠️ Failed to parse AV packet, len={Len}", msg.Length);
                     return;
                 }
-                _videoReorderQueue?.Push(packet);
-                // ✅ 关键修复：每次推入视频包后触发一次超时扫描，避免因缺失期望序列导致的长期阻塞
-                _videoReorderQueue?.Flush(false);
+
+                if (packet.Type == HeaderType.VIDEO)
+                {
+                    if (_videoReorderQueue == null)
+                    {
+                        _logger.LogWarning("⚠️ Video reorder queue is null, cannot process video packet (frame={Frame})", 
+                            msg.Length > 8 ? BitConverter.ToUInt16(msg, 6) : 0);
+                        return;
+                    }
+                    
+                    // ✅ 添加诊断日志（限流，避免刷屏）
+                    if (_logger.IsEnabled(LogLevel.Trace))
+                    {
+                        _logger.LogTrace("📦 Video packet: frame={Frame}, seq={Seq}, units={Units}", 
+                            packet.FrameIndex, packet.Index, packet.UnitsSrc);
+                    }
+                    
+                    _videoReorderQueue?.Push(packet);
+                    // ✅ 关键修复：每次推入视频包后触发一次超时扫描，避免因缺失期望序列导致的长期阻塞
+                    _videoReorderQueue?.Flush(false);
+                }
+                else
+                {
+                    HandleOrderedPacket(packet);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                HandleOrderedPacket(packet);
+                _logger.LogError(ex, "❌ Exception in AddPacket, len={Len}", msg.Length);
             }
         }
 
@@ -285,7 +308,7 @@ namespace RemotePlay.Services.Streaming.AV
         /// <summary>
         /// 设置自适应流管理器（用于检测 profile 切换）
         /// </summary>
-        public void SetAdaptiveStreamManager(AdaptiveStreamManager? manager, Action<VideoProfile>? onProfileSwitch = null)
+        public void SetAdaptiveStreamManager(AdaptiveStreamManager? manager, Action<VideoProfile, VideoProfile?>? onProfileSwitch = null)
         {
             _adaptiveStreamManager = manager;
             _profileSwitchCallback = onProfileSwitch;
@@ -511,6 +534,13 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void HandleOrderedPacket(AVPacket packet)
         {
+            // ✅ 添加诊断日志（限流，每100个包记录一次）
+            if (_logger.IsEnabled(LogLevel.Trace) && packet.Index % 100 == 0)
+            {
+                _logger.LogTrace("📦 HandleOrderedPacket: type={Type}, frame={Frame}, seq={Seq}, units={Units}", 
+                    packet.Type, packet.FrameIndex, packet.Index, packet.UnitsSrc);
+            }
+            
             bool isVideo = packet.Type == HeaderType.VIDEO;
 
             if (packet.Type == HeaderType.VIDEO && _detectedVideoCodec == null)
@@ -776,17 +806,53 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void HandleVideoFrame(byte[] frame)
         {
-            if (_receiver == null || frame == null || frame.Length == 0) return;
+            if (_receiver == null)
+            {
+                if (_videoFrameCounter % 100 == 0)
+                {
+                    _logger.LogWarning("⚠️ HandleVideoFrame: _receiver is null, frameLen={Len}, counter={Count}", 
+                        frame?.Length ?? 0, _videoFrameCounter);
+                }
+                return;
+            }
+            
+            if (frame == null || frame.Length == 0)
+            {
+                if (_videoFrameCounter % 100 == 0)
+                {
+                    _logger.LogWarning("⚠️ HandleVideoFrame: frame is null or empty, counter={Count}", _videoFrameCounter);
+                }
+                return;
+            }
 
-            var outBuf = ArrayPool<byte>.Shared.Rent(1 + frame.Length);
-            outBuf[0] = (byte)HeaderType.VIDEO;
-            frame.AsSpan().CopyTo(outBuf.AsSpan(1));
+            var frameCount = Interlocked.Increment(ref _videoFrameCounter);
+            
+            // ✅ 添加诊断日志（每100帧记录一次，避免刷屏）
+            if (frameCount % 100 == 0 && _logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug("📹 HandleVideoFrame: frameLen={Len}, counter={Count}, receiver={ReceiverType}", 
+                    frame.Length, frameCount, _receiver.GetType().Name);
+            }
 
-            Interlocked.Increment(ref _videoFrameCounter);
-
-            try { _receiver.OnVideoPacket(outBuf.AsSpan(0, frame.Length + 1).ToArray()); }
-            catch (Exception ex) { _logger.LogError(ex, "❌ Failed to send video frame"); }
-            finally { ArrayPool<byte>.Shared.Return(outBuf); }
+            // ✅ 关键修复：使用 fire-and-forget 异步发送，避免 WebRTC 发送阻塞 worker 线程
+            // 如果 WebRTC 发送卡住，不会阻塞后续帧的处理
+            // 注意：需要复制数据，因为 frame 可能在异步任务执行时被重用
+            var packetData = new byte[1 + frame.Length];
+            packetData[0] = (byte)HeaderType.VIDEO;
+            frame.AsSpan().CopyTo(packetData.AsSpan(1));
+            
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    _receiver.OnVideoPacket(packetData);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ OnVideoPacket 异常: frameLen={Len}, counter={Count}", 
+                        frame.Length, frameCount);
+                }
+            });
         }
 
         #endregion
@@ -891,11 +957,142 @@ namespace RemotePlay.Services.Streaming.AV
 
         public void Stop()
         {
+            _logger.LogDebug("🛑 AVHandler.Stop() called");
+            
+            // ✅ 停止帧超时检查任务
+            _frameTimeoutCheckCts?.Cancel();
+            if (_frameTimeoutCheckTask != null && !_frameTimeoutCheckTask.IsCompleted)
+            {
+                try
+                {
+                    var timeoutTask = Task.Delay(200);
+                    var completedTask = Task.WhenAny(_frameTimeoutCheckTask, timeoutTask).GetAwaiter().GetResult();
+                    if (completedTask == timeoutTask)
+                    {
+                        _logger.LogWarning("⚠️ 帧超时检查任务退出超时（200ms），强制继续");
+                    }
+                }
+                catch { }
+            }
+            
+            // ✅ 先取消 worker，然后等待一小段时间让它退出
             _workerCts?.Cancel();
             _queue.Clear();
             _waiting = false;
             ResetVideoReorderQueue();
             ResetHealthState();
+            
+            // ✅ 等待 worker 退出（最多 500ms），避免阻塞太久
+            if (_workerTask != null && !_workerTask.IsCompleted)
+            {
+                try
+                {
+                    var timeoutTask = Task.Delay(500);
+                    var completedTask = Task.WhenAny(_workerTask, timeoutTask).GetAwaiter().GetResult();
+                    
+                    if (completedTask == timeoutTask)
+                    {
+                        _logger.LogWarning("⚠️ AVHandler worker 退出超时（500ms），强制继续");
+                    }
+                    else
+                    {
+                        _logger.LogDebug("✅ AVHandler worker 已退出");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "⚠️ 等待 AVHandler worker 退出时发生异常");
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 启动帧超时检查任务（定期检查卡住的帧）
+        /// </summary>
+        private void StartFrameTimeoutCheckTask()
+        {
+            if (_frameTimeoutCheckTask != null && !_frameTimeoutCheckTask.IsCompleted)
+                return;
+                
+            _frameTimeoutCheckCts?.Cancel();
+            _frameTimeoutCheckCts = new CancellationTokenSource();
+            var token = _frameTimeoutCheckCts.Token;
+            
+            _frameTimeoutCheckTask = Task.Run(async () =>
+            {
+                _logger.LogInformation("✅ 帧超时检查任务已启动");
+                
+                int checkCount = 0;
+                DateTime lastStatusLog = DateTime.UtcNow;
+                
+                while (!token.IsCancellationRequested && !_ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        // ✅ 每 100ms 检查一次帧超时（比 500ms 超时时间更频繁，确保及时检测）
+                        await Task.Delay(100, token);
+                        
+                        checkCount++;
+                        
+                        // ✅ 每10秒记录一次任务状态，确保任务在运行
+                        var now = DateTime.UtcNow;
+                        if ((now - lastStatusLog).TotalSeconds >= 10)
+                        {
+                            // ✅ 添加重排序队列状态诊断
+                            string queueStatus = "null";
+                            if (_videoReorderQueue != null)
+                            {
+                                try
+                                {
+                                    var (processed, dropped, reordered, timeoutDropped, bufferSize) = _videoReorderQueue.GetStats();
+                                    queueStatus = $"bufferSize={bufferSize}, processed={processed}, dropped={dropped}, waiting={_waiting}";
+                                }
+                                catch
+                                {
+                                    queueStatus = "error getting stats";
+                                }
+                            }
+                            
+                            _logger.LogDebug("🔍 帧超时检查任务运行中：已检查 {Count} 次，videoStream={VideoStream}, queue={QueueStatus}, workerQueue={WorkerQueue}", 
+                                checkCount, _videoStream != null, queueStatus, _queue.Count);
+                            lastStatusLog = now;
+                        }
+                        
+                        // 检查视频流的帧超时
+                        _videoStream?.CheckFrameTimeout();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 帧超时检查任务异常");
+                    }
+                }
+                
+                _logger.LogInformation("帧超时检查任务已停止（共检查 {Count} 次）", checkCount);
+            }, token);
+        }
+
+        /// <summary>
+        /// 重置流状态（用于紧急恢复，不停止 worker）
+        /// </summary>
+        public void ResetState()
+        {
+            // ✅ 重置视频重排序队列（清除缓冲区，等待新的关键帧）
+            ResetVideoReorderQueue();
+            
+            // ✅ 重置健康状态（清除统计信息）
+            ResetHealthState();
+            
+            // ✅ 重置音频流状态（如果有）
+            if (_audioStream != null)
+            {
+                // 音频流通常不需要重置，但可以清理统计信息
+            }
+            
+            _logger.LogInformation("✅ AVHandler state reset completed (worker still running)");
         }
 
         public StreamPipelineStats GetAndResetStats()
@@ -925,7 +1122,40 @@ namespace RemotePlay.Services.Streaming.AV
 
         public StreamHealthSnapshot GetHealthSnapshot(bool resetDeltas = false, bool resetStreamStats = false)
         {
-            lock (_healthLock)
+            // ✅ 使用 TryEnter + 短超时，避免长时间阻塞 health 接口
+            if (!Monitor.TryEnter(_healthLock, TimeSpan.FromMilliseconds(100)))
+            {
+                // 拿不到锁，返回缓存的快照（避免阻塞）
+                _logger.LogDebug("⚠️ GetHealthSnapshot lock timeout, returning cached snapshot");
+                return new StreamHealthSnapshot
+                {
+                    Timestamp = _lastHealthTimestamp,
+                    LastStatus = _lastFrameStatus,
+                    Message = _lastHealthMessage,
+                    ConsecutiveFailures = _consecutiveVideoFailures,
+                    TotalRecoveredFrames = _totalRecoveredFrames,
+                    TotalFrozenFrames = _totalFrozenFrames,
+                    TotalDroppedFrames = _totalDroppedFrames,
+                    DeltaRecoveredFrames = _deltaRecoveredFrames,
+                    DeltaFrozenFrames = _deltaFrozenFrames,
+                    DeltaDroppedFrames = _deltaDroppedFrames,
+                    RecentWindowSeconds = (int)_healthWindow.TotalSeconds,
+                    RecentSuccessFrames = 0,
+                    RecentRecoveredFrames = 0,
+                    RecentFrozenFrames = 0,
+                    RecentDroppedFrames = 0,
+                    RecentFps = 0,
+                    AverageFrameIntervalMs = 0,
+                    LastFrameTimestampUtc = _lastFrameTimestampUtc,
+                    TotalFrames = 0,
+                    TotalBytes = 0,
+                    MeasuredBitrateMbps = 0,
+                    FramesLost = 0,
+                    FrameIndexPrev = -1
+                };
+            }
+
+            try
             {
                 var now = DateTime.UtcNow;
                 while (_recentFrameStatuses.Count > 0 && now - _recentFrameStatuses.Peek().Timestamp > _healthWindow)
@@ -1135,6 +1365,10 @@ namespace RemotePlay.Services.Streaming.AV
                     FramesLost = framesLostDelta,
                     FrameIndexPrev = frameIndexPrev
                 };
+            }
+            finally
+            {
+                Monitor.Exit(_healthLock);
             }
         }
 
