@@ -423,7 +423,7 @@ namespace RemotePlay.Services.Streaming
         public void SendCorrupt(int start, int end)
         {
             var data = ProtoHandler.CorruptFrame(start, end);
-			// 与 chiaki-ng 对齐：CORRUPTFRAME 使用 flag=1, channel=2
+			// CORRUPTFRAME 使用 flag=1, channel=2
 			SendData(data, channel: 2, flag: 1, proto: true);
         }
 
@@ -1084,7 +1084,7 @@ namespace RemotePlay.Services.Streaming
                     break;
 
                 case Protos.TakionMessage.Types.PayloadType.Connectionquality:
-                    // ✅ 处理连接质量消息（参考 chiaki-ng）
+                    // ✅ 处理连接质量消息
                     // PS5 发送的质量信息，包含目标码率、上行码率、丢失率、RTT 等
                     HandleConnectionQuality(message);
                     break;
@@ -1452,7 +1452,7 @@ namespace RemotePlay.Services.Streaming
                 // 启动 CongestionControl（66ms 间隔）
                 _congestionControl?.Start();
                 
-                // ✅ 对齐 chiaki-ng：启动周期性 IDR 请求器
+                // ✅ 启动周期性 IDR 请求器
                 // 目的：确保定期获得关键帧，避免长时间 P 帧累积导致的恢复困难
                 _ = Task.Run(async () =>
                 {
@@ -1461,7 +1461,7 @@ namespace RemotePlay.Services.Streaming
                         await Task.Delay(500, _cancellationToken); // 等待服务稳定
                         if (!_cancellationToken.IsCancellationRequested)
                         {
-                            _logger.LogInformation("🎬 启动 IDR 请求循环（对齐 chiaki-ng）");
+                            _logger.LogInformation("🎬 启动 IDR 请求循环");
                             await StartIdrRequesterAsync();
                         }
                     }
@@ -1644,6 +1644,7 @@ namespace RemotePlay.Services.Streaming
         
         /// <summary>
         /// 发送原始包的回调
+        /// 注意：对于拥塞控制包（类型 0x05），需要使用专门的处理逻辑
         /// </summary>
         private async Task SendRawPacketAsync(byte[] packet)
         {
@@ -1654,7 +1655,18 @@ namespace RemotePlay.Services.Streaming
                 return;
             }
             
-            SendRaw(packet);
+            // 检查是否为拥塞控制包（类型 0x05，大小 15 字节）
+            if (packet.Length == 15 && packet.Length > 0 && (packet[0] & 0x0F) == 0x05)
+            {
+                // 拥塞控制包需要特殊处理
+                SendCongestionControlPacket(packet);
+            }
+            else
+            {
+                // 其他包使用标准处理
+                SendRaw(packet);
+            }
+            
             await Task.CompletedTask;
         }
         
@@ -1834,7 +1846,6 @@ namespace RemotePlay.Services.Streaming
                 _lastFallbackTime = DateTime.UtcNow;
                 
                 // ✅ 轻度恢复：连续失败 2-4 次时触发快速恢复（不重建连接）
-                // 注意：chiaki-ng 不主动触发降档，只被动检测 profile 切换
                 if (_consecutiveSevereFailures >= 2 && _consecutiveSevereFailures < 5)
                 {
                     _ = TriggerLightRecoveryAsync(evt);
@@ -1844,7 +1855,6 @@ namespace RemotePlay.Services.Streaming
 
         /// <summary>
         /// 轻度恢复（快速恢复，不重建连接）
-        /// 注意：chiaki-ng 不主动触发降档，只被动检测 profile 切换
         /// </summary>
         private async Task TriggerLightRecoveryAsync(StreamHealthEvent evt)
         {
@@ -2009,7 +2019,7 @@ namespace RemotePlay.Services.Streaming
         }
 
         /// <summary>
-        /// 处理连接质量消息（参考 chiaki-ng）
+        /// 处理连接质量消息
         /// PS5 发送的质量信息，用于监控网络状况和帮助诊断降档问题
         /// </summary>
         private void HandleConnectionQuality(Protos.TakionMessage message)
@@ -2021,7 +2031,7 @@ namespace RemotePlay.Services.Streaming
                 return;
             }
 
-            // ✅ 计算实际测量的码率（参考 chiaki-ng）
+            // ✅ 计算实际测量的码率
             double measuredBitrateMbps = 0;
             if (_avHandler != null)
             {
@@ -2031,7 +2041,7 @@ namespace RemotePlay.Services.Streaming
                 measuredBitrateMbps = healthSnapshot.MeasuredBitrateMbps;
             }
 
-            // ✅ 记录质量信息（参考 chiaki-ng 的日志格式）
+            // ✅ 记录质量信息
             // 注意：protobuf 生成的字段不是可空类型，使用 HasXxx 检查是否设置，直接使用字段值（有默认值）
             _logger.LogInformation(
                 "📊 Connection Quality: target_bitrate={TargetBitrate} kbps, " +
@@ -2046,7 +2056,7 @@ namespace RemotePlay.Services.Streaming
                 quality.HasLoss ? quality.Loss : 0ul,
                 measuredBitrateMbps);
 
-            // ✅ 诊断：检查 PS5 的质量评估和降档条件
+            // ✅ 诊断：检查 PS5 的质量评估和条件
             var upstreamLoss = quality.HasUpstreamLoss ? quality.UpstreamLoss : 0f;
             var rtt = quality.HasRtt ? quality.Rtt : 0.0;
             var targetBitrate = quality.HasTargetBitrate ? quality.TargetBitrate : 0u;
@@ -2367,6 +2377,71 @@ namespace RemotePlay.Services.Streaming
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to send packet");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 发送拥塞控制包（类型 0x05，15 字节）
+        /// 根据 chiaki 的实现，需要先推进 key_pos，然后计算 GMAC
+        /// </summary>
+        private void SendCongestionControlPacket(byte[] packet)
+        {
+            if (_udpClient == null || _remoteEndPoint == null || _cipher == null)
+            {
+                if (!_isStopping)
+                {
+                    _logger.LogWarning("Cannot send congestion control packet: UDP client, remote endpoint or cipher is null");
+                }
+                return;
+            }
+
+            lock (_sendLock)
+            {
+                try
+                {
+                    // 拥塞控制包大小固定为 15 字节
+                    const int CONGESTION_PACKET_SIZE = 15;
+                    if (packet.Length != CONGESTION_PACKET_SIZE)
+                    {
+                        _logger.LogWarning("Invalid congestion control packet size: {Size}, expected {Expected}", 
+                            packet.Length, CONGESTION_PACKET_SIZE);
+                        return;
+                    }
+
+                    // 1. 先推进 key_pos（15 字节），获取新的 key_pos
+                    // 根据 chiaki: chiaki_takion_crypt_advance_key_pos(takion, CHIAKI_TAKION_CONGESTION_PACKET_SIZE, &key_pos)
+                    _cipher.AdvanceKeyPos(CONGESTION_PACKET_SIZE);
+                    var keyPos = (uint)_cipher.KeyPos;
+
+                    // 2. 更新包中的 key_pos（偏移 0x0b-0x0e）
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(
+                        packet.AsSpan(0x0b, 4), keyPos);
+
+                    // 3. 创建临时副本用于计算 GMAC
+                    var tmp = new byte[packet.Length];
+                    Buffer.BlockCopy(packet, 0, tmp, 0, packet.Length);
+
+                    // 4. 清零 GMAC（偏移 0x07-0x0a）和 key_pos（偏移 0x0b-0x0e）用于计算
+                    // 根据 chiaki: 在计算 GMAC 时需要临时清零 key_pos
+                    Array.Clear(tmp, 0x07, 4);  // GMAC
+                    Array.Clear(tmp, 0x0b, 4);  // key_pos
+
+                    // 5. 计算 GMAC（使用新的 key_pos）
+                    // 根据 chiaki: chiaki_takion_packet_mac 会处理拥塞控制包的特殊逻辑
+                    var gmac = _cipher.GetGmacAtKeyPos(tmp, (int)keyPos);
+                    var gmacValue = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(gmac);
+
+                    // 6. 写入 GMAC（偏移 0x07-0x0a）
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(
+                        packet.AsSpan(0x07, 4), gmacValue);
+
+                    // 7. 发送包
+                    _udpClient.Send(packet, packet.Length, _remoteEndPoint);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to send congestion control packet");
                 }
             }
         }

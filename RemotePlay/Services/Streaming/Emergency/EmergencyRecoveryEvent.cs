@@ -3,7 +3,7 @@ using System;
 namespace RemotePlay.Services.Streaming.Emergency
 {
     /// <summary>
-    /// Emergency 恢复事件类型（参考 chiaki-ng）
+    /// Emergency 恢复事件类型
     /// </summary>
     public enum EmergencyRecoveryEventType
     {
@@ -13,7 +13,7 @@ namespace RemotePlay.Services.Streaming.Emergency
     }
 
     /// <summary>
-    /// Emergency 恢复事件（参考 chiaki-ng 的 stream_connection 事件）
+    /// Emergency 恢复事件
     /// </summary>
     public readonly record struct EmergencyRecoveryEvent
     {

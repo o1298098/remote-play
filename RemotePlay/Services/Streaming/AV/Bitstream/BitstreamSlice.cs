@@ -1,7 +1,7 @@
 namespace RemotePlay.Services.Streaming.AV.Bitstream
 {
     /// <summary>
-    /// Slice 类型 - 对应 chiaki-ng 的 ChiakiBitstreamSliceType
+    /// Slice 类型
     /// </summary>
     public enum SliceType
     {
@@ -11,7 +11,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
     }
 
     /// <summary>
-    /// Bitstream Slice 信息 - 对应 chiaki-ng 的 ChiakiBitstreamSlice
+    /// Bitstream Slice 信息
     /// </summary>
     public class BitstreamSlice
     {

@@ -115,7 +115,7 @@ namespace RemotePlay.Services.Streaming
                 writer.WriteEndArray();
                 writer.WriteEndObject();
 
-                // ✅ videoCodec 和 dynamicRange 应该在顶级对象中（与 Chiaki 一致）
+                // ✅ videoCodec 和 dynamicRange 应该在顶级对象中
                 writer.WriteString("videoCodec", videoCodec == "hevc" ? "hevc" : "avc");
                 writer.WriteString("dynamicRange", hdr ? "HDR" : "SDR");
                 writer.WriteString("handshakeKey", Convert.ToBase64String(handshakeKey));
@@ -180,11 +180,11 @@ namespace RemotePlay.Services.Streaming
 
         /// <summary>
         /// 构建 Congestion 数据（网络拥塞统计）
-        /// 参考 Chiaki: 3 字节的简单格式
+        /// 3 字节的简单格式
         /// </summary>
         public static byte[] Congestion(int received, int lost)
         {
-            // Chiaki 的 Congestion 包 payload 只有 3 字节
+            // Congestion 包 payload 只有 3 字节
             // 简化为最小格式：[0x00, 0x00, 0x01]
             return new byte[] { 0x00, 0x00, 0x01 };
         }

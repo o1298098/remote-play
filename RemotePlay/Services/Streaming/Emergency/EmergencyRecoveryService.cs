@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace RemotePlay.Services.Streaming.Emergency
 {
     /// <summary>
-    /// Emergency 恢复服务（参考 chiaki-ng 的 stream_connection 状态机）
+    /// Emergency 恢复服务
     /// 
     /// 功能：
     /// 1. 检测长时间卡顿/失败
@@ -20,7 +20,7 @@ namespace RemotePlay.Services.Streaming.Emergency
     {
         #region Constants
 
-        // ✅ 恢复阈值（参考 chiaki-ng）
+        // ✅ 恢复阈值
         // ✅ 降低阈值以更快响应：从5次降低到3次，更快触发恢复
         private const int SEVERE_FAILURE_THRESHOLD = 3; // 连续严重失败次数
         // ✅ 缩短长时间卡顿阈值：从10秒降低到5秒，更快检测无数据包情况
@@ -112,7 +112,7 @@ namespace RemotePlay.Services.Streaming.Emergency
         #region Public Methods
 
         /// <summary>
-        /// 处理流健康事件（参考 chiaki-ng 的 stream_connection 状态机）
+        /// 处理流健康事件
         /// </summary>
         public void OnStreamHealthEvent(StreamHealthEvent evt)
         {
@@ -304,7 +304,7 @@ namespace RemotePlay.Services.Streaming.Emergency
         #region Private Methods
 
         /// <summary>
-        /// 判断是否应该触发恢复（参考 chiaki-ng）
+        /// 判断是否应该触发恢复
         /// </summary>
         private bool ShouldTriggerRecovery()
         {
@@ -374,7 +374,7 @@ namespace RemotePlay.Services.Streaming.Emergency
         }
 
         /// <summary>
-        /// 触发恢复流程（参考 chiaki-ng 的 stream_connection 状态机）
+        /// 触发恢复流程
         /// ✅ 增强版：单实例保证 + 阶段性超时 + 熔断机制 + 服务层通知
         /// </summary>
         private async Task TriggerRecoveryAsync(StreamHealthEvent evt)

@@ -48,7 +48,7 @@ namespace RemotePlay.Services.Streaming.Receiver
         private bool _audioConnectionWarningLogged = false;
         private int _videoWriteErrorCount = 0;
         
-        // Opus 解码器（用于将 Opus 帧解码为 PCM，与 Chiaki 一致）
+        // Opus 解码器（用于将 Opus 帧解码为 PCM）
         private IOpusDecoder? _opusDecoder;
         private readonly object _opusDecoderLock = new object();
 
@@ -814,7 +814,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         _audioFrameSize = frameSize;
                     }
                     
-                    // 初始化 Opus 解码器（与 Chiaki 一致：使用 libopus 直接解码 Opus 帧为 PCM）
+                    // 初始化 Opus 解码器（使用 libopus 直接解码 Opus 帧为 PCM）
                     if (rate > 0 && channels > 0)
                     {
                         lock (_opusDecoderLock)
@@ -997,7 +997,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     else
                     {
                         // 使用 Opus 解码器解码为 PCM
-                        // 根据 Chiaki：opus_decode(decoder, buf, buf_size, pcm_buf, frame_size, 0)
+                        // opus_decode(decoder, buf, buf_size, pcm_buf, frame_size, 0)
                         // Concentus 的 IOpusDecoder.Decode 返回解码的样本数
                         // IOpusDecoder 使用 float[] 作为输出缓冲区
                         // frame_size 参数是每声道的样本数

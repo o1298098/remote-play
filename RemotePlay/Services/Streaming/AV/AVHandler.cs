@@ -9,7 +9,7 @@ using System.Linq;
 namespace RemotePlay.Services.Streaming.AV
 {
     /// <summary>
-    /// AV 处理器 V2 - 参考 chiaki-ng 的架构重新实现
+    /// AV 处理器 V2
     /// 使用 FrameProcessor 和 VideoReceiver 分离关注点
     /// </summary>
     public sealed class AVHandler

@@ -6,7 +6,6 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
 {
     /// <summary>
     /// 参考帧管理器 - 管理已成功解码的参考帧
-    /// 参考 chiaki-ng 的 reference_frames[16] 实现
     /// </summary>
     public class ReferenceFrameManager
     {
@@ -37,7 +36,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
         }
 
         /// <summary>
-        /// 添加参考帧（参考 chiaki-ng 的 add_ref_frame）
+        /// 添加参考帧
         /// </summary>
         public void AddReferenceFrame(int frameIndex)
         {
@@ -67,7 +66,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
         }
 
         /// <summary>
-        /// 检查是否有指定的参考帧（参考 chiaki-ng 的 have_ref_frame）
+        /// 检查是否有指定的参考帧
         /// </summary>
         public bool HasReferenceFrame(int frameIndex)
         {

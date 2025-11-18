@@ -5,7 +5,6 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
 {
     /// <summary>
     /// Bitstream 解析器 - 解析 H.264/H.265 slice header
-    /// 参考 chiaki-ng 的 chiaki_bitstream_slice 实现
     /// 
     /// 注意：这是一个简化实现，完整实现需要复杂的 RBSP 解析
     /// 当前实现主要关注 P 帧的 reference_frame 字段
@@ -23,7 +22,6 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
 
         /// <summary>
         /// 解析 slice header，提取 slice_type 和 reference_frame
-        /// 参考 chiaki-ng: chiaki_bitstream_slice
         /// </summary>
         public bool ParseSlice(byte[] frameData, out BitstreamSlice slice)
         {
@@ -165,7 +163,6 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
         /// <summary>
         /// 修改 slice 中的参考帧索引
         /// 注意：这是一个占位实现，完整的实现需要修改 RBSP 编码
-        /// 参考 chiaki-ng: chiaki_bitstream_slice_set_reference_frame
         /// 
         /// 由于 bitstream 修改非常复杂，当前实现返回 false
         /// 实际应用中，如果解码器支持，可以在解码前进行修改

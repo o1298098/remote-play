@@ -4,7 +4,7 @@ namespace RemotePlay.Services.Streaming.Congestion
 {
     /// <summary>
     /// 带宽估算器 - 使用滑动窗口跟踪网络状况
-    /// 参考 chiaki-ng 的 packetstats 实现，但增加了时间窗口和带宽估算
+    /// 增加了时间窗口和带宽估算
     /// </summary>
     public class BandwidthEstimator
     {

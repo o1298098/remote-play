@@ -7,7 +7,7 @@ using System.Collections.Generic;
 namespace RemotePlay.Services.Streaming.AV
 {
     /// <summary>
-    /// 视频接收器 - 参考 chiaki-ng 的 ChiakiVideoReceiver
+    /// 视频接收器
     /// 负责处理视频流，包括 profile 切换、帧索引跟踪、参考帧管理等
     /// </summary>
     public class VideoReceiver
@@ -49,7 +49,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 设置视频 profiles（参考 chiaki_video_receiver_stream_info）
+        /// 设置视频 profiles
         /// </summary>
         public void SetStreamInfo(VideoProfile[] profiles)
         {
@@ -71,7 +71,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 处理 AV 包（参考 chiaki_video_receiver_av_packet）
+        /// 处理 AV 包
         /// </summary>
         public void ProcessPacket(AVPacket packet, byte[] decryptedData, Action<byte[], bool, bool>? onFrameReady)
         {
@@ -159,7 +159,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 刷新帧（参考 chiaki_video_receiver_flush_frame）
+        /// 刷新帧
         /// </summary>
         private void FlushFrame(Action<byte[], bool, bool>? onFrameReady)
         {

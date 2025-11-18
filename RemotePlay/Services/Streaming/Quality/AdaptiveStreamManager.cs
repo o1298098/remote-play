@@ -8,7 +8,6 @@ namespace RemotePlay.Services.Streaming.Quality
 {
     /// <summary>
     /// 自适应流管理器 - 管理多个视频 Profile 并检测切换
-    /// 参考 chiaki-ng 的 ChiakiVideoReceiver 实现
     /// </summary>
     public class AdaptiveStreamManager
     {

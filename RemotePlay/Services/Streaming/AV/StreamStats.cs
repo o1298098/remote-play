@@ -2,7 +2,6 @@ namespace RemotePlay.Services.Streaming.AV
 {
     /// <summary>
     /// 流统计器 - 跟踪帧数和字节数，计算实际码率
-    /// 参考 chiaki-ng 的 ChiakiStreamStats 实现
     /// </summary>
     public class StreamStats
     {
@@ -40,7 +39,6 @@ namespace RemotePlay.Services.Streaming.AV
 
         /// <summary>
         /// 重置统计信息
-        /// 参考 chiaki-ng: chiaki_stream_stats_reset
         /// </summary>
         public void Reset()
         {
@@ -53,7 +51,6 @@ namespace RemotePlay.Services.Streaming.AV
 
         /// <summary>
         /// 记录一帧
-        /// 参考 chiaki-ng: chiaki_stream_stats_frame
         /// </summary>
         /// <param name="size">帧大小（字节）</param>
         public void RecordFrame(ulong size)
@@ -67,7 +64,6 @@ namespace RemotePlay.Services.Streaming.AV
 
         /// <summary>
         /// 计算码率（比特/秒）
-        /// 参考 chiaki-ng: chiaki_stream_stats_bitrate
         /// 公式: (bytes * 8 * framerate) / frames
         /// </summary>
         /// <param name="framerate">帧率（fps）</param>
@@ -79,14 +75,12 @@ namespace RemotePlay.Services.Streaming.AV
                 if (_frames == 0)
                     return 0;
                 
-                // 参考 chiaki-ng: (stats->bytes * 8 * framerate) / stats->frames
                 return (_bytes * 8 * framerate) / _frames;
             }
         }
 
         /// <summary>
         /// 获取码率（Mbps）
-        /// 参考 chiaki-ng: measured_bitrate = bitrate / 1000000.0
         /// </summary>
         /// <param name="framerate">帧率（fps）</param>
         /// <returns>码率（Mbps）</returns>

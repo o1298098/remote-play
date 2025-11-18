@@ -6,7 +6,7 @@ using System.Collections.Generic;
 namespace RemotePlay.Services.Streaming.AV
 {
     /// <summary>
-    /// 帧处理器 - 参考 chiaki-ng 的 ChiakiFrameProcessor
+    /// 帧处理器
     /// 负责帧的组装和 FEC 恢复
     /// </summary>
     public class FrameProcessor
@@ -60,7 +60,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 分配帧缓冲区（参考 chiaki_frame_processor_alloc_frame）
+        /// 分配帧缓冲区
         /// </summary>
         public bool AllocFrame(AVPacketWrapper packet)
         {
@@ -135,7 +135,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 添加 unit 数据（参考 chiaki_frame_processor_put_unit）
+        /// 添加 unit 数据
         /// </summary>
         public bool PutUnit(AVPacketWrapper packet)
         {
@@ -184,7 +184,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 检查是否可以刷新（参考 chiaki_frame_processor_flush_possible）
+        /// 检查是否可以刷新
         /// </summary>
         public bool FlushPossible()
         {
@@ -195,7 +195,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 刷新帧（参考 chiaki_frame_processor_flush）
+        /// 刷新帧
         /// </summary>
         public FlushResult Flush(out byte[]? frame, out int frameSize)
         {
@@ -271,7 +271,7 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// FEC 恢复（参考 chiaki_frame_processor_fec）
+        /// FEC 恢复
         /// </summary>
         private bool TryFecRecovery()
         {

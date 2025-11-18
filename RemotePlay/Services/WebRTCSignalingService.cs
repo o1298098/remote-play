@@ -471,6 +471,27 @@ namespace RemotePlay.Services
             {
                 try
                 {
+                    // ✅ 自动停止流会话（如果存在）
+                    if (_streamingService != null && session.StreamingSessionId.HasValue)
+                    {
+                        try
+                        {
+                            var stopped = await _streamingService.StopStreamAsync(session.StreamingSessionId.Value);
+                            if (stopped)
+                            {
+                                _logger.LogInformation("✅ 流会话已停止: {StreamingSessionId}", session.StreamingSessionId.Value);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("⚠️ 停止流会话失败或流会话不存在: {StreamingSessionId}", session.StreamingSessionId.Value);
+                            }
+                        }
+                        catch (Exception streamEx)
+                        {
+                            _logger.LogWarning(streamEx, "⚠️ 停止流会话时出错: {StreamingSessionId}", session.StreamingSessionId.Value);
+                        }
+                    }
+
                     // ✅ 自动断开控制器连接
                     if (_controllerService != null && Guid.TryParse(sessionId, out var sessionGuid))
                     {
