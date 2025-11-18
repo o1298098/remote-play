@@ -646,6 +646,27 @@ namespace RemotePlay.Services.Streaming.Receiver
                 _logger.LogError(ex, "❌ 发送音频包失败");
             }
         }
+
+        /// <summary>
+        /// 重置音频解码器（当检测到帧丢失时调用，防止解码器状态损坏导致爆音）
+        /// </summary>
+        public void ResetAudioDecoder()
+        {
+            lock (_opusDecoderLock)
+            {
+                try
+                {
+                    _opusDecoder?.Dispose();
+                    _opusDecoder = null;
+                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失）");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ 重置音频解码器失败");
+                    _opusDecoder = null;
+                }
+            }
+        }
         
         /// <summary>
         /// 转码并发送音频：Opus -> PCM -> PCMU (G.711 μ-law)

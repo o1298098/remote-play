@@ -1,6 +1,7 @@
 using RemotePlay.Models.PlayStation;
 using RemotePlay.Models.Streaming;
 using RemotePlay.Services.Streaming.Quality;
+using RemotePlay.Services.Streaming.Receiver;
 using RemotePlay.Utils.Crypto;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -152,6 +153,22 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 _audioReceiver.SetHeader(audioHeader);
             }
+            
+            // ✅ 设置帧丢失回调：当检测到帧丢失时，通知 receiver 重置解码器
+            _audioReceiver.SetFrameLossCallback(() =>
+            {
+                if (_receiver is WebRTCReceiver webrtcReceiver)
+                {
+                    try
+                    {
+                        webrtcReceiver.ResetAudioDecoder();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ 重置音频解码器失败");
+                    }
+                }
+            });
 
             if (_cipher != null)
             {

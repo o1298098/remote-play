@@ -11,10 +11,22 @@ namespace RemotePlay.Services.Streaming.AV
         private readonly ILogger<AudioReceiver>? _logger;
         private ushort _frameIndexPrev = 0;
         private bool _frameIndexStartup = true;
+        private Action? _onFrameLossCallback; // ✅ 帧丢失回调
+
+        // ✅ 帧丢失检测阈值：当帧索引跳跃超过此值时，认为发生了帧丢失
+        private const int MAX_FRAME_GAP = 5; // 允许最多丢失 5 帧，超过则重置解码器
 
         public AudioReceiver(ILogger<AudioReceiver>? logger = null)
         {
             _logger = logger;
+        }
+
+        /// <summary>
+        /// 设置帧丢失回调（当检测到帧丢失时调用）
+        /// </summary>
+        public void SetFrameLossCallback(Action? callback)
+        {
+            _onFrameLossCallback = callback;
         }
 
         public void SetHeader(byte[] header)
@@ -109,10 +121,33 @@ namespace RemotePlay.Services.Streaming.AV
             if (!IsFrameIndexGreater(frameIndex, _frameIndexPrev))
                 return; // 跳过旧的或重复的帧
 
+            // ✅ 检测帧丢失：如果帧索引跳跃过大，说明发生了丢包
+            int frameGap = CalculateFrameGap(frameIndex, _frameIndexPrev);
+            if (frameGap > MAX_FRAME_GAP)
+            {
+                _logger?.LogWarning("⚠️ 检测到音频帧丢失：从 {Prev} 跳到 {Current}，丢失 {Gap} 帧，将重置解码器",
+                    _frameIndexPrev, frameIndex, frameGap);
+                
+                // 通知上层重置解码器
+                _onFrameLossCallback?.Invoke();
+            }
+
             _frameIndexPrev = frameIndex;
 
             // 直接发送 unit 数据作为音频帧
             onFrameReady(unitData);
+        }
+
+        /// <summary>
+        /// 计算帧索引之间的差距（考虑回绕）
+        /// </summary>
+        private static int CalculateFrameGap(ushort current, ushort prev)
+        {
+            int diff = (current - prev) & 0xFFFF;
+            // 如果 diff > 0x8000，说明发生了回绕，实际差距是 65536 - diff
+            if (diff > 0x8000)
+                return (65536 - diff);
+            return diff;
         }
 
         /// <summary>
