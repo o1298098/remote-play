@@ -89,6 +89,7 @@ namespace RemotePlay.Services
 
                 if (_config.TurnServers?.Count > 0)
                 {
+                    int turnServerCount = 0;
                     foreach (var turn in _config.TurnServers.Where(t => !string.IsNullOrWhiteSpace(t.Url)))
                     {
                         config.iceServers.Add(new RTCIceServer
@@ -97,7 +98,15 @@ namespace RemotePlay.Services
                             username = turn.Username,
                             credential = turn.Credential
                         });
+                        turnServerCount++;
+                        _logger.LogInformation("🌐 添加 TURN 服务器: {Url} (用户名: {Username})", 
+                            turn.Url, string.IsNullOrWhiteSpace(turn.Username) ? "无" : "已设置");
                     }
+                    _logger.LogInformation("✅ 已配置 {Count} 个 TURN 服务器", turnServerCount);
+                }
+                else
+                {
+                    _logger.LogInformation("ℹ️ 未配置 TURN 服务器，将仅使用 STUN 和直接连接");
                 }
 
                 var peerConnection = new RTCPeerConnection(config, portRange: _portRange);
@@ -161,34 +170,81 @@ namespace RemotePlay.Services
                 // 🧊 等待 ICE Gathering
                 var tcs = new TaskCompletionSource<bool>();
                 int candidateCount = 0;
+                int hostCandidateCount = 0;
+                int srflxCandidateCount = 0;
+                int relayCandidateCount = 0;
                 bool gatheringComplete = false;
+                bool hasTurnServers = _config.TurnServers?.Count > 0;
 
                 peerConnection.onicecandidate += (candidate) =>
                 {
                     if (candidate != null)
                     {
                         candidateCount++;
+                        
+                        // 统计候选地址类型
+                        var candidateStr = candidate.candidate?.ToLowerInvariant() ?? "";
+                        if (candidateStr.Contains("typ host"))
+                            hostCandidateCount++;
+                        else if (candidateStr.Contains("typ srflx"))
+                            srflxCandidateCount++;
+                        else if (candidateStr.Contains("typ relay"))
+                            relayCandidateCount++;
+                        
                         try { peerConnection.addLocalIceCandidate(candidate); }
                         catch { /* 已自动添加 */ }
+                        
+                        // 记录TURN候选地址（重要）
+                        if (candidateStr.Contains("typ relay"))
+                        {
+                            _logger.LogInformation("🌐 发现 TURN relay 候选地址: {Candidate}", candidate.candidate);
+                        }
                     }
                     else
                     {
                         gatheringComplete = true;
-                        _logger.LogInformation("🧊 ICE Gathering 完成，共 {Count} 个 candidates", candidateCount);
+                        _logger.LogInformation("🧊 ICE Gathering 完成，共 {Count} 个 candidates (host={Host}, srflx={Srflx}, relay={Relay})", 
+                            candidateCount, hostCandidateCount, srflxCandidateCount, relayCandidateCount);
                         tcs.TrySetResult(true);
                     }
                 };
 
-                // ⚡ 降低等待时间（默认5s → 2s）
-                await Task.WhenAny(tcs.Task, Task.Delay(2000));
+                // ⚡ 根据是否配置TURN服务器调整等待时间
+                // TURN服务器需要更长时间来建立连接和分配中继地址
+                int waitTimeoutMs = hasTurnServers ? 8000 : 2000; // TURN: 8秒，无TURN: 2秒
+                
+                await Task.WhenAny(tcs.Task, Task.Delay(waitTimeoutMs));
 
                 if (!gatheringComplete)
-                    _logger.LogWarning("⚠️ ICE Gathering 未完成，继续使用现有 SDP");
+                {
+                    _logger.LogWarning("⚠️ ICE Gathering 未完成（等待{Timeout}ms），已收集 {Count} 个 candidates (host={Host}, srflx={Srflx}, relay={Relay})。继续使用现有 SDP", 
+                        waitTimeoutMs, candidateCount, hostCandidateCount, srflxCandidateCount, relayCandidateCount);
+                    
+                    // 如果配置了TURN但没有收集到relay候选，发出警告
+                    if (hasTurnServers && relayCandidateCount == 0)
+                    {
+                        _logger.LogWarning("⚠️ 配置了TURN服务器但未收集到relay候选地址，请检查：1) TURN服务器是否可访问 2) 用户名密码是否正确 3) 防火墙是否开放UDP端口");
+                    }
+                }
 
                 // 🧩 优化 SDP（低延迟关键）
                 var finalSdp = OptimizeSdpForLowLatency(peerConnection.localDescription.sdp.ToString());
                 finalSdp = ApplyPublicIpToSdp(finalSdp);
                 finalSdp = PrioritizeLanCandidates(finalSdp, preferLanCandidatesOverride);
+
+                // ✅ 验证SDP中是否包含TURN候选地址
+                if (hasTurnServers)
+                {
+                    bool hasRelayCandidate = finalSdp.Contains("typ relay", StringComparison.OrdinalIgnoreCase);
+                    if (hasRelayCandidate)
+                    {
+                        _logger.LogInformation("✅ SDP 中包含 TURN relay 候选地址");
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ SDP 中未找到 TURN relay 候选地址。可能原因：1) ICE gathering未完成 2) TURN服务器连接失败 3) 需要更长的等待时间");
+                    }
+                }
 
                 return (sessionId, finalSdp);
             }
