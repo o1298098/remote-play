@@ -224,13 +224,13 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 var (switched, newProfile, needUpdateHeader) = _adaptiveStreamManager.CheckAndHandleSwitch(packet, _profileSwitchCallback);
                 
+                // ✅ 注意：VideoReceiver.ProcessPacket 已经会自动处理 profile 切换
+                // 不需要在这里再次调用 SetStreamInfo，因为 profiles 数组本身没有变化
+                // 只是当前使用的 profile index 变了，ProcessPacket 会检测并处理
                 if (switched && needUpdateHeader && newProfile != null)
                 {
-                    // 更新 VideoReceiver 的 profiles
-                    if (_videoReceiver != null && _videoProfiles != null)
-                    {
-                        _videoReceiver.SetStreamInfo(_videoProfiles);
-                    }
+                    _logger.LogDebug("Profile switched to {Index}, VideoReceiver will handle it in ProcessPacket", 
+                        newProfile.Index);
                 }
             }
 

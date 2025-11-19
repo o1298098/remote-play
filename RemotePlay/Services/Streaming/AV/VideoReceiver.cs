@@ -68,10 +68,31 @@ namespace RemotePlay.Services.Streaming.AV
         {
             lock (_lock)
             {
+                // ✅ 如果 profiles 已经设置过，检查是否需要更新
                 if (_profiles.Length > 0)
                 {
-                    _logger?.LogError("Video Receiver profiles already set");
-                    return;
+                    // 如果 profiles 数组相同（引用相同或内容相同），则忽略
+                    if (profiles != null && profiles.Length == _profiles.Length)
+                    {
+                        bool isSame = true;
+                        for (int i = 0; i < profiles.Length; i++)
+                        {
+                            if (profiles[i] != _profiles[i])
+                            {
+                                isSame = false;
+                                break;
+                            }
+                        }
+                        if (isSame)
+                        {
+                            _logger?.LogDebug("Video Receiver profiles already set (same profiles), skipping");
+                            return;
+                        }
+                    }
+                    
+                    // 如果 profiles 不同，允许更新（用于 profile 切换场景）
+                    _logger?.LogInformation("Video Receiver profiles updating (was {OldCount}, now {NewCount})", 
+                        _profiles.Length, profiles?.Length ?? 0);
                 }
 
                 _profiles = profiles ?? Array.Empty<VideoProfile>();

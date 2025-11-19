@@ -1073,12 +1073,42 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       setWebrtcSessionId(webrtcSessionIdValue)
       webrtcSessionIdRef.current = webrtcSessionIdValue
 
-      const iceServers: RTCIceServer[] = [
-        { urls: 'stun:stun.qcloudtrtc.com:8000' },
-        { urls: 'stun:stun.alibabacloud.com:3478' },
-        { urls: 'stun:stun.agora.io:3478' },
+      // 默认的 STUN 服务器列表
+      const defaultIceServers: RTCIceServer[] = [
         { urls: 'stun:stun.l.google.com:19302' },
       ]
+
+      // 获取用户配置的 TURN 服务器
+      let turnServers: RTCIceServer[] = []
+      try {
+        const turnConfigResponse = await streamingService.getTurnConfig()
+        if (turnConfigResponse.success && turnConfigResponse.data) {
+          const turnConfig = turnConfigResponse.data
+          if (turnConfig.turnServers && turnConfig.turnServers.length > 0) {
+            turnServers = turnConfig.turnServers
+              .filter((server) => server.url) // 过滤掉没有 URL 的服务器
+              .map((server) => {
+                const iceServer: RTCIceServer = {
+                  urls: server.url!,
+                }
+                if (server.username) {
+                  iceServer.username = server.username
+                }
+                if (server.credential) {
+                  iceServer.credential = server.credential
+                }
+                return iceServer
+              })
+            console.log('✅ 加载了用户配置的 TURN 服务器:', turnServers.length, '个')
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ 获取 TURN 配置失败，使用默认配置:', error)
+      }
+
+      // 合并 STUN 和 TURN 服务器配置
+      // TURN 服务器优先，因为它们在 NAT 穿透方面更可靠
+      const iceServers: RTCIceServer[] = [...turnServers, ...defaultIceServers]
 
       const peerConnection = new RTCPeerConnection({
         iceServers,

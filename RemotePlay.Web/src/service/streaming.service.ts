@@ -59,6 +59,22 @@ export interface StreamHealth {
   audioLost: number
 }
 
+// WebRTC 配置（包含 TURN 服务器配置）
+export interface WebRTCConfig {
+  publicIp?: string | null
+  icePortMin?: number | null
+  icePortMax?: number | null
+  shufflePorts?: boolean
+  turnServers: TurnServerConfig[]
+  preferLanCandidates?: boolean
+}
+
+export interface TurnServerConfig {
+  url?: string | null
+  username?: string | null
+  credential?: string | null
+}
+
 /**
  * 串流服务
  */
@@ -158,6 +174,15 @@ export const streamingService = {
    */
   getStreamHealth: async (sessionId: string): Promise<ApiResponse<StreamHealth>> => {
     return apiRequest<StreamHealth>(`/streaming/session/${encodeURIComponent(sessionId)}/health`, {
+      method: 'GET',
+    })
+  },
+
+  /**
+   * 获取用户的 WebRTC TURN 服务器配置
+   */
+  getTurnConfig: async (): Promise<ApiResponse<WebRTCConfig>> => {
+    return apiRequest<WebRTCConfig>('/streaming/webrtc/turn-config', {
       method: 'GET',
     })
   },

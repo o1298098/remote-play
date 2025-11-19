@@ -1,7 +1,18 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.Base;
-using RemotePlay.Models.Streaming;
+using RemotePlay.Models.Configuration;
+using RemotePlay.Models.Context;
 using RemotePlay.Services.Streaming.AV;
 using RemotePlay.Services.Streaming;
 
@@ -11,14 +22,22 @@ namespace RemotePlay.Controllers
     [Route("api/[controller]")]
     public class StreamingController : ControllerBase
     {
+        private const string TurnConfigKey = "webrtc.turn_servers";
+
         private readonly IStreamingService _streamingService;
+        private readonly IOptions<WebRTCConfig> _webRtcConfig;
+        private readonly RPContext _context;
         private readonly ILogger<StreamingController> _logger;
 
         public StreamingController(
             IStreamingService streamingService,
+            IOptions<WebRTCConfig> webRtcConfig,
+            RPContext context,
             ILogger<StreamingController> logger)
         {
             _streamingService = streamingService;
+            _webRtcConfig = webRtcConfig;
+            _context = context;
             _logger = logger;
         }
 
@@ -74,33 +93,26 @@ namespace RemotePlay.Controllers
         [HttpGet("session/{sessionId:guid}/health")]
         public async Task<ActionResult<ResponseModel>> GetStreamHealth(Guid sessionId)
         {
-            try
+            if (sessionId == Guid.Empty)
             {
-                _logger.LogDebug("📊 GetStreamHealth called: sessionId={SessionId}", sessionId);
-                
-                if (sessionId == Guid.Empty)
+                return BadRequest(new ApiErrorResponse
                 {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Success = false,
-                        ErrorMessage = "SessionId 不能为空"
-                    });
-                }
+                    Success = false,
+                    ErrorMessage = "SessionId 不能为空"
+                });
+            }
 
-                var stream = await _streamingService.GetStreamAsync(sessionId);
-                if (stream == null)
+            var stream = await _streamingService.GetStreamAsync(sessionId);
+            if (stream == null)
+            {
+                return NotFound(new ApiErrorResponse
                 {
-                    _logger.LogWarning("⚠️ GetStreamHealth: stream not found for sessionId={SessionId}", sessionId);
-                    return NotFound(new ApiErrorResponse
-                    {
-                        Success = false,
-                        ErrorMessage = "远程播放流不存在或已结束"
-                    });
-                }
+                    Success = false,
+                    ErrorMessage = "远程播放流不存在或已结束"
+                });
+            }
 
-                _logger.LogDebug("📊 GetStreamHealth: calling stream.GetStreamHealth() for sessionId={SessionId}", sessionId);
-                var (snapshot, stats) = stream.GetStreamHealth();
-                _logger.LogDebug("📊 GetStreamHealth: got health snapshot for sessionId={SessionId}, fps={Fps}", sessionId, stats.FrameOutputFps);
+            var (snapshot, stats) = stream.GetStreamHealth();
             var dto = new StreamHealthDto
             {
                 Timestamp = snapshot.Timestamp,
@@ -109,55 +121,157 @@ namespace RemotePlay.Controllers
                 ConsecutiveFailures = snapshot.ConsecutiveFailures,
                 TotalRecoveredFrames = snapshot.TotalRecoveredFrames,
                 TotalFrozenFrames = snapshot.TotalFrozenFrames,
-                TotalDroppedFrames = snapshot.TotalDroppedFrames,
-                DeltaRecoveredFrames = snapshot.DeltaRecoveredFrames,
-                DeltaFrozenFrames = snapshot.DeltaFrozenFrames,
-                DeltaDroppedFrames = snapshot.DeltaDroppedFrames,
-                RecentWindowSeconds = snapshot.RecentWindowSeconds,
-                RecentSuccessFrames = snapshot.RecentSuccessFrames,
-                RecentRecoveredFrames = snapshot.RecentRecoveredFrames,
-                RecentFrozenFrames = snapshot.RecentFrozenFrames,
-                RecentDroppedFrames = snapshot.RecentDroppedFrames,
-                RecentFps = snapshot.RecentFps,
-                AverageFrameIntervalMs = snapshot.AverageFrameIntervalMs,
-                LastFrameTimestampUtc = snapshot.LastFrameTimestampUtc == DateTime.MinValue ? null : snapshot.LastFrameTimestampUtc,
-                TotalFrames = snapshot.TotalFrames,
-                TotalBytes = snapshot.TotalBytes,
-                MeasuredBitrateMbps = snapshot.MeasuredBitrateMbps,
-                FramesLost = snapshot.FramesLost,
-                FrameIndexPrev = snapshot.FrameIndexPrev,
                 VideoReceived = stats.VideoReceived,
                 VideoLost = stats.VideoLost,
                 AudioReceived = stats.AudioReceived,
-                AudioLost = stats.AudioLost,
-                PendingPackets = stats.PendingPackets,
-                TotalIdrRequests = stats.TotalIdrRequests,
-                IdrRequestsRecent = stats.IdrRequestsRecent,
-                IdrRequestWindowSeconds = stats.IdrRequestWindowSeconds,
-                LastIdrRequestUtc = stats.LastIdrRequestUtc,
-                FecAttempts = stats.FecAttempts,
-                FecSuccess = stats.FecSuccess,
-                FecFailures = stats.FecFailures,
-                FecSuccessRate = stats.FecSuccessRate,
-                FrameOutputFps = stats.FrameOutputFps,
-                FrameIntervalMs = stats.FrameIntervalMs
+                AudioLost = stats.AudioLost
             };
 
-                return Ok(new ApiSuccessResponse<StreamHealthDto>
+            return Ok(new ApiSuccessResponse<StreamHealthDto>
+            {
+                Success = true,
+                Data = dto,
+                Message = "获取流健康状态成功"
+            });
+        }
+
+        /// <summary>
+        /// 获取当前用户的 WebRTC TURN 服务器配置
+        /// </summary>
+        [HttpGet("webrtc/turn-config")]
+        [Authorize]
+        public async Task<ActionResult<ResponseModel>> GetWebRTCTurnConfig(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "未授权"
+                    });
+                }
+
+                // 从配置文件中获取默认配置（通过环境变量配置）
+                var defaultConfig = _webRtcConfig.Value ?? new WebRTCConfig();
+                var result = new WebRTCConfig
+                {
+                    PublicIp = defaultConfig.PublicIp,
+                    IcePortMin = defaultConfig.IcePortMin,
+                    IcePortMax = defaultConfig.IcePortMax,
+                    ShufflePorts = defaultConfig.ShufflePorts,
+                    PreferLanCandidates = defaultConfig.PreferLanCandidates,
+                    TurnServers = defaultConfig.TurnServers?.ToList() ?? new List<TurnServerConfig>()
+                };
+
+                // 尝试从数据库获取用户特定的 TURN 配置
+                var userConfig = await _context.DeviceConfigs
+                    .AsNoTracking()
+                    .Where(dc => dc.UserId == userId
+                        && dc.ConfigKey == TurnConfigKey
+                        && dc.IsActive)
+                    .OrderByDescending(dc => dc.UpdatedAt ?? dc.CreatedAt)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (userConfig != null && !string.IsNullOrWhiteSpace(userConfig.ConfigValue))
+                {
+                    try
+                    {
+                        WebRTCConfig? userTurnConfig = null;
+
+                        // 尝试从 ConfigJson 字段解析
+                        if (userConfig.ConfigJson != null)
+                        {
+                            userTurnConfig = ParseTurnConfigFromJson(userConfig.ConfigJson);
+                        }
+
+                        // 如果 ConfigJson 没有结果，尝试从 ConfigValue 字段解析 JSON
+                        if (userTurnConfig == null && !string.IsNullOrWhiteSpace(userConfig.ConfigValue))
+                        {
+                            var jsonObj = JObject.Parse(userConfig.ConfigValue);
+                            userTurnConfig = ParseTurnConfigFromJson(jsonObj);
+                        }
+
+                        // 如果解析成功且有 TURN 服务器配置，则用用户配置覆盖默认配置
+                        if (userTurnConfig != null && userTurnConfig.TurnServers.Count > 0)
+                        {
+                            result.TurnServers = userTurnConfig.TurnServers;
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 解析用户 {UserId} 的 TURN 配置 JSON 失败，使用默认配置", userId);
+                    }
+                }
+
+                return Ok(new ApiSuccessResponse<WebRTCConfig>
                 {
                     Success = true,
-                    Data = dto,
-                    Message = "获取流健康状态成功"
+                    Data = result,
+                    Message = "获取 TURN 配置成功"
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ GetStreamHealth failed for sessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "❌ StreamingController 获取 TURN 配置失败");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取流健康状态失败"
+                    ErrorMessage = "获取 TURN 配置失败: " + ex.Message
                 });
+            }
+        }
+
+        private WebRTCConfig? ParseTurnConfigFromJson(JObject json)
+        {
+            try
+            {
+                var turnServers = new List<TurnServerConfig>();
+
+                // 支持多种格式：
+                // 1. { "turnServers": [...] }
+                // 2. { "servers": [...] }
+                // 3. { "TurnServers": [...] } (直接序列化的 WebRTCConfig)
+                var serversToken = json["turnServers"] ?? json["TurnServers"] ?? json["servers"];
+                if (serversToken == null || serversToken.Type != JTokenType.Array)
+                {
+                    return null;
+                }
+
+                foreach (var serverToken in serversToken)
+                {
+                    if (serverToken.Type != JTokenType.Object)
+                    {
+                        continue;
+                    }
+
+                    var serverObj = (JObject)serverToken;
+                    // 支持 "url" 和 "urls" 两种字段名
+                    var url = serverObj["url"]?.ToString() ?? serverObj["Url"]?.ToString() ?? serverObj["urls"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(url))
+                    {
+                        continue;
+                    }
+
+                    turnServers.Add(new TurnServerConfig
+                    {
+                        Url = url,
+                        Username = serverObj["username"]?.ToString() ?? serverObj["Username"]?.ToString(),
+                        Credential = serverObj["credential"]?.ToString() ?? serverObj["Credential"]?.ToString()
+                    });
+                }
+
+                return new WebRTCConfig
+                {
+                    TurnServers = turnServers
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 解析 TURN 配置 JSON 对象失败");
+                return null;
             }
         }
     }
@@ -170,39 +284,10 @@ namespace RemotePlay.Controllers
         public int ConsecutiveFailures { get; set; }
         public int TotalRecoveredFrames { get; set; }
         public int TotalFrozenFrames { get; set; }
-        public int TotalDroppedFrames { get; set; }
-        public int DeltaRecoveredFrames { get; set; }
-        public int DeltaFrozenFrames { get; set; }
-        public int DeltaDroppedFrames { get; set; }
-        public int RecentWindowSeconds { get; set; }
-        public int RecentSuccessFrames { get; set; }
-        public int RecentRecoveredFrames { get; set; }
-        public int RecentFrozenFrames { get; set; }
-        public int RecentDroppedFrames { get; set; }
-        public double RecentFps { get; set; }
-        public double AverageFrameIntervalMs { get; set; }
-        public DateTime? LastFrameTimestampUtc { get; set; }
-        // ✅ 新增：流统计与码率
-        public ulong TotalFrames { get; set; }
-        public ulong TotalBytes { get; set; }
-        public double MeasuredBitrateMbps { get; set; }
-        public int FramesLost { get; set; }
-        public int FrameIndexPrev { get; set; }
         public int VideoReceived { get; set; }
         public int VideoLost { get; set; }
         public int AudioReceived { get; set; }
         public int AudioLost { get; set; }
-        public int PendingPackets { get; set; }
-        public int TotalIdrRequests { get; set; }
-        public int IdrRequestsRecent { get; set; }
-        public int IdrRequestWindowSeconds { get; set; }
-        public DateTime? LastIdrRequestUtc { get; set; }
-        public int FecAttempts { get; set; }
-        public int FecSuccess { get; set; }
-        public int FecFailures { get; set; }
-        public double FecSuccessRate { get; set; }
-        public double FrameOutputFps { get; set; }
-        public double FrameIntervalMs { get; set; }
     }
 }
 
