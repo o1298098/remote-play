@@ -544,74 +544,85 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
                 
                 // ⚠️ 参照 FfmpegMuxReceiver：从 audioHeader 读取音频参数
-                if (audioHeader != null && audioHeader.Length >= 10)
+                if (audioHeader == null || audioHeader.Length < 10)
                 {
-                    int channels = ParseAudioChannels(audioHeader);
-                    int bitsPerSample = ParseBitsPerSample(audioHeader);
-                    int rate = ParseSampleRate(audioHeader);
-                    int frameSize = ParseFrameSize(audioHeader);
-                    
-                    // 保存帧大小（用于 PCM 缓冲区大小计算）
-                    if (frameSize > 0)
+                    if (audioHeader == null)
                     {
-                        _audioFrameSize = frameSize;
+                        _logger.LogWarning("⚠️ OnStreamInfo: audioHeader 为 null，跳过音频初始化");
                     }
-                    int previousSourceChannels = _audioChannels;
-
-                    if (channels > 0)
+                    else
                     {
-                        if (_audioPacketCount < 5 || previousSourceChannels != channels)
+                        _logger.LogWarning("⚠️ OnStreamInfo: audioHeader 长度不足 ({Length} < 10)，跳过音频初始化", audioHeader.Length);
+                    }
+                    return;
+                }
+                
+                // audioHeader 有效，继续处理
+                int channels = ParseAudioChannels(audioHeader);
+                int bitsPerSample = ParseBitsPerSample(audioHeader);
+                int rate = ParseSampleRate(audioHeader);
+                int frameSize = ParseFrameSize(audioHeader);
+                
+                // 保存帧大小（用于 PCM 缓冲区大小计算）
+                if (frameSize > 0)
+                {
+                    _audioFrameSize = frameSize;
+                }
+                int previousSourceChannels = _audioChannels;
+
+                if (channels > 0)
+                {
+                    if (_audioPacketCount < 5 || previousSourceChannels != channels)
+                    {
+                        _logger.LogInformation("🔊 音频参数：channels={Channels}, bits={Bits}, rate={Rate}Hz, frameSize={FrameSize}", channels, bitsPerSample, rate, frameSize);
+                    }
+
+                    if (channels != 2 && (_audioPacketCount < 5 || previousSourceChannels != channels))
+                    {
+                        _logger.LogWarning("⚠️ 主机报告音频声道数为 {Channels}，建议在主机端开启立体声下混或设置为 2 声道输出", channels);
+                    }
+
+                    _audioChannels = Math.Clamp(channels, 1, 2);
+                    _forceStereoDownmix = false;
+                    _useOpusDirect = true;
+                    _sendingAudioChannels = 2;
+                }
+
+                // 初始化 Opus 解码器（参照 FfmpegMuxReceiver）
+                if (rate > 0 && channels > 0)
+                {
+                    lock (_opusDecoderLock)
+                    {
+                        // 如果参数改变，重新初始化解码器
+                        bool needReinit = false;
+                        if (rate != _audioSampleRate)
                         {
-                            _logger.LogInformation("🔊 音频参数：channels={Channels}, bits={Bits}, rate={Rate}Hz, frameSize={FrameSize}", channels, bitsPerSample, rate, frameSize);
+                            _audioSampleRate = rate;
+                            needReinit = true;
+                        }
+                        if (channels != _audioChannels)
+                        {
+                            _audioChannels = channels;
+                            needReinit = true;
+                        }
+                        int targetChannels = Math.Clamp(channels, 1, 2);
+                        if (targetChannels != _audioChannels)
+                        {
+                            _audioChannels = targetChannels;
+                            needReinit = true;
                         }
 
-                        if (channels != 2 && (_audioPacketCount < 5 || previousSourceChannels != channels))
+                        if (needReinit || _opusDecoder == null)
                         {
-                            _logger.LogWarning("⚠️ 主机报告音频声道数为 {Channels}，建议在主机端开启立体声下混或设置为 2 声道输出", channels);
-                        }
-
-                        _audioChannels = Math.Clamp(channels, 1, 2);
-                        _forceStereoDownmix = false;
-                        _useOpusDirect = true;
-                        _sendingAudioChannels = 2;
-                    }
-
-                    // 初始化 Opus 解码器（参照 FfmpegMuxReceiver）
-                    if (rate > 0 && channels > 0)
-                    {
-                        lock (_opusDecoderLock)
-                        {
-                            // 如果参数改变，重新初始化解码器
-                            bool needReinit = false;
-                            if (rate != _audioSampleRate)
+                            _opusDecoder?.Dispose();
+                            try
                             {
-                                _audioSampleRate = rate;
-                                needReinit = true;
+                                _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
                             }
-                            if (rate != _audioSampleRate)
+                            catch (Exception ex)
                             {
-                                _audioSampleRate = rate;
-                                needReinit = true;
-                            }
-                            int targetChannels = Math.Clamp(channels, 1, 2);
-                            if (targetChannels != _audioChannels)
-                            {
-                                _audioChannels = targetChannels;
-                                needReinit = true;
-                            }
-
-                            if (needReinit || _opusDecoder == null)
-                            {
-                                _opusDecoder?.Dispose();
-                                try
-                                {
-                                    _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
-            }
-            catch (Exception ex)
-            {
-                                    _logger.LogError(ex, "❌ 初始化 Opus 解码器失败");
-                                    _opusDecoder = null;
-                                }
+                                _logger.LogError(ex, "❌ 初始化 Opus 解码器失败");
+                                _opusDecoder = null;
                             }
                         }
                     }

@@ -15,10 +15,11 @@ namespace RemotePlay.Services.Streaming.AV
         private readonly ILogger<VideoReceiver>? _logger;
         private readonly FrameProcessor _frameProcessor;
         private readonly ReferenceFrameManager _referenceFrameManager;
-        private readonly BitstreamParser _bitstreamParser;
+        private BitstreamParser? _bitstreamParser; // 延迟初始化，需要知道 codec 类型
 
         private VideoProfile[] _profiles = Array.Empty<VideoProfile>();
         private int _profileCur = -1;
+        private string? _detectedCodec; // 检测到的 codec 类型
 
         private int _frameIndexCur = -1;
         private int _frameIndexPrev = -1;
@@ -26,6 +27,7 @@ namespace RemotePlay.Services.Streaming.AV
         private int _framesLost = 0;
 
         private Action<int, int>? _corruptFrameCallback;
+        private Action? _requestKeyframeCallback;
 
         private readonly object _lock = new();
 
@@ -34,7 +36,18 @@ namespace RemotePlay.Services.Streaming.AV
             _logger = logger;
             _frameProcessor = new FrameProcessor(null); // FrameProcessor2 使用 ILogger<FrameProcessor2>?
             _referenceFrameManager = new ReferenceFrameManager(null); // ReferenceFrameManager 使用 ILogger<ReferenceFrameManager>?
-            _bitstreamParser = new BitstreamParser("h264", null); // BitstreamParser 使用 ILogger<BitstreamParser>?
+            // BitstreamParser 延迟初始化，需要知道 codec 类型
+        }
+
+        /// <summary>
+        /// 设置请求关键帧回调
+        /// </summary>
+        public void SetRequestKeyframeCallback(Action? callback)
+        {
+            lock (_lock)
+            {
+                _requestKeyframeCallback = callback;
+            }
         }
 
         /// <summary>
@@ -67,6 +80,68 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     _logger?.LogInformation("  {Index}: {Width}x{Height}", i, _profiles[i].Width, _profiles[i].Height);
                 }
+
+                // ✅ 检测 codec 类型并初始化 BitstreamParser
+                if (_profiles.Length > 0 && _profiles[0].Header != null && _profiles[0].Header.Length > 0)
+                {
+                    DetectCodecFromHeader(_profiles[0].Header);
+                    if (_detectedCodec != null)
+                    {
+                        _bitstreamParser = new BitstreamParser(_detectedCodec, null);
+                        // 解析 SPS 获取关键参数
+                        if (!_bitstreamParser.ParseHeader(_profiles[0].Header))
+                        {
+                            _logger?.LogWarning("Failed to parse video header for bitstream");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 从 header 检测 codec 类型
+        /// </summary>
+        private void DetectCodecFromHeader(byte[] header)
+        {
+            if (header == null || header.Length < 10)
+                return;
+
+            // 查找 startcode
+            int offset = -1;
+            for (int i = 0; i < header.Length - 3; i++)
+            {
+                if (header[i] == 0x00 && header[i + 1] == 0x00)
+                {
+                    if (header[i + 2] == 0x01)
+                    {
+                        offset = i + 3;
+                        break;
+                    }
+                    if (i + 3 < header.Length && header[i + 2] == 0x00 && header[i + 3] == 0x01)
+                    {
+                        offset = i + 4;
+                        break;
+                    }
+                }
+            }
+
+            if (offset < 0 || offset >= header.Length)
+                return;
+
+            // 检查 H.265 HEVC
+            byte nalType = (byte)((header[offset] >> 1) & 0x3F);
+            if (nalType == 33) // SPS
+            {
+                _detectedCodec = "hevc";
+                return;
+            }
+
+            // 检查 H.264
+            nalType = (byte)(header[offset] & 0x1F);
+            if (nalType == 7) // SPS
+            {
+                _detectedCodec = "h264";
+                return;
             }
         }
 
@@ -101,6 +176,21 @@ namespace RemotePlay.Services.Streaming.AV
                     _logger?.LogInformation("Switched to profile {Index}, resolution: {Width}x{Height}", 
                         _profileCur, newProfile.Width, newProfile.Height);
 
+                    // ✅ 检测新 profile 的 codec 并更新 BitstreamParser
+                    if (newProfile.Header != null && newProfile.Header.Length > 0)
+                    {
+                        DetectCodecFromHeader(newProfile.Header);
+                        if (_detectedCodec != null)
+                        {
+                            _bitstreamParser = new BitstreamParser(_detectedCodec, null);
+                            // 解析新 profile 的 SPS
+                            if (!_bitstreamParser.ParseHeader(newProfile.Header))
+                            {
+                                _logger?.LogWarning("Failed to parse video header for bitstream");
+                            }
+                        }
+                    }
+
                     // 通知 profile 切换（发送新的 header）
                     onFrameReady?.Invoke(newProfile.HeaderWithPadding, false, false);
                 }
@@ -108,8 +198,9 @@ namespace RemotePlay.Services.Streaming.AV
                 // 检测新帧
                 if (_frameIndexCur < 0 || (!IsSeq16Older(packet.FrameIndex, _frameIndexCur) && packet.FrameIndex != _frameIndexCur))
                 {
-                    // 报告上一帧的统计信息
-                    // TODO: 如果需要 packet stats
+                    // 报告上一帧的统计信息（类似chiaki的videoreceiver.c:119）
+                    // 在检测到新帧时，报告上一帧的packet stats
+                    _frameProcessor.ReportPacketStats();
 
                     // 如果上一帧还没有刷新，先刷新它
                     if (_frameIndexCur >= 0 && _frameIndexPrev != _frameIndexCur)
@@ -184,7 +275,7 @@ namespace RemotePlay.Services.Streaming.AV
 
             // 检查 P 帧的参考帧
             BitstreamSlice? slice = null;
-            if (frame != null && frameSize > 0)
+            if (frame != null && frameSize > 0 && _bitstreamParser != null)
             {
                 BitstreamSlice parsedSlice;
                 if (_bitstreamParser.ParseSlice(frame, out parsedSlice))
@@ -247,8 +338,6 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     _framesLost = 0;
                     _referenceFrameManager.AddReferenceFrame(_frameIndexCur);
-                    _logger?.LogTrace("Added reference {Type} frame {Frame}", 
-                        slice?.SliceType == SliceType.I ? 'I' : 'P', _frameIndexCur);
                 }
                 else
                 {
@@ -298,6 +387,14 @@ namespace RemotePlay.Services.Streaming.AV
         public (ulong frames, ulong bytes) GetAndResetStreamStats()
         {
             return _frameProcessor.GetAndResetStreamStats();
+        }
+
+        /// <summary>
+        /// 获取并重置 packet stats（用于拥塞控制）
+        /// </summary>
+        public (ulong received, ulong lost) GetAndResetPacketStats()
+        {
+            return _frameProcessor.GetAndResetPacketStats();
         }
 
         public (int frameIndexPrev, int framesLost) ConsumeAndResetFrameIndexStats()

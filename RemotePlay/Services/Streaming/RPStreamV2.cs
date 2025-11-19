@@ -77,6 +77,10 @@ namespace RemotePlay.Services.Streaming
         // ✅ 流断开检测
         private DateTime _lastPacketReceivedTime = DateTime.UtcNow;
         private const int STREAM_TIMEOUT_SECONDS = 30; // 30 秒没有收到任何包，认为流已断开
+        
+        // ✅ 降档统计
+        private int _qualityDowngradeCount = 0;
+        private int _qualityUpgradeCount = 0;
 
         // 状态
         private string? _state;
@@ -1915,16 +1919,31 @@ namespace RemotePlay.Services.Streaming
             var profiles = new List<VideoProfile>();
             if (streamInfo.Resolution != null && streamInfo.Resolution.Count > 0)
             {
+                _logger.LogInformation("📊 STREAMINFO 解析：收到 {Count} 个 Resolution", streamInfo.Resolution.Count);
+                
                 for (int i = 0; i < streamInfo.Resolution.Count; i++)
                 {
                     var resolution = streamInfo.Resolution[i];
                     var header = resolution.VideoHeader?.ToByteArray() ?? Array.Empty<byte>();
+                    
+                    _logger.LogInformation("  Resolution[{Index}]: {Width}x{Height}, VideoHeader长度={HeaderLength}", 
+                        i, resolution.Width, resolution.Height, header.Length);
+                    
                     if (header.Length > 0)
                     {
                         var profile = new VideoProfile(i, (int)resolution.Width, (int)resolution.Height, header);
                         profiles.Add(profile);
+                        _logger.LogInformation("    ✅ 已添加到 profiles 列表");
+                    }
+                    else
+                    {
+                        _logger.LogWarning("    ⚠️ VideoHeader 为空，跳过此 Resolution");
                     }
                 }
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ STREAMINFO 中没有 Resolution 数据（Resolution 为 null 或 Count = 0）");
             }
 
             // 设置到 AdaptiveStreamManager
@@ -1952,6 +1971,20 @@ namespace RemotePlay.Services.Streaming
             // 提取第一个视频和音频头（用于向后兼容）
             var rawVideoHeader = profiles.Count > 0 ? profiles[0].Header : Array.Empty<byte>();
             var audioHeader = streamInfo.AudioHeader?.ToByteArray() ?? Array.Empty<byte>();
+            
+            // ✅ 诊断：记录音频header状态
+            if (audioHeader.Length == 0)
+            {
+                _logger.LogWarning("⚠️ STREAMINFO 中 AudioHeader 为空或缺失，音频可能无法初始化");
+            }
+            else if (audioHeader.Length < 10)
+            {
+                _logger.LogWarning("⚠️ STREAMINFO 中 AudioHeader 长度不足：{Length} < 10，音频可能无法初始化", audioHeader.Length);
+            }
+            else
+            {
+                _logger.LogDebug("✅ STREAMINFO 中 AudioHeader 长度：{Length} 字节", audioHeader.Length);
+            }
 
             // 视频 header 需要添加 FFMPEG_PADDING（64字节）
             // AVStream 在构造时会添加 padding，然后在第一帧或 OnStreamInfo 中发送
@@ -2041,9 +2074,9 @@ namespace RemotePlay.Services.Streaming
                 measuredBitrateMbps = healthSnapshot.MeasuredBitrateMbps;
             }
 
-            // ✅ 记录质量信息
+            // ✅ 记录质量信息（Debug级别，避免日志过多）
             // 注意：protobuf 生成的字段不是可空类型，使用 HasXxx 检查是否设置，直接使用字段值（有默认值）
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "📊 Connection Quality: target_bitrate={TargetBitrate} kbps, " +
                 "upstream_bitrate={UpstreamBitrate} kbps, upstream_loss={UpstreamLoss:P2}, " +
                 "disable_upstream_audio={DisableAudio}, rtt={Rtt:F2} ms, loss={Loss}, " +
@@ -2065,21 +2098,24 @@ namespace RemotePlay.Services.Streaming
             // 检查是否有多个 profiles（降档的前提条件）
             int profileCount = _adaptiveStreamManager?.ProfileCount ?? 0;
             
+            // ✅ 诊断信息（Debug级别，避免日志过多）
             if (upstreamLoss > 0.1 || rtt > 100 || (targetBitrate > 0 && upstreamBitrate > 0 && upstreamBitrate < targetBitrate * 0.5))
             {
-                _logger.LogWarning(
+                _logger.LogDebug(
                     "⚠️ 网络状况较差，但未检测到降档。诊断信息:\n" +
                     "  - 上行丢失率: {Loss:P2}\n" +
                     "  - RTT: {Rtt:F2} ms\n" +
                     "  - 目标码率: {TargetBitrate} kbps\n" +
                     "  - 实际上行码率: {UpstreamBitrate} kbps\n" +
                     "  - Profiles 数量: {ProfileCount}\n" +
+                    "  - 总降档次数: {DowngradeCount}\n" +
+                    "  - 总升档次数: {UpgradeCount}\n" +
                     "可能原因:\n" +
                     "  1) 只有 1 个 profile，PS5 无法降档\n" +
                     "  2) PS5 需要持续的高丢失率（可能需要几秒）\n" +
                     "  3) PS5 可能还考虑其他因素（延迟、带宽趋势等）\n" +
                     "  4) 拥塞控制报告的丢失率可能不够高（当前限制已移除，报告真实丢失率）",
-                    upstreamLoss, rtt, targetBitrate, upstreamBitrate, profileCount);
+                    upstreamLoss, rtt, targetBitrate, upstreamBitrate, profileCount, _qualityDowngradeCount, _qualityUpgradeCount);
             }
         }
 
@@ -2104,13 +2140,15 @@ namespace RemotePlay.Services.Streaming
                     
                     if (isDegradation)
                     {
-                        _logger.LogWarning("📉 Quality degradation detected: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex})", 
-                            oldProfile.Width, oldProfile.Height, newProfile.Width, newProfile.Height, oldProfile.Index, newProfile.Index);
+                        _qualityDowngradeCount++;
+                        _logger.LogWarning("📉 Quality degradation detected: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex}) [总降档次数: {Count}]", 
+                            oldProfile.Width, oldProfile.Height, newProfile.Width, newProfile.Height, oldProfile.Index, newProfile.Index, _qualityDowngradeCount);
                     }
                     else
                     {
-                        _logger.LogInformation("📈 Quality upgrade: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex})", 
-                            oldProfile.Width, oldProfile.Height, newProfile.Width, newProfile.Height, oldProfile.Index, newProfile.Index);
+                        _qualityUpgradeCount++;
+                        _logger.LogInformation("📈 Quality upgrade: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex}) [总升档次数: {Count}]", 
+                            oldProfile.Width, oldProfile.Height, newProfile.Width, newProfile.Height, oldProfile.Index, newProfile.Index, _qualityUpgradeCount);
                     }
                 }
                 else

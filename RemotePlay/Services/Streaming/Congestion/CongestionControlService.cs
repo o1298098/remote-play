@@ -18,7 +18,7 @@ namespace RemotePlay.Services.Streaming
         private const int CONGESTION_PACKET_SIZE = 15;
         
         // 默认最大丢失率（如果超过此值，会限制报告的丢失率）
-        private const double DEFAULT_PACKET_LOSS_MAX = 1.0; // 100%（完全移除限制，让PS5看到真实的丢失率）
+        private const double DEFAULT_PACKET_LOSS_MAX = 0.05; 
         
         #endregion
 
@@ -78,8 +78,6 @@ namespace RemotePlay.Services.Streaming
             _congestionLoop = Task.Run(() => CongestionLoopAsync(_cts.Token), _cts.Token);
             _isRunning = true;
             
-            _logger.LogDebug("CongestionControl started (interval={IntervalMs}ms, packet_loss_max={LossMax:P2})", 
-                CONGESTION_CONTROL_INTERVAL_MS, _packetLossMax);
         }
         
         /// <summary>
@@ -104,7 +102,6 @@ namespace RemotePlay.Services.Streaming
             }
             
             _isRunning = false;
-            _logger.LogDebug("CongestionControl stopped");
         }
         
         public void Dispose()
@@ -139,7 +136,6 @@ namespace RemotePlay.Services.Streaming
         /// </summary>
         private async Task CongestionLoopAsync(CancellationToken ct)
         {
-            _logger.LogDebug("CongestionControl loop started");
             
             int packetCount = 0;
             
@@ -184,10 +180,6 @@ namespace RemotePlay.Services.Streaming
                     await _sendRawFunc(packet);
                     
                     packetCount++;
-                    
-                    // 详细日志（仅在 Verbose 级别）
-                    _logger.LogTrace("Sending Congestion Control Packet, received: {Received}, lost: {Lost}",
-                        received, lost);
                 }
                 catch (OperationCanceledException)
                 {
@@ -200,7 +192,6 @@ namespace RemotePlay.Services.Streaming
                 }
             }
             
-            _logger.LogDebug("CongestionControl loop exited (sent {Count} packets)", packetCount);
         }
         
         #endregion

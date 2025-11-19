@@ -602,7 +602,6 @@ namespace RemotePlay.Services.Streaming.AV
                 }
 
                 _queue.Clear();
-                _logger.LogDebug("AVHandler2 worker stopped, total processed={Count}", processedCount);
             }, token);
         }
 
@@ -612,7 +611,6 @@ namespace RemotePlay.Services.Streaming.AV
 
         public void Stop()
         {
-            _logger.LogDebug("🛑 AVHandler2.Stop() called");
 
             _workerCts?.Cancel();
             _queue.Clear();
@@ -642,17 +640,32 @@ namespace RemotePlay.Services.Streaming.AV
 
         public StreamPipelineStats GetAndResetStats()
         {
-            // TODO: 实现统计信息
+            // 获取视频 packet stats（用于拥塞控制）
+            ulong videoReceived = 0;
+            ulong videoLost = 0;
+            
+            if (_videoReceiver != null)
+            {
+                var (received, lost) = _videoReceiver.GetAndResetPacketStats();
+                videoReceived = received;
+                videoLost = lost;
+            }
+            
+            // 音频统计：目前音频没有详细的packet stats，使用0
+            // 注意：拥塞控制主要关注视频包的丢失率
+            ulong audioReceived = 0;
+            ulong audioLost = 0;
+            
             return new StreamPipelineStats
             {
-                VideoReceived = 0,
-                VideoLost = 0,
-                VideoTimeoutDropped = 0,
-                AudioReceived = 0,
-                AudioLost = 0,
+                VideoReceived = (int)Math.Min(videoReceived, int.MaxValue),
+                VideoLost = (int)Math.Min(videoLost, int.MaxValue),
+                VideoTimeoutDropped = 0, // TODO: 如果需要，可以从ReorderQueue获取
+                AudioReceived = (int)Math.Min(audioReceived, int.MaxValue),
+                AudioLost = (int)Math.Min(audioLost, int.MaxValue),
                 AudioTimeoutDropped = 0,
                 PendingPackets = _queue.Count,
-                FecAttempts = 0,
+                FecAttempts = 0, // TODO: 如果需要，可以从FrameProcessor获取
                 FecSuccess = 0,
                 FecFailures = 0,
                 FecSuccessRate = 0.0

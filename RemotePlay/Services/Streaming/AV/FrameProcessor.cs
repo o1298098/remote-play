@@ -25,6 +25,10 @@ namespace RemotePlay.Services.Streaming.AV
         private bool _flushed;
         private readonly StreamStats2 _streamStats = new StreamStats2();
         private readonly object _lock = new();
+        
+        // Packet stats for congestion control (类似chiaki的packet_stats)
+        private ulong _packetStatsReceived = 0;
+        private ulong _packetStatsLost = 0;
 
         private const int UNIT_SLOTS_MAX = 512;
         private const int VIDEO_BUFFER_PADDING_SIZE = 64;
@@ -56,6 +60,8 @@ namespace RemotePlay.Services.Streaming.AV
                 _unitSlotsSize = 0;
                 _flushed = true;
                 _streamStats.Reset();
+                _packetStatsReceived = 0;
+                _packetStatsLost = 0;
             }
         }
 
@@ -352,6 +358,43 @@ namespace RemotePlay.Services.Streaming.AV
         public (ulong frames, ulong bytes) GetAndResetStreamStats()
         {
             return _streamStats.GetAndReset();
+        }
+
+        /// <summary>
+        /// 报告 packet stats（用于拥塞控制）
+        /// 类似chiaki的chiaki_frame_processor_report_packet_stats
+        /// 应该在检测到新帧时调用（在AllocFrame之前）
+        /// </summary>
+        public void ReportPacketStats()
+        {
+            lock (_lock)
+            {
+                // 只有在有有效帧数据时才报告
+                if (_unitsSourceExpected > 0 || _unitsFecExpected > 0)
+                {
+                    ulong received = (ulong)(_unitsSourceReceived + _unitsFecReceived);
+                    ulong expected = (ulong)(_unitsSourceExpected + _unitsFecExpected);
+                    ulong lost = expected > received ? expected - received : 0;
+                    
+                    _packetStatsReceived += received;
+                    _packetStatsLost += lost;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 获取并重置 packet stats（用于拥塞控制）
+        /// 返回 (received, lost) 的累积值并重置
+        /// </summary>
+        public (ulong received, ulong lost) GetAndResetPacketStats()
+        {
+            lock (_lock)
+            {
+                var result = (_packetStatsReceived, _packetStatsLost);
+                _packetStatsReceived = 0;
+                _packetStatsLost = 0;
+                return result;
+            }
         }
     }
 
