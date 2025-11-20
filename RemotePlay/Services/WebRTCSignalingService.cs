@@ -1034,12 +1034,20 @@ namespace RemotePlay.Services
                 return candidate ?? string.Empty;
             }
 
+            // ✅ 确保 candidate 字符串以 "candidate:" 开头（WebRTC 标准格式）
+            var candidateStr = candidate.Trim();
+            if (!candidateStr.StartsWith("candidate:", StringComparison.OrdinalIgnoreCase))
+            {
+                candidateStr = "candidate:" + candidateStr;
+                _logger.LogDebug("✅ 已为 candidate 添加 'candidate:' 前缀");
+            }
+
             // 检查 candidate 是否已包含 ufrag
-            var candidateLower = candidate.ToLowerInvariant();
+            var candidateLower = candidateStr.ToLowerInvariant();
             if (candidateLower.Contains("ufrag"))
             {
                 _logger.LogDebug("ℹ️ Candidate 已包含 ufrag，无需添加");
-                return candidate;
+                return candidateStr;
             }
 
             // ✅ 关键修复：后端生成的 candidate 要发送给前端，所以应该使用前端的 ufrag（从 Answer SDP 中提取）
@@ -1077,26 +1085,26 @@ namespace RemotePlay.Services
                 // 如果找到了 ufrag，添加到 candidate
                 if (!string.IsNullOrWhiteSpace(ufrag))
                 {
-                    candidate = candidate.TrimEnd();
+                    candidateStr = candidateStr.TrimEnd();
                     // 确保有 generation 字段
-                    if (!candidate.EndsWith("generation 0", StringComparison.OrdinalIgnoreCase) &&
-                        !candidate.EndsWith("generation", StringComparison.OrdinalIgnoreCase))
+                    if (!candidateStr.EndsWith("generation 0", StringComparison.OrdinalIgnoreCase) &&
+                        !candidateStr.EndsWith("generation", StringComparison.OrdinalIgnoreCase))
                     {
                         // 检查是否已经有 generation（可能格式不同）
                         if (!candidateLower.Contains("generation"))
                         {
-                            candidate += " generation 0";
+                            candidateStr += " generation 0";
                         }
                     }
-                    candidate += " ufrag " + ufrag;
+                    candidateStr += " ufrag " + ufrag;
                     _logger.LogInformation("✅ 已为 candidate 添加 ufrag: {Ufrag}, 原始: {Original}, 修改后: {Modified}",
-                        ufrag, candidate.Length > 80 ? candidate.Substring(0, 80) + "..." : candidate,
-                        candidate.Length > 80 ? candidate.Substring(0, 80) + "..." : candidate);
+                        ufrag, candidateStr.Length > 80 ? candidateStr.Substring(0, 80) + "..." : candidateStr,
+                        candidateStr.Length > 80 ? candidateStr.Substring(0, 80) + "..." : candidateStr);
                 }
                 else
                 {
                     _logger.LogWarning("⚠️ 无法从 SDP 中提取 ice-ufrag，candidate 将缺少 ufrag: {Candidate}",
-                        candidate.Length > 80 ? candidate.Substring(0, 80) + "..." : candidate);
+                        candidateStr.Length > 80 ? candidateStr.Substring(0, 80) + "..." : candidateStr);
                 }
             }
             catch (Exception ex)
@@ -1104,7 +1112,7 @@ namespace RemotePlay.Services
                 _logger.LogWarning(ex, "⚠️ 提取 ice-ufrag 失败，使用原始 candidate");
             }
 
-            return candidate;
+            return candidateStr;
         }
 
         /// <summary>
