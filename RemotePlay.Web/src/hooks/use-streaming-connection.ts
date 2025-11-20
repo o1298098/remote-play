@@ -1709,7 +1709,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             const candidates = response.data.candidates || []
             if (candidates.length > 0) {
               console.log('📥 收到后端 ICE Candidate:', candidates.length, '个', {
-                candidates: candidates.map((c) => ({
+                candidates: candidates.map((c: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }) => ({
                   candidate: c.candidate?.substring(0, 60) + '...',
                   sdpMid: c.sdpMid,
                   sdpMLineIndex: c.sdpMLineIndex,
