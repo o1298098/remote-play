@@ -1700,6 +1700,46 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         type: 'answer',
       })
 
+      // ✅ Answer 设置后，定期获取后端的 ICE candidate（特别是 TURN relay candidate）
+      // 后端的 ICE gathering 可能在 Answer 设置后才完成
+      const checkBackendIceCandidates = async () => {
+        try {
+          const response = await streamingService.getPendingIceCandidates(webrtcSessionIdValue)
+          if (response.success && response.data && response.data.candidates.length > 0) {
+            console.log('📥 收到后端 ICE Candidate:', response.data.candidates.length, '个')
+            for (const candidate of response.data.candidates) {
+              try {
+                if (candidate.candidate) {
+                  await peerConnection.addIceCandidate({
+                    candidate: candidate.candidate,
+                    sdpMid: candidate.sdpMid,
+                    sdpMLineIndex: candidate.sdpMLineIndex,
+                  } as RTCIceCandidateInit)
+                  console.log('✅ 已添加后端 ICE Candidate:', candidate.candidate.substring(0, 50) + '...')
+                }
+              } catch (error) {
+                console.warn('⚠️ 添加后端 ICE Candidate 失败:', error, candidate)
+              }
+            }
+          }
+        } catch (error) {
+          console.debug('⚠️ 获取后端 ICE Candidate 失败（可能是正常情况）:', error)
+        }
+      }
+
+      // 立即检查一次
+      await checkBackendIceCandidates()
+
+      // 然后每 500ms 检查一次，持续 10 秒（总共 20 次）
+      const backendCandidateCheckInterval = setInterval(async () => {
+        await checkBackendIceCandidates()
+      }, 500)
+
+      setTimeout(() => {
+        clearInterval(backendCandidateCheckInterval)
+        console.log('✅ 停止检查后端 ICE Candidate')
+      }, 10000)
+
       const connectResponse = await streamingService.connectToRemotePlaySession(webrtcSessionIdValue, sessionId)
       if (!connectResponse.success) {
         throw new Error(

@@ -334,6 +334,43 @@ namespace RemotePlay.Services
                         _logger.LogWarning("⚠️ Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
                     }
 
+                    // ✅ Answer 设置后，继续监听新的 ICE candidate
+                    // 这对于 TURN relay candidate 特别重要，因为它们可能在 Answer 设置后才生成
+                    session.PeerConnection.onicecandidate += (candidate) =>
+                    {
+                        if (candidate != null && candidate.candidate != null)
+                        {
+                            var candidateStr = candidate.candidate.ToLowerInvariant();
+                            _logger.LogInformation("🌐 Answer 设置后发现新的 ICE candidate: {Candidate}, 类型: {Type}",
+                                candidate.candidate,
+                                candidateStr.Contains("typ relay") ? "relay" :
+                                candidateStr.Contains("typ srflx") ? "srflx" :
+                                candidateStr.Contains("typ host") ? "host" : "unknown");
+
+                            // 存储 candidate 以便前端获取
+                            session.AddPendingIceCandidate(new RTCIceCandidateInit
+                            {
+                                candidate = candidate.candidate,
+                                sdpMid = candidate.sdpMid,
+                                sdpMLineIndex = candidate.sdpMLineIndex
+                            });
+
+                            // 尝试添加到本地连接
+                            try
+                            {
+                                session.PeerConnection.addLocalIceCandidate(candidate);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug("⚠️ 添加本地 ICE candidate 失败（可能已存在）: {Error}", ex.Message);
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogInformation("🧊 Answer 设置后的 ICE gathering 完成");
+                        }
+                    };
+
                     return true;
                 }
                 else
@@ -457,6 +494,20 @@ namespace RemotePlay.Services
                 _logger.LogError(ex, "❌ 设置 Answer 失败: {SessionId}", sessionId);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 获取会话中待处理的 ICE Candidate（后端生成的新 candidate）
+        /// </summary>
+        public List<RTCIceCandidateInit> GetPendingIceCandidates(string sessionId)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var webrtcSession))
+            {
+                _logger.LogWarning("⚠️ 会话不存在: {SessionId}", sessionId);
+                return new List<RTCIceCandidateInit>();
+            }
+
+            return webrtcSession.GetPendingIceCandidates();
         }
 
         /// <summary>
@@ -955,9 +1006,31 @@ namespace RemotePlay.Services
         public DateTime CreatedAt { get; init; }
         public Guid? StreamingSessionId { get; set; } // ✅ 关联的 Streaming Session ID（用于请求关键帧）
         public string? PreferredVideoCodec { get; init; }
+        
+        // 存储后端新生成的 ICE candidate（Answer 设置后）
+        private readonly List<RTCIceCandidateInit> _pendingIceCandidates = new();
+        private readonly object _candidatesLock = new();
 
         public RTCPeerConnectionState ConnectionState => PeerConnection.connectionState;
         public RTCIceConnectionState IceConnectionState => PeerConnection.iceConnectionState;
+        
+        public List<RTCIceCandidateInit> GetPendingIceCandidates()
+        {
+            lock (_candidatesLock)
+            {
+                var result = _pendingIceCandidates.ToList();
+                _pendingIceCandidates.Clear();
+                return result;
+            }
+        }
+        
+        public void AddPendingIceCandidate(RTCIceCandidateInit candidate)
+        {
+            lock (_candidatesLock)
+            {
+                _pendingIceCandidates.Add(candidate);
+            }
+        }
     }
 }
 

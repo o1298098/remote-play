@@ -164,6 +164,53 @@ namespace RemotePlay.Controllers
         }
         
         /// <summary>
+        /// 获取会话中待处理的 ICE Candidate（后端生成的新 candidate）
+        /// </summary>
+        [HttpGet("ice/{sessionId}")]
+        public ActionResult<ResponseModel> GetPendingIceCandidates(string sessionId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(sessionId))
+                {
+                    return BadRequest(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "SessionId 不能为空"
+                    });
+                }
+
+                var candidates = _signalingService.GetPendingIceCandidates(sessionId);
+                
+                _logger.LogDebug("📤 获取待处理的 ICE Candidate: SessionId={SessionId}, Count={Count}",
+                    sessionId, candidates.Count);
+
+                var candidateList = candidates.Select(c => new
+                {
+                    candidate = c.candidate,
+                    sdpMid = c.sdpMid,
+                    sdpMLineIndex = c.sdpMLineIndex
+                }).ToList();
+
+                return Ok(new ApiSuccessResponse<object>
+                {
+                    Success = true,
+                    Data = new { candidates = candidateList },
+                    Message = $"获取到 {candidates.Count} 个待处理的 ICE Candidate"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 获取待处理的 ICE Candidate 失败");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "获取待处理的 ICE Candidate 失败: " + ex.Message
+                });
+            }
+        }
+
+        /// <summary>
         /// 接收 ICE Candidate
         /// </summary>
         [HttpPost("ice")]

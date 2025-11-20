@@ -122,6 +122,15 @@ export const streamingService = {
   },
 
   /**
+   * 获取后端生成的待处理 ICE Candidate
+   */
+  getPendingIceCandidates: async (sessionId: string): Promise<ApiResponse<{ candidates: Array<{ candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }> }>> => {
+    return apiRequest<{ candidates: Array<{ candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }> }>(`/webrtc/ice/${encodeURIComponent(sessionId)}`, {
+      method: 'GET',
+    })
+  },
+
+  /**
    * 从 Host ID 创建或获取 Remote Play Session
    */
   startSession: async (hostId: string): Promise<ApiResponse<RemotePlaySession>> => {
