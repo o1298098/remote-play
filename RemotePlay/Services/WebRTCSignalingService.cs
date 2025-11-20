@@ -210,9 +210,12 @@ namespace RemotePlay.Services
                                     candidateStr.Contains("typ srflx") ? "srflx" :
                                     candidateStr.Contains("typ host") ? "host" : "unknown";
                                 
+                                // ✅ 修复：从 SDP 中提取 ice-ufrag 并添加到 candidate 字符串中（如果缺少）
+                                var candidateWithUfrag = EnsureCandidateHasUfrag(candidate.candidate, existingSession.PeerConnection);
+                                
                                 existingSession.AddPendingIceCandidate(new RTCIceCandidateInit
                                 {
-                                    candidate = candidate.candidate,
+                                    candidate = candidateWithUfrag,
                                     sdpMid = candidate.sdpMid,
                                     sdpMLineIndex = candidate.sdpMLineIndex
                                 });
@@ -376,13 +379,16 @@ namespace RemotePlay.Services
                                 candidateStr.Contains("typ srflx") ? "srflx" :
                                 candidateStr.Contains("typ host") ? "host" : "unknown");
 
-                            // 存储 candidate 以便前端获取
-                            session.AddPendingIceCandidate(new RTCIceCandidateInit
-                            {
-                                candidate = candidate.candidate,
-                                sdpMid = candidate.sdpMid,
-                                sdpMLineIndex = candidate.sdpMLineIndex
-                            });
+                             // 存储 candidate 以便前端获取
+                             // ✅ 修复：从 SDP 中提取 ice-ufrag 并添加到 candidate 字符串中（如果缺少）
+                             var candidateWithUfrag = EnsureCandidateHasUfrag(candidate.candidate, session.PeerConnection);
+                             
+                             session.AddPendingIceCandidate(new RTCIceCandidateInit
+                             {
+                                 candidate = candidateWithUfrag,
+                                 sdpMid = candidate.sdpMid,
+                                 sdpMLineIndex = candidate.sdpMLineIndex
+                             });
 
                             // 尝试添加到本地连接
                             try
@@ -1011,6 +1017,64 @@ namespace RemotePlay.Services
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 确保 candidate 字符串包含 ufrag（从 SDP 中提取）
+        /// </summary>
+        private string EnsureCandidateHasUfrag(string? candidate, RTCPeerConnection peerConnection)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate ?? string.Empty;
+            }
+
+            // 检查 candidate 是否已包含 ufrag
+            var candidateLower = candidate.ToLowerInvariant();
+            if (candidateLower.Contains("ufrag"))
+            {
+                return candidate;
+            }
+
+            // 从 SDP 中提取 ice-ufrag
+            try
+            {
+                var localDescription = peerConnection.localDescription;
+                if (localDescription?.sdp != null)
+                {
+                    var sdp = localDescription.sdp.ToString();
+                    var lines = sdp.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                    
+                    foreach (var line in lines)
+                    {
+                        if (line.StartsWith("a=ice-ufrag:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var ufrag = line.Substring("a=ice-ufrag:".Length).Trim();
+                            if (!string.IsNullOrWhiteSpace(ufrag))
+                            {
+                                // 在 candidate 字符串末尾添加 ufrag
+                                // 格式：... generation 0 ufrag xxx
+                                candidate = candidate.TrimEnd();
+                                if (!candidate.EndsWith("generation 0", StringComparison.OrdinalIgnoreCase) &&
+                                    !candidate.EndsWith("generation", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // 如果没有 generation，先添加 generation 0
+                                    candidate += " generation 0";
+                                }
+                                candidate += " ufrag " + ufrag;
+                                _logger.LogDebug("✅ 已为 candidate 添加 ufrag: {Ufrag}", ufrag);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ 提取 ice-ufrag 失败，使用原始 candidate");
+            }
+
+            return candidate;
         }
 
         /// <summary>
