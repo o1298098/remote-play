@@ -189,6 +189,9 @@ namespace RemotePlay.Controllers
                     });
                 }
                 
+                _logger.LogInformation("📥 收到 ICE Candidate 请求: SessionId={SessionId}, Candidate={Candidate}, SdpMid={SdpMid}, SdpMLineIndex={SdpMLineIndex}",
+                    request.SessionId, request.Candidate, request.SdpMid, request.SdpMLineIndex);
+                
                 var success = await _signalingService.AddIceCandidateAsync(
                     request.SessionId,
                     request.Candidate,
@@ -198,7 +201,12 @@ namespace RemotePlay.Controllers
                 
                 if (success)
                 {
-                    _logger.LogDebug("✅ ICE Candidate 已接收: {SessionId}", request.SessionId);
+                    var session = _signalingService.GetSession(request.SessionId);
+                    _logger.LogInformation("✅ ICE Candidate 已接收并添加: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}",
+                        request.SessionId,
+                        session?.PeerConnection?.connectionState,
+                        session?.PeerConnection?.iceConnectionState);
+                    
                     return Ok(new ApiSuccessResponse<bool>
                     {
                         Success = true,
@@ -208,6 +216,7 @@ namespace RemotePlay.Controllers
                 }
                 else
                 {
+                    _logger.LogWarning("⚠️ ICE Candidate 添加失败: SessionId={SessionId}", request.SessionId);
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,

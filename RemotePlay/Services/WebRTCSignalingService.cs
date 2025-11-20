@@ -472,6 +472,9 @@ namespace RemotePlay.Services
 
             try
             {
+                _logger.LogDebug("📥 接收 ICE Candidate: SessionId={SessionId}, Candidate={Candidate}, SdpMid={SdpMid}, SdpMLineIndex={SdpMLineIndex}",
+                    sessionId, candidate, sdpMid, sdpMLineIndex);
+
                 var iceCandidate = new RTCIceCandidateInit
                 {
                     candidate = candidate,
@@ -480,11 +483,18 @@ namespace RemotePlay.Services
                 };
 
                 session.PeerConnection.addIceCandidate(iceCandidate);
+                
+                _logger.LogDebug("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}",
+                    sessionId, 
+                    session.PeerConnection.connectionState,
+                    session.PeerConnection.iceConnectionState);
+                
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 添加 ICE Candidate 失败: {SessionId}", sessionId);
+                _logger.LogError(ex, "❌ 添加 ICE Candidate 失败: SessionId={SessionId}, Candidate={Candidate}", 
+                    sessionId, candidate);
                 return false;
             }
         }
