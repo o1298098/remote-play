@@ -417,6 +417,52 @@ namespace RemotePlay.Services
                             _logger.LogInformation("🧊 Answer 设置后的 ICE gathering 完成");
                         }
                     };
+                    
+                    // ✅ 添加 ICE 连接状态变化监听器，用于诊断
+                    session.PeerConnection.oniceconnectionstatechange += (state) =>
+                    {
+                        var currentIceState = session.PeerConnection.iceConnectionState;
+                        var connectionState = session.PeerConnection.connectionState;
+                        var signalingState = session.PeerConnection.signalingState;
+                        
+                        _logger.LogInformation("🧊 ICE 连接状态变化: SessionId={SessionId}, 状态: {IceConnectionState}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
+                            sessionId, currentIceState, connectionState, signalingState);
+                        
+                        // ✅ 如果 ICE 连接成功建立
+                        if (currentIceState == RTCIceConnectionState.@connected)
+                        {
+                            _logger.LogInformation("🎉 ICE 连接成功建立: SessionId={SessionId}", sessionId);
+                        }
+                        // ✅ 如果 ICE 连接失败
+                        else if (currentIceState == RTCIceConnectionState.failed)
+                        {
+                            _logger.LogWarning("❌ ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
+                                sessionId, connectionState, signalingState);
+                        }
+                    };
+                    
+                    // ✅ 添加连接状态变化监听器，用于诊断
+                    session.PeerConnection.onconnectionstatechange += (state) =>
+                    {
+                        var currentConnectionState = session.PeerConnection.connectionState;
+                        var iceConnectionState = session.PeerConnection.iceConnectionState;
+                        var signalingState = session.PeerConnection.signalingState;
+                        
+                        _logger.LogInformation("🔌 WebRTC 连接状态变化: SessionId={SessionId}, 状态: {ConnectionState}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
+                            sessionId, currentConnectionState, iceConnectionState, signalingState);
+                        
+                        // ✅ 如果连接成功建立
+                        if (currentConnectionState == RTCPeerConnectionState.@connected)
+                        {
+                            _logger.LogInformation("🎉 WebRTC 连接成功建立: SessionId={SessionId}", sessionId);
+                        }
+                        // ✅ 如果连接失败
+                        else if (currentConnectionState == RTCPeerConnectionState.failed)
+                        {
+                            _logger.LogWarning("❌ WebRTC 连接失败: SessionId={SessionId}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
+                                sessionId, iceConnectionState, signalingState);
+                        }
+                    };
 
                     return true;
                 }
