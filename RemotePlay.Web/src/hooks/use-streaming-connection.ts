@@ -1715,30 +1715,71 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
                   sdpMLineIndex: c.sdpMLineIndex,
                 })),
               })
+              // 使用 Set 去重，避免添加重复的 candidate
+              const uniqueCandidates = new Map<string, typeof candidates[0]>()
               for (const candidate of candidates) {
+                if (candidate.candidate) {
+                  // 使用 candidate 字符串作为唯一键
+                  const candidateKey = candidate.candidate.trim()
+                  if (!uniqueCandidates.has(candidateKey)) {
+                    uniqueCandidates.set(candidateKey, candidate)
+                  } else {
+                    console.debug('🔍 跳过重复的 candidate:', candidateKey.substring(0, 60) + '...')
+                  }
+                }
+              }
+
+              for (const [, candidate] of uniqueCandidates) {
                 try {
                   if (candidate.candidate) {
-                    const candidateObj = {
-                      candidate: candidate.candidate,
+                    // 检查 candidate 格式是否完整（应该包含 generation 和 ufrag）
+                    const candidateStr = candidate.candidate.trim()
+                    const hasGeneration = candidateStr.includes('generation')
+                    const hasUfrag = candidateStr.includes('ufrag')
+                    
+                    if (!hasGeneration || !hasUfrag) {
+                      console.warn('⚠️ Candidate 格式可能不完整，缺少 generation 或 ufrag:', {
+                        candidate: candidateStr.substring(0, 80) + '...',
+                        hasGeneration,
+                        hasUfrag,
+                      })
+                      // 继续尝试添加，有些浏览器可能可以处理不完整的 candidate
+                    }
+
+                    const candidateObj: RTCIceCandidateInit = {
+                      candidate: candidateStr,
                       sdpMid: candidate.sdpMid ?? null,
                       sdpMLineIndex: candidate.sdpMLineIndex ?? null,
-                    } as RTCIceCandidateInit
+                    }
 
                     await peerConnection.addIceCandidate(candidateObj)
                     console.log('✅ 已添加后端 ICE Candidate:', {
-                      candidate: candidate.candidate.substring(0, 60) + '...',
-                      type: candidate.candidate.includes('typ relay') ? 'relay' : 
-                            candidate.candidate.includes('typ srflx') ? 'srflx' : 
-                            candidate.candidate.includes('typ host') ? 'host' : 'unknown',
+                      candidate: candidateStr.substring(0, 60) + '...',
+                      type: candidateStr.includes('typ relay') ? 'relay' : 
+                            candidateStr.includes('typ srflx') ? 'srflx' : 
+                            candidateStr.includes('typ host') ? 'host' : 'unknown',
                       connectionState: peerConnection.connectionState,
                       iceConnectionState: peerConnection.iceConnectionState,
                     })
                   }
                 } catch (error) {
-                  console.warn('⚠️ 添加后端 ICE Candidate 失败:', error, {
-                    candidate: candidate.candidate?.substring(0, 60) + '...',
-                    error: error instanceof Error ? error.message : String(error),
-                  })
+                  // 检查错误是否是重复添加导致的（这是正常的）
+                  const errorMessage = error instanceof Error ? error.message : String(error)
+                  const isDuplicateError = errorMessage.includes('duplicate') || 
+                                          errorMessage.includes('already been added') ||
+                                          errorMessage.includes('already present')
+                  
+                  if (isDuplicateError) {
+                    console.debug('ℹ️ Candidate 可能已存在（正常情况）:', candidate.candidate?.substring(0, 60) + '...')
+                  } else {
+                    console.warn('⚠️ 添加后端 ICE Candidate 失败:', {
+                      candidate: candidate.candidate?.substring(0, 80) + '...',
+                      error: errorMessage,
+                      connectionState: peerConnection.connectionState,
+                      iceConnectionState: peerConnection.iceConnectionState,
+                      signalingState: peerConnection.signalingState,
+                    })
+                  }
                 }
               }
             } else {

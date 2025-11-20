@@ -109,7 +109,7 @@ export const streamingService = {
   },
 
   /**
-   * 发送 ICE Candidate
+   * 发送 ICE Candidate（前端收集的所有 candidate 都发送给后端）
    */
   sendICECandidate: async (data: WebRTCICECandidateRequest): Promise<ApiResponse<any>> => {
     return apiRequest('/webrtc/ice', {
@@ -118,15 +118,6 @@ export const streamingService = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(data),
-    })
-  },
-
-  /**
-   * 获取后端生成的待处理 ICE Candidate
-   */
-  getPendingIceCandidates: async (sessionId: string): Promise<ApiResponse<{ candidates: Array<{ candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }> }>> => {
-    return apiRequest<{ candidates: Array<{ candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }> }>(`/webrtc/ice/${encodeURIComponent(sessionId)}`, {
-      method: 'GET',
     })
   },
 

@@ -1044,6 +1044,7 @@ namespace RemotePlay.Services
         
         // 存储后端新生成的 ICE candidate（Answer 设置后）
         private readonly List<RTCIceCandidateInit> _pendingIceCandidates = new();
+        private readonly HashSet<string> _candidateKeys = new(); // 用于去重
         private readonly object _candidatesLock = new();
 
         public RTCPeerConnectionState ConnectionState => PeerConnection.connectionState;
@@ -1055,15 +1056,29 @@ namespace RemotePlay.Services
             {
                 var result = _pendingIceCandidates.ToList();
                 _pendingIceCandidates.Clear();
+                _candidateKeys.Clear(); // 清空去重集合
                 return result;
             }
         }
         
         public void AddPendingIceCandidate(RTCIceCandidateInit candidate)
         {
+            if (candidate == null || string.IsNullOrWhiteSpace(candidate.candidate))
+            {
+                return;
+            }
+
             lock (_candidatesLock)
             {
-                _pendingIceCandidates.Add(candidate);
+                // 使用 candidate 字符串作为唯一键来去重
+                // 只使用 candidate 字符串本身，忽略 sdpMid 和 sdpMLineIndex（因为它们可能在不同时候不同）
+                var candidateKey = candidate.candidate.Trim();
+                
+                if (!_candidateKeys.Contains(candidateKey))
+                {
+                    _candidateKeys.Add(candidateKey);
+                    _pendingIceCandidates.Add(candidate);
+                }
             }
         }
     }
