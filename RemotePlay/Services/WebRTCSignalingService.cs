@@ -650,8 +650,8 @@ namespace RemotePlay.Services
                 _logger.LogInformation("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
                     sessionId, connectionState, iceConnectionState, signalingState);
                 
-                // ✅ 如果 ICE 连接状态变成 connected 或 completed，记录成功
-                if (iceConnectionState == RTCIceConnectionState.@connected || iceConnectionState == RTCIceConnectionState.completed)
+                // ✅ 如果 ICE 连接状态变成 connected，记录成功
+                if (iceConnectionState == RTCIceConnectionState.@connected)
                 {
                     _logger.LogInformation("🎉 ICE 连接成功建立: SessionId={SessionId}, IceConnectionState={IceConnectionState}", 
                         sessionId, iceConnectionState);
