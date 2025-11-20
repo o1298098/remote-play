@@ -358,9 +358,13 @@ namespace RemotePlay.Services
                 var signalingState = session.PeerConnection.signalingState;
                 var connectionState = session.PeerConnection.connectionState;
                 var iceState = session.PeerConnection.iceConnectionState;
+                var iceGatheringState = session.PeerConnection.iceGatheringState;
 
                 if (result == SetDescriptionResultEnum.OK)
                 {
+                    _logger.LogInformation("✅ Answer 设置成功: SessionId={SessionId}, SignalingState={SignalingState}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}, IceGatheringState={IceGatheringState}",
+                        sessionId, signalingState, connectionState, iceState, iceGatheringState);
+                    
                     if (signalingState != RTCSignalingState.stable)
                     {
                         _logger.LogWarning("⚠️ Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
@@ -639,10 +643,25 @@ namespace RemotePlay.Services
 
                 session.PeerConnection.addIceCandidate(iceCandidate);
                 
-                _logger.LogDebug("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}",
-                    sessionId, 
-                    session.PeerConnection.connectionState,
-                    session.PeerConnection.iceConnectionState);
+                var connectionState = session.PeerConnection.connectionState;
+                var iceConnectionState = session.PeerConnection.iceConnectionState;
+                var signalingState = session.PeerConnection.signalingState;
+                
+                _logger.LogInformation("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
+                    sessionId, connectionState, iceConnectionState, signalingState);
+                
+                // ✅ 如果 ICE 连接状态变成 connected 或 completed，记录成功
+                if (iceConnectionState == RTCIceConnectionState.@connected || iceConnectionState == RTCIceConnectionState.completed)
+                {
+                    _logger.LogInformation("🎉 ICE 连接成功建立: SessionId={SessionId}, IceConnectionState={IceConnectionState}", 
+                        sessionId, iceConnectionState);
+                }
+                // ✅ 如果 ICE 连接状态变成 failed，记录失败并尝试诊断
+                else if (iceConnectionState == RTCIceConnectionState.failed)
+                {
+                    _logger.LogWarning("❌ ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
+                        sessionId, connectionState, signalingState);
+                }
                 
                 return true;
             }
