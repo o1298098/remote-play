@@ -366,6 +366,11 @@ namespace RemotePlay.Services
                         _logger.LogWarning("⚠️ Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
                     }
 
+                    // ✅ Answer 设置后，清理之前存储的 candidate（使用错误 ufrag 的）
+                    // 然后继续监听新的 ICE candidate（使用正确的 ufrag）
+                    session.ClearPendingIceCandidates();
+                    _logger.LogInformation("🧹 Answer 设置后，已清理之前存储的 candidate（使用错误 ufrag 的）");
+
                     // ✅ Answer 设置后，继续监听新的 ICE candidate
                     // 这对于 TURN relay candidate 特别重要，因为它们可能在 Answer 设置后才生成
                     session.PeerConnection.onicecandidate += (candidate) =>
@@ -1185,6 +1190,18 @@ namespace RemotePlay.Services
             }
         }
         
+        /// <summary>
+        /// 清理所有待处理的 candidate（Answer 设置后使用，清理使用错误 ufrag 的 candidate）
+        /// </summary>
+        public void ClearPendingIceCandidates()
+        {
+            lock (_candidatesLock)
+            {
+                _pendingIceCandidates.Clear();
+                _candidateKeys.Clear();
+            }
+        }
+        
         public void AddPendingIceCandidate(RTCIceCandidateInit candidate)
         {
             if (candidate == null || string.IsNullOrWhiteSpace(candidate.candidate))
@@ -1194,16 +1211,66 @@ namespace RemotePlay.Services
 
             lock (_candidatesLock)
             {
-                // 使用 candidate 字符串作为唯一键来去重
-                // 只使用 candidate 字符串本身，忽略 sdpMid 和 sdpMLineIndex（因为它们可能在不同时候不同）
-                var candidateKey = candidate.candidate.Trim();
+                // ✅ 改进去重逻辑：基于 candidate 的核心部分（去掉 ufrag 和 generation）进行去重
+                // 这样可以避免同一个 candidate 因为 ufrag 不同而被存储多次
+                var candidateKey = GetCandidateCoreKey(candidate.candidate);
                 
                 if (!_candidateKeys.Contains(candidateKey))
                 {
                     _candidateKeys.Add(candidateKey);
                     _pendingIceCandidates.Add(candidate);
                 }
+                else
+                {
+                    // 如果已存在，检查是否需要更新（使用更正确的 ufrag）
+                    var existingIndex = _pendingIceCandidates.FindIndex(c => GetCandidateCoreKey(c.candidate) == candidateKey);
+                    if (existingIndex >= 0)
+                    {
+                        var existing = _pendingIceCandidates[existingIndex];
+                        var existingHasUfrag = existing.candidate?.ToLowerInvariant().Contains("ufrag") ?? false;
+                        var newHasUfrag = candidate.candidate?.ToLowerInvariant().Contains("ufrag") ?? false;
+                        
+                        // 如果新的 candidate 有 ufrag 而旧的没有，或者新的 ufrag 来自 remoteDescription（更正确），则替换
+                        if ((!existingHasUfrag && newHasUfrag) || 
+                            (newHasUfrag && existingHasUfrag && candidate.candidate != existing.candidate))
+                        {
+                            _pendingIceCandidates[existingIndex] = candidate;
+                        }
+                    }
+                }
             }
+        }
+        
+        /// <summary>
+        /// 获取 candidate 的核心键（去掉 ufrag 和 generation 等可变字段）
+        /// </summary>
+        private string GetCandidateCoreKey(string candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate;
+            }
+            
+            // 移除 ufrag 和 generation 字段，只保留核心部分
+            // 格式：candidate:xxx 1 udp priority ip port typ type ...
+            var parts = candidate.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var coreParts = new List<string>();
+            
+            foreach (var part in parts)
+            {
+                var partLower = part.ToLowerInvariant();
+                // 跳过 ufrag、generation、network-cost 等可变字段
+                if (partLower == "ufrag" || partLower == "generation" || partLower == "network-cost" ||
+                    (coreParts.Count > 0 && (coreParts[coreParts.Count - 1].ToLowerInvariant() == "ufrag" ||
+                                             coreParts[coreParts.Count - 1].ToLowerInvariant() == "generation" ||
+                                             coreParts[coreParts.Count - 1].ToLowerInvariant() == "network-cost")))
+                {
+                    continue;
+                }
+                coreParts.Add(part);
+            }
+            
+            return string.Join(" ", coreParts);
         }
     }
 }
