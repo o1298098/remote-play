@@ -187,8 +187,26 @@ namespace RemotePlay.Controllers
                 
                 if (candidates.Count > 0)
                 {
+                    // 显示完整的 candidate 字符串（至少显示到 ufrag 部分，如果有的话）
+                    var candidateStrings = candidates.Select(c =>
+                    {
+                        if (string.IsNullOrWhiteSpace(c.candidate))
+                        {
+                            return "null";
+                        }
+                        var candidate = c.candidate;
+                        // 如果包含 ufrag，显示到 ufrag 之后的部分
+                        var ufragIndex = candidate.IndexOf("ufrag", StringComparison.OrdinalIgnoreCase);
+                        if (ufragIndex >= 0)
+                        {
+                            var endIndex = Math.Min(ufragIndex + 30, candidate.Length);
+                            return candidate.Substring(0, endIndex) + (endIndex < candidate.Length ? "..." : "");
+                        }
+                        // 否则显示前 100 个字符
+                        return candidate.Length > 100 ? candidate.Substring(0, 100) + "..." : candidate;
+                    });
                     _logger.LogInformation("📤 待处理的 Candidate 列表: {Candidates}",
-                        string.Join("; ", candidates.Select(c => c.candidate?.Substring(0, Math.Min(60, c.candidate?.Length ?? 0)) ?? "null")));
+                        string.Join("; ", candidateStrings));
                 }
 
                 var candidateList = candidates.Select(c => new

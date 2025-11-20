@@ -1033,40 +1033,64 @@ namespace RemotePlay.Services
             var candidateLower = candidate.ToLowerInvariant();
             if (candidateLower.Contains("ufrag"))
             {
+                _logger.LogDebug("ℹ️ Candidate 已包含 ufrag，无需添加");
                 return candidate;
             }
 
-            // 从 SDP 中提取 ice-ufrag
+            // 从 SDP 中提取 ice-ufrag（优先从 localDescription，如果没有则从 remoteDescription）
+            string? ufrag = null;
             try
             {
+                // 首先尝试从 localDescription 提取
                 var localDescription = peerConnection.localDescription;
                 if (localDescription?.sdp != null)
                 {
                     var sdp = localDescription.sdp.ToString();
-                    var lines = sdp.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-                    
-                    foreach (var line in lines)
+                    ufrag = ExtractIceUfragFromSdp(sdp);
+                    if (!string.IsNullOrWhiteSpace(ufrag))
                     {
-                        if (line.StartsWith("a=ice-ufrag:", StringComparison.OrdinalIgnoreCase))
+                        _logger.LogDebug("✅ 从 localDescription 提取到 ufrag: {Ufrag}", ufrag);
+                    }
+                }
+
+                // 如果 localDescription 没有，尝试从 remoteDescription 提取（Answer 设置后）
+                if (string.IsNullOrWhiteSpace(ufrag))
+                {
+                    var remoteDescription = peerConnection.remoteDescription;
+                    if (remoteDescription?.sdp != null)
+                    {
+                        var sdp = remoteDescription.sdp.ToString();
+                        ufrag = ExtractIceUfragFromSdp(sdp);
+                        if (!string.IsNullOrWhiteSpace(ufrag))
                         {
-                            var ufrag = line.Substring("a=ice-ufrag:".Length).Trim();
-                            if (!string.IsNullOrWhiteSpace(ufrag))
-                            {
-                                // 在 candidate 字符串末尾添加 ufrag
-                                // 格式：... generation 0 ufrag xxx
-                                candidate = candidate.TrimEnd();
-                                if (!candidate.EndsWith("generation 0", StringComparison.OrdinalIgnoreCase) &&
-                                    !candidate.EndsWith("generation", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // 如果没有 generation，先添加 generation 0
-                                    candidate += " generation 0";
-                                }
-                                candidate += " ufrag " + ufrag;
-                                _logger.LogDebug("✅ 已为 candidate 添加 ufrag: {Ufrag}", ufrag);
-                                break;
-                            }
+                            _logger.LogDebug("✅ 从 remoteDescription 提取到 ufrag: {Ufrag}", ufrag);
                         }
                     }
+                }
+
+                // 如果找到了 ufrag，添加到 candidate
+                if (!string.IsNullOrWhiteSpace(ufrag))
+                {
+                    candidate = candidate.TrimEnd();
+                    // 确保有 generation 字段
+                    if (!candidate.EndsWith("generation 0", StringComparison.OrdinalIgnoreCase) &&
+                        !candidate.EndsWith("generation", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 检查是否已经有 generation（可能格式不同）
+                        if (!candidateLower.Contains("generation"))
+                        {
+                            candidate += " generation 0";
+                        }
+                    }
+                    candidate += " ufrag " + ufrag;
+                    _logger.LogInformation("✅ 已为 candidate 添加 ufrag: {Ufrag}, 原始: {Original}, 修改后: {Modified}",
+                        ufrag, candidate.Length > 80 ? candidate.Substring(0, 80) + "..." : candidate,
+                        candidate.Length > 80 ? candidate.Substring(0, 80) + "..." : candidate);
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ 无法从 SDP 中提取 ice-ufrag，candidate 将缺少 ufrag: {Candidate}",
+                        candidate.Length > 80 ? candidate.Substring(0, 80) + "..." : candidate);
                 }
             }
             catch (Exception ex)
@@ -1075,6 +1099,41 @@ namespace RemotePlay.Services
             }
 
             return candidate;
+        }
+
+        /// <summary>
+        /// 从 SDP 字符串中提取 ice-ufrag
+        /// </summary>
+        private string? ExtractIceUfragFromSdp(string sdp)
+        {
+            if (string.IsNullOrWhiteSpace(sdp))
+            {
+                return null;
+            }
+
+            var lines = sdp.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            foreach (var line in lines)
+            {
+                // 支持多种格式：a=ice-ufrag:xxx 或 a=ice-ufrag xxx
+                if (line.StartsWith("a=ice-ufrag:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var ufrag = line.Substring("a=ice-ufrag:".Length).Trim();
+                    if (!string.IsNullOrWhiteSpace(ufrag))
+                    {
+                        return ufrag;
+                    }
+                }
+                else if (line.StartsWith("a=ice-ufrag ", StringComparison.OrdinalIgnoreCase))
+                {
+                    var ufrag = line.Substring("a=ice-ufrag ".Length).Trim();
+                    if (!string.IsNullOrWhiteSpace(ufrag))
+                    {
+                        return ufrag;
+                    }
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
