@@ -182,8 +182,14 @@ namespace RemotePlay.Controllers
 
                 var candidates = _signalingService.GetPendingIceCandidates(sessionId);
                 
-                _logger.LogDebug("📤 获取待处理的 ICE Candidate: SessionId={SessionId}, Count={Count}",
+                _logger.LogInformation("📤 获取待处理的 ICE Candidate: SessionId={SessionId}, Count={Count}",
                     sessionId, candidates.Count);
+                
+                if (candidates.Count > 0)
+                {
+                    _logger.LogInformation("📤 待处理的 Candidate 列表: {Candidates}",
+                        string.Join("; ", candidates.Select(c => c.candidate?.Substring(0, Math.Min(60, c.candidate?.Length ?? 0)) ?? "null")));
+                }
 
                 var candidateList = candidates.Select(c => new
                 {

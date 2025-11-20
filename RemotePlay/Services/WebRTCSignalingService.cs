@@ -199,6 +199,35 @@ namespace RemotePlay.Services
                         {
                             _logger.LogInformation("🌐 发现 TURN relay 候选地址: {Candidate}", candidate.candidate);
                         }
+                        
+                        // ✅ 同时存储 candidate，以便前端在 Answer 设置后也能获取
+                        // 特别是那些在 Answer 设置后才发现的 candidate
+                        try
+                        {
+                            if (_sessions.TryGetValue(sessionId, out var existingSession))
+                            {
+                                var candidateType = candidateStr.Contains("typ relay") ? "relay" :
+                                    candidateStr.Contains("typ srflx") ? "srflx" :
+                                    candidateStr.Contains("typ host") ? "host" : "unknown";
+                                
+                                existingSession.AddPendingIceCandidate(new RTCIceCandidateInit
+                                {
+                                    candidate = candidate.candidate,
+                                    sdpMid = candidate.sdpMid,
+                                    sdpMLineIndex = candidate.sdpMLineIndex
+                                });
+                                _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}, Type={Type}",
+                                    sessionId, candidateType);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("⚠️ 会话不存在，无法存储 ICE candidate: SessionId={SessionId}", sessionId);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "⚠️ 存储 ICE candidate 失败: SessionId={SessionId}", sessionId);
+                        }
                     }
                     else
                     {
@@ -507,7 +536,13 @@ namespace RemotePlay.Services
                 return new List<RTCIceCandidateInit>();
             }
 
-            return webrtcSession.GetPendingIceCandidates();
+            var candidates = webrtcSession.GetPendingIceCandidates();
+            if (candidates.Count > 0)
+            {
+                _logger.LogInformation("📤 返回 {Count} 个待处理的 ICE candidate 给前端: SessionId={SessionId}",
+                    candidates.Count, sessionId);
+            }
+            return candidates;
         }
 
         /// <summary>
