@@ -1037,33 +1037,34 @@ namespace RemotePlay.Services
                 return candidate;
             }
 
-            // 从 SDP 中提取 ice-ufrag（优先从 localDescription，如果没有则从 remoteDescription）
+            // ✅ 关键修复：后端生成的 candidate 要发送给前端，所以应该使用前端的 ufrag（从 Answer SDP 中提取）
+            // 优先从 remoteDescription（Answer SDP）提取前端的 ufrag
             string? ufrag = null;
             try
             {
-                // 首先尝试从 localDescription 提取
-                var localDescription = peerConnection.localDescription;
-                if (localDescription?.sdp != null)
+                // 首先尝试从 remoteDescription 提取（这是前端的 ufrag，后端 candidate 应该使用这个）
+                var remoteDescription = peerConnection.remoteDescription;
+                if (remoteDescription?.sdp != null)
                 {
-                    var sdp = localDescription.sdp.ToString();
+                    var sdp = remoteDescription.sdp.ToString();
                     ufrag = ExtractIceUfragFromSdp(sdp);
                     if (!string.IsNullOrWhiteSpace(ufrag))
                     {
-                        _logger.LogDebug("✅ 从 localDescription 提取到 ufrag: {Ufrag}", ufrag);
+                        _logger.LogDebug("✅ 从 remoteDescription（Answer SDP）提取到前端的 ufrag: {Ufrag}", ufrag);
                     }
                 }
 
-                // 如果 localDescription 没有，尝试从 remoteDescription 提取（Answer 设置后）
+                // 如果 remoteDescription 还没有设置（Answer 设置前），才从 localDescription 提取
                 if (string.IsNullOrWhiteSpace(ufrag))
                 {
-                    var remoteDescription = peerConnection.remoteDescription;
-                    if (remoteDescription?.sdp != null)
+                    var localDescription = peerConnection.localDescription;
+                    if (localDescription?.sdp != null)
                     {
-                        var sdp = remoteDescription.sdp.ToString();
+                        var sdp = localDescription.sdp.ToString();
                         ufrag = ExtractIceUfragFromSdp(sdp);
                         if (!string.IsNullOrWhiteSpace(ufrag))
                         {
-                            _logger.LogDebug("✅ 从 remoteDescription 提取到 ufrag: {Ufrag}", ufrag);
+                            _logger.LogDebug("⚠️ remoteDescription 未设置，从 localDescription 提取到 ufrag: {Ufrag}（这可能导致不匹配）", ufrag);
                         }
                     }
                 }
