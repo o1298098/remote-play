@@ -550,13 +550,68 @@ namespace RemotePlay.Services
                 return new List<RTCIceCandidateInit>();
             }
 
-            var candidates = webrtcSession.GetPendingIceCandidates();
-            if (candidates.Count > 0)
+            var allCandidates = webrtcSession.GetPendingIceCandidates();
+            
+            // ✅ 过滤：只返回使用正确 ufrag（前端的 ufrag）的 candidate
+            // 从 remoteDescription（Answer SDP）提取前端的 ufrag
+            string? frontendUfrag = null;
+            try
+            {
+                var remoteDescription = webrtcSession.PeerConnection.remoteDescription;
+                if (remoteDescription?.sdp != null)
+                {
+                    var sdp = remoteDescription.sdp.ToString();
+                    frontendUfrag = ExtractIceUfragFromSdp(sdp);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ 提取前端 ufrag 失败，将返回所有 candidate");
+            }
+            
+            List<RTCIceCandidateInit> filteredCandidates;
+            if (!string.IsNullOrWhiteSpace(frontendUfrag))
+            {
+                // 过滤掉 ufrag 不匹配的 candidate
+                filteredCandidates = allCandidates.Where(c =>
+                {
+                    if (string.IsNullOrWhiteSpace(c.candidate))
+                    {
+                        return false;
+                    }
+                    
+                    // 提取 candidate 中的 ufrag
+                    var match = System.Text.RegularExpressions.Regex.Match(c.candidate, @"ufrag\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (match.Success)
+                    {
+                        var candidateUfrag = match.Groups[1].Value;
+                        return candidateUfrag == frontendUfrag;
+                    }
+                    
+                    // 如果 candidate 没有 ufrag，保留它（会在前端添加 ufrag）
+                    return true;
+                }).ToList();
+                
+                if (filteredCandidates.Count < allCandidates.Count)
+                {
+                    _logger.LogInformation("🔍 过滤 candidate: 总共 {Total} 个，过滤后 {Filtered} 个（使用前端 ufrag: {Ufrag}）",
+                        allCandidates.Count, filteredCandidates.Count, frontendUfrag);
+                }
+            }
+            else
+            {
+                // 如果无法提取前端 ufrag，返回所有 candidate
+                filteredCandidates = allCandidates;
+                _logger.LogWarning("⚠️ 无法提取前端 ufrag，返回所有 {Count} 个 candidate", allCandidates.Count);
+            }
+            
+            if (filteredCandidates.Count > 0)
             {
                 _logger.LogInformation("📤 返回 {Count} 个待处理的 ICE candidate 给前端: SessionId={SessionId}",
-                    candidates.Count, sessionId);
+                    filteredCandidates.Count, sessionId);
             }
-            return candidates;
+            
+            return filteredCandidates;
         }
 
         /// <summary>
