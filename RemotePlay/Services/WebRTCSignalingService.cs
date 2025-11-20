@@ -366,11 +366,10 @@ namespace RemotePlay.Services
                         _logger.LogWarning("⚠️ Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
                     }
 
-                    // ✅ Answer 设置后，清理之前存储的 candidate（使用错误 ufrag 的）
-                    // 然后继续监听新的 ICE candidate（使用正确的 ufrag）
-                    session.ClearPendingIceCandidates();
-                    _logger.LogInformation("🧹 Answer 设置后，已清理之前存储的 candidate（使用错误 ufrag 的）");
-
+                    // ✅ Answer 设置后，不再清理 candidate
+                    // 而是继续监听新的 ICE candidate（使用正确的 ufrag），它们会被自动更新或添加
+                    // 之前的 candidate（使用错误 ufrag 的）会在新 candidate 添加时被智能更新
+                    
                     // ✅ Answer 设置后，继续监听新的 ICE candidate
                     // 这对于 TURN relay candidate 特别重要，因为它们可能在 Answer 设置后才生成
                     session.PeerConnection.onicecandidate += (candidate) =>
@@ -378,11 +377,12 @@ namespace RemotePlay.Services
                         if (candidate != null && candidate.candidate != null)
                         {
                             var candidateStr = candidate.candidate.ToLowerInvariant();
-                            _logger.LogInformation("🌐 Answer 设置后发现新的 ICE candidate: {Candidate}, 类型: {Type}",
-                                candidate.candidate,
-                                candidateStr.Contains("typ relay") ? "relay" :
+                            var candidateType = candidateStr.Contains("typ relay") ? "relay" :
                                 candidateStr.Contains("typ srflx") ? "srflx" :
-                                candidateStr.Contains("typ host") ? "host" : "unknown");
+                                candidateStr.Contains("typ host") ? "host" : "unknown";
+                            
+                            _logger.LogInformation("🌐 Answer 设置后发现新的 ICE candidate: {Candidate}, 类型: {Type}",
+                                candidate.candidate, candidateType);
 
                              // 存储 candidate 以便前端获取
                              // ✅ 修复：从 SDP 中提取 ice-ufrag 并添加到 candidate 字符串中（如果缺少）
@@ -394,6 +394,9 @@ namespace RemotePlay.Services
                                  sdpMid = candidate.sdpMid,
                                  sdpMLineIndex = candidate.sdpMLineIndex
                              });
+                             
+                             _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}, Type={Type}",
+                                 sessionId, candidateType);
 
                             // 尝试添加到本地连接
                             try
@@ -1035,7 +1038,12 @@ namespace RemotePlay.Services
             }
 
             // ✅ 确保 candidate 字符串以 "candidate:" 开头（WebRTC 标准格式）
-            var candidateStr = candidate.Trim();
+            var candidateStr = candidate?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(candidateStr))
+            {
+                return candidateStr;
+            }
+            
             if (!candidateStr.StartsWith("candidate:", StringComparison.OrdinalIgnoreCase))
             {
                 candidateStr = "candidate:" + candidateStr;
@@ -1046,7 +1054,38 @@ namespace RemotePlay.Services
             var candidateLower = candidateStr.ToLowerInvariant();
             if (candidateLower.Contains("ufrag"))
             {
-                _logger.LogDebug("ℹ️ Candidate 已包含 ufrag，无需添加");
+                // ✅ 即使已有 ufrag，也检查是否是正确的前端 ufrag（从 remoteDescription 提取）
+                // 如果 remoteDescription 已设置，优先使用前端的 ufrag
+                try
+                {
+                    var remoteDescription = peerConnection.remoteDescription;
+                    if (remoteDescription?.sdp != null)
+                    {
+                        var sdp = remoteDescription.sdp.ToString();
+                        var frontendUfrag = ExtractIceUfragFromSdp(sdp);
+                        if (!string.IsNullOrWhiteSpace(frontendUfrag))
+                        {
+                            // 检查当前 candidate 的 ufrag 是否匹配前端的 ufrag
+                            var currentUfragMatch = System.Text.RegularExpressions.Regex.Match(candidateStr, @"ufrag\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                            if (currentUfragMatch.Success)
+                            {
+                                var currentUfrag = currentUfragMatch.Groups[1].Value;
+                                if (currentUfrag != frontendUfrag)
+                                {
+                                    // 如果不匹配，替换为前端的 ufrag
+                                    candidateStr = System.Text.RegularExpressions.Regex.Replace(candidateStr, @"ufrag\s+\w+", $"ufrag {frontendUfrag}", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                                    _logger.LogDebug("✅ 已更新 candidate 的 ufrag: {Old} -> {New}", currentUfrag, frontendUfrag);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "⚠️ 检查 ufrag 匹配失败，使用原始 candidate");
+                }
+                
+                _logger.LogDebug("ℹ️ Candidate 已包含 ufrag");
                 return candidateStr;
             }
 
