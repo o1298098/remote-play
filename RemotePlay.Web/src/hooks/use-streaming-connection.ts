@@ -1110,11 +1110,29 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       // TURN 服务器优先，因为它们在 NAT 穿透方面更可靠
       const iceServers: RTCIceServer[] = [...turnServers, ...defaultIceServers]
 
+      console.log('🔧 RTCPeerConnection 配置:', {
+        iceServers: iceServers.map((s) => ({
+          urls: s.urls,
+          username: s.username ? '***' : undefined,
+          credential: s.credential ? '***' : undefined,
+        })),
+        iceCandidatePoolSize: isLikelyLan ? 1 : 4,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+      })
+
       const peerConnection = new RTCPeerConnection({
         iceServers,
         iceCandidatePoolSize: isLikelyLan ? 1 : 4,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
+      })
+
+      console.log('✅ RTCPeerConnection 已创建:', {
+        connectionState: peerConnection.connectionState,
+        iceConnectionState: peerConnection.iceConnectionState,
+        signalingState: peerConnection.signalingState,
+        iceGatheringState: peerConnection.iceGatheringState,
       })
 
       try {
@@ -1488,18 +1506,41 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       peerConnection.onicecandidate = async (event) => {
         if (event.candidate && webrtcSessionIdValue) {
-          await streamingService.sendICECandidate({
-            sessionId: webrtcSessionIdValue,
+          console.log('🧊 ICE Candidate 收到:', {
             candidate: event.candidate.candidate,
+            type: event.candidate.type,
+            protocol: event.candidate.protocol,
+            address: event.candidate.address,
+            port: event.candidate.port,
+            priority: event.candidate.priority,
             sdpMid: event.candidate.sdpMid,
             sdpMLineIndex: event.candidate.sdpMLineIndex,
           })
+          try {
+            await streamingService.sendICECandidate({
+              sessionId: webrtcSessionIdValue,
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+            })
+            console.log('✅ ICE Candidate 已发送')
+          } catch (error) {
+            console.error('❌ 发送 ICE Candidate 失败:', error)
+          }
+        } else if (!event.candidate) {
+          console.log('🧊 ICE Candidate gathering 完成')
         }
       }
 
       peerConnection.onconnectionstatechange = () => {
         const state = peerConnection.connectionState
-        console.log('🔌 WebRTC 连接状态变化:', state)
+        const iceState = peerConnection.iceConnectionState
+        const signalingState = peerConnection.signalingState
+        console.log('🔌 WebRTC 连接状态变化:', {
+          connectionState: state,
+          iceConnectionState: iceState,
+          signalingState: signalingState,
+        })
         const localizedState =
           state === 'connected'
             ? t('streaming.connection.state.connected')
@@ -1595,15 +1636,36 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       peerConnection.oniceconnectionstatechange = () => {
         const state = peerConnection.iceConnectionState
-        console.log('🧊 ICE 连接状态:', state)
+        const connectionState = peerConnection.connectionState
+        console.log('🧊 ICE 连接状态变化:', {
+          iceConnectionState: state,
+          connectionState: connectionState,
+        })
         if (state === 'connected' || state === 'completed') {
+          console.log('✅ ICE 连接已建立:', state)
           reinforceLatencyHints(peerConnection)
+        } else if (state === 'failed') {
+          console.error('❌ ICE 连接失败')
+        } else if (state === 'disconnected') {
+          console.warn('⚠️ ICE 连接已断开')
         }
       }
 
       peerConnection.onicegatheringstatechange = () => {
         const state = peerConnection.iceGatheringState
-        console.log('🧊 ICE 收集状态:', state)
+        console.log('🧊 ICE 收集状态变化:', {
+          iceGatheringState: state,
+          iceConnectionState: peerConnection.iceConnectionState,
+        })
+      }
+
+      peerConnection.onsignalingstatechange = () => {
+        const state = peerConnection.signalingState
+        console.log('📡 信令状态变化:', {
+          signalingState: state,
+          connectionState: peerConnection.connectionState,
+          iceConnectionState: peerConnection.iceConnectionState,
+        })
       }
 
       await peerConnection.setRemoteDescription({
