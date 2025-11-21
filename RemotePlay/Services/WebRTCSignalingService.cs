@@ -23,7 +23,7 @@ namespace RemotePlay.Services
         private readonly ConcurrentDictionary<string, WebRTCSession> _sessions;
         private readonly LatencyStatisticsService? _latencyStats;
         private readonly IControllerService? _controllerService;
-        private readonly IStreamingService? _streamingService; // ✅ 用于请求关键帧
+        private readonly IStreamingService? _streamingService;
         private readonly WebRTCConfig _config;
         private readonly PortRange? _portRange;
 
@@ -33,7 +33,7 @@ namespace RemotePlay.Services
             LatencyStatisticsService? latencyStats = null,
             IControllerService? controllerService = null,
             IStreamingService? streamingService = null,
-            IOptions<WebRTCConfig>? webrtcOptions = null) // ✅ 注入 IStreamingService
+            IOptions<WebRTCConfig>? webrtcOptions = null)
         {
             _logger = logger;
             _loggerFactory = loggerFactory;
@@ -71,15 +71,10 @@ namespace RemotePlay.Services
 
             try
             {
-                // ⚙️ 创建 WebRTC 配置（增加低延迟优化）
                 var config = new RTCConfiguration
                 {
-                    // 若后续你添加 TURN，这里支持多项
                     iceServers = new List<RTCIceServer>
             {
-                //new RTCIceServer { urls = "stun:stun.qcloudtrtc.com:8000" },
-                //new RTCIceServer { urls = "stun:stun.alibabacloud.com:3478" },
-               // new RTCIceServer { urls = "stun:stun.agora.io:3478" },
                 new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
             },
                     bundlePolicy = RTCBundlePolicy.max_bundle,
@@ -111,7 +106,6 @@ namespace RemotePlay.Services
 
                 var peerConnection = new RTCPeerConnection(config, portRange: _portRange);
 
-                // 🎯 创建接收器（视频/音频处理逻辑）
                 var receiver = new WebRTCReceiver(
                     sessionId,
                     peerConnection,
@@ -132,14 +126,12 @@ namespace RemotePlay.Services
 
                 _sessions.TryAdd(sessionId, session);
 
-                // 🔌 监听断开事件
                 receiver.OnDisconnected += async (s, e) =>
                 {
                     _logger.LogInformation("🔌 WebRTC 会话断开: {SessionId}", sessionId);
                     await RemoveSessionAsync(sessionId);
                 };
 
-                // 🎬 监听浏览器的 PLI/FIR 请求（请求关键帧）
                 receiver.OnKeyframeRequested += async (s, e) =>
                 {
                     if (_streamingService != null && session.StreamingSessionId.HasValue)
@@ -160,14 +152,11 @@ namespace RemotePlay.Services
                     }
                 };
 
-                // 🧠 SDP Offer
                 var offer = peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
 
                 _logger.LogInformation("✅ 创建 WebRTC 会话: {SessionId}, 状态: {State}, ICE: {IceState}",
                     sessionId, peerConnection.connectionState, peerConnection.iceConnectionState);
-
-                // 🧊 等待 ICE Gathering
                 var tcs = new TaskCompletionSource<bool>();
                 int candidateCount = 0;
                 int hostCandidateCount = 0;
@@ -192,25 +181,17 @@ namespace RemotePlay.Services
                             relayCandidateCount++;
                         
                         try { peerConnection.addLocalIceCandidate(candidate); }
-                        catch { /* 已自动添加 */ }
+                        catch { }
                         
-                        // 记录TURN候选地址（重要）
                         if (candidateStr.Contains("typ relay"))
                         {
                             _logger.LogInformation("🌐 发现 TURN relay 候选地址: {Candidate}", candidate.candidate);
                         }
                         
-                        // ✅ 同时存储 candidate，以便前端在 Answer 设置后也能获取
-                        // 特别是那些在 Answer 设置后才发现的 candidate
                         try
                         {
                             if (_sessions.TryGetValue(sessionId, out var existingSession))
                             {
-                                var candidateType = candidateStr.Contains("typ relay") ? "relay" :
-                                    candidateStr.Contains("typ srflx") ? "srflx" :
-                                    candidateStr.Contains("typ host") ? "host" : "unknown";
-                                
-                                // ✅ 修复：从 SDP 中提取 ice-ufrag 并添加到 candidate 字符串中（如果缺少）
                                 var candidateWithUfrag = EnsureCandidateHasUfrag(candidate.candidate, existingSession.PeerConnection);
                                 
                                 existingSession.AddPendingIceCandidate(new RTCIceCandidateInit
@@ -219,12 +200,8 @@ namespace RemotePlay.Services
                                     sdpMid = candidate.sdpMid,
                                     sdpMLineIndex = candidate.sdpMLineIndex
                                 });
-                                _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}, Type={Type}",
-                                    sessionId, candidateType);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("⚠️ 会话不存在，无法存储 ICE candidate: SessionId={SessionId}", sessionId);
+                                _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}",
+                                    sessionId);
                             }
                         }
                         catch (Exception ex)
@@ -241,42 +218,24 @@ namespace RemotePlay.Services
                     }
                 };
 
-                // ⚡ 根据是否配置TURN服务器调整等待时间
-                // TURN服务器需要更长时间来建立连接和分配中继地址
-                int waitTimeoutMs = hasTurnServers ? 8000 : 2000; // TURN: 8秒，无TURN: 2秒
+                int waitTimeoutMs = hasTurnServers ? 8000 : 2000;
                 
                 await Task.WhenAny(tcs.Task, Task.Delay(waitTimeoutMs));
 
                 if (!gatheringComplete)
                 {
-                    _logger.LogWarning("⚠️ ICE Gathering 未完成（等待{Timeout}ms），已收集 {Count} 个 candidates (host={Host}, srflx={Srflx}, relay={Relay})。继续使用现有 SDP", 
+                    _logger.LogWarning("⚠️ ICE Gathering 未完成（等待{Timeout}ms），已收集 {Count} 个 candidates (host={Host}, srflx={Srflx}, relay={Relay})", 
                         waitTimeoutMs, candidateCount, hostCandidateCount, srflxCandidateCount, relayCandidateCount);
                     
-                    // 如果配置了TURN但没有收集到relay候选，发出警告
                     if (hasTurnServers && relayCandidateCount == 0)
                     {
-                        _logger.LogWarning("⚠️ 配置了TURN服务器但未收集到relay候选地址，请检查：1) TURN服务器是否可访问 2) 用户名密码是否正确 3) 防火墙是否开放UDP端口");
+                        _logger.LogWarning("⚠️ 配置了TURN服务器但未收集到relay候选地址");
                     }
                 }
 
-                // 🧩 优化 SDP（低延迟关键）
                 var finalSdp = OptimizeSdpForLowLatency(peerConnection.localDescription.sdp.ToString());
                 finalSdp = ApplyPublicIpToSdp(finalSdp);
                 finalSdp = PrioritizeLanCandidates(finalSdp, preferLanCandidatesOverride);
-
-                // ✅ 验证SDP中是否包含TURN候选地址
-                if (hasTurnServers)
-                {
-                    bool hasRelayCandidate = finalSdp.Contains("typ relay", StringComparison.OrdinalIgnoreCase);
-                    if (hasRelayCandidate)
-                    {
-                        _logger.LogInformation("✅ SDP 中包含 TURN relay 候选地址");
-                    }
-                    else
-                    {
-                        _logger.LogWarning("⚠️ SDP 中未找到 TURN relay 候选地址。可能原因：1) ICE gathering未完成 2) TURN服务器连接失败 3) 需要更长的等待时间");
-                    }
-                }
 
                 return (sessionId, finalSdp);
             }
@@ -362,35 +321,19 @@ namespace RemotePlay.Services
 
                 if (result == SetDescriptionResultEnum.OK)
                 {
-                    _logger.LogInformation("✅ Answer 设置成功: SessionId={SessionId}, SignalingState={SignalingState}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}, IceGatheringState={IceGatheringState}",
-                        sessionId, signalingState, connectionState, iceState, iceGatheringState);
+                    _logger.LogInformation("✅ Answer 设置成功: SessionId={SessionId}, SignalingState={SignalingState}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}",
+                        sessionId, signalingState, connectionState, iceState);
                     
                     if (signalingState != RTCSignalingState.stable)
                     {
                         _logger.LogWarning("⚠️ Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
                     }
-
-                    // ✅ Answer 设置后，不再清理 candidate
-                    // 而是继续监听新的 ICE candidate（使用正确的 ufrag），它们会被自动更新或添加
-                    // 之前的 candidate（使用错误 ufrag 的）会在新 candidate 添加时被智能更新
                     
-                    // ✅ Answer 设置后，继续监听新的 ICE candidate
-                    // 这对于 TURN relay candidate 特别重要，因为它们可能在 Answer 设置后才生成
                     session.PeerConnection.onicecandidate += (candidate) =>
                     {
                         if (candidate != null && candidate.candidate != null)
                         {
-                            var candidateStr = candidate.candidate.ToLowerInvariant();
-                            var candidateType = candidateStr.Contains("typ relay") ? "relay" :
-                                candidateStr.Contains("typ srflx") ? "srflx" :
-                                candidateStr.Contains("typ host") ? "host" : "unknown";
-                            
-                            _logger.LogInformation("🌐 Answer 设置后发现新的 ICE candidate: {Candidate}, 类型: {Type}",
-                                candidate.candidate, candidateType);
-
-                             // 存储 candidate 以便前端获取
-                             // ✅ 修复：从 SDP 中提取 ice-ufrag 并添加到 candidate 字符串中（如果缺少）
-                             var candidateWithUfrag = EnsureCandidateHasUfrag(candidate.candidate, session.PeerConnection);
+                            var candidateWithUfrag = EnsureCandidateHasUfrag(candidate.candidate, session.PeerConnection);
                              
                              session.AddPendingIceCandidate(new RTCIceCandidateInit
                              {
@@ -399,26 +342,17 @@ namespace RemotePlay.Services
                                  sdpMLineIndex = candidate.sdpMLineIndex
                              });
                              
-                             _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}, Type={Type}",
-                                 sessionId, candidateType);
+                             _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}",
+                                 sessionId);
 
-                            // 尝试添加到本地连接
                             try
                             {
                                 session.PeerConnection.addLocalIceCandidate(candidate);
                             }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug("⚠️ 添加本地 ICE candidate 失败（可能已存在）: {Error}", ex.Message);
-                            }
-                        }
-                        else
-                        {
-                            _logger.LogInformation("🧊 Answer 设置后的 ICE gathering 完成");
+                            catch { }
                         }
                     };
                     
-                    // ✅ 添加 ICE 连接状态变化监听器，用于诊断
                     session.PeerConnection.oniceconnectionstatechange += (state) =>
                     {
                         var currentIceState = session.PeerConnection.iceConnectionState;
@@ -428,12 +362,10 @@ namespace RemotePlay.Services
                         _logger.LogInformation("🧊 ICE 连接状态变化: SessionId={SessionId}, 状态: {IceConnectionState}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
                             sessionId, currentIceState, connectionState, signalingState);
                         
-                        // ✅ 如果 ICE 连接成功建立
                         if (currentIceState == RTCIceConnectionState.@connected)
                         {
                             _logger.LogInformation("🎉 ICE 连接成功建立: SessionId={SessionId}", sessionId);
                         }
-                        // ✅ 如果 ICE 连接失败
                         else if (currentIceState == RTCIceConnectionState.failed)
                         {
                             _logger.LogWarning("❌ ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
@@ -441,7 +373,6 @@ namespace RemotePlay.Services
                         }
                     };
                     
-                    // ✅ 添加连接状态变化监听器，用于诊断
                     session.PeerConnection.onconnectionstatechange += (state) =>
                     {
                         var currentConnectionState = session.PeerConnection.connectionState;
@@ -451,12 +382,10 @@ namespace RemotePlay.Services
                         _logger.LogInformation("🔌 WebRTC 连接状态变化: SessionId={SessionId}, 状态: {ConnectionState}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
                             sessionId, currentConnectionState, iceConnectionState, signalingState);
                         
-                        // ✅ 如果连接成功建立
                         if (currentConnectionState == RTCPeerConnectionState.@connected)
                         {
                             _logger.LogInformation("🎉 WebRTC 连接成功建立: SessionId={SessionId}", sessionId);
                         }
-                        // ✅ 如果连接失败
                         else if (currentConnectionState == RTCPeerConnectionState.failed)
                         {
                             _logger.LogWarning("❌ WebRTC 连接失败: SessionId={SessionId}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
@@ -577,7 +506,6 @@ namespace RemotePlay.Services
                         }
                     }
 
-                    // 其他错误返回 false
                     _logger.LogError("❌ 设置 Answer 失败: {SessionId}, 结果: {Result}", sessionId, result);
                     return false;
                 }
@@ -602,8 +530,6 @@ namespace RemotePlay.Services
 
             var allCandidates = webrtcSession.GetPendingIceCandidates();
             
-            // ✅ 过滤：只返回使用正确 ufrag（前端的 ufrag）的 candidate
-            // 从 remoteDescription（Answer SDP）提取前端的 ufrag
             string? frontendUfrag = null;
             try
             {
@@ -622,7 +548,6 @@ namespace RemotePlay.Services
             List<RTCIceCandidateInit> filteredCandidates;
             if (!string.IsNullOrWhiteSpace(frontendUfrag))
             {
-                // 过滤掉 ufrag 不匹配的 candidate
                 filteredCandidates = allCandidates.Where(c =>
                 {
                     if (string.IsNullOrWhiteSpace(c.candidate))
@@ -630,7 +555,6 @@ namespace RemotePlay.Services
                         return false;
                     }
                     
-                    // 提取 candidate 中的 ufrag
                     var match = System.Text.RegularExpressions.Regex.Match(c.candidate, @"ufrag\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                     if (match.Success)
                     {
@@ -638,19 +562,11 @@ namespace RemotePlay.Services
                         return candidateUfrag == frontendUfrag;
                     }
                     
-                    // 如果 candidate 没有 ufrag，保留它（会在前端添加 ufrag）
                     return true;
                 }).ToList();
-                
-                if (filteredCandidates.Count < allCandidates.Count)
-                {
-                    _logger.LogInformation("🔍 过滤 candidate: 总共 {Total} 个，过滤后 {Filtered} 个（使用前端 ufrag: {Ufrag}）",
-                        allCandidates.Count, filteredCandidates.Count, frontendUfrag);
-                }
             }
             else
             {
-                // 如果无法提取前端 ufrag，返回所有 candidate
                 filteredCandidates = allCandidates;
                 _logger.LogWarning("⚠️ 无法提取前端 ufrag，返回所有 {Count} 个 candidate", allCandidates.Count);
             }
@@ -677,9 +593,6 @@ namespace RemotePlay.Services
 
             try
             {
-                _logger.LogDebug("📥 接收 ICE Candidate: SessionId={SessionId}, Candidate={Candidate}, SdpMid={SdpMid}, SdpMLineIndex={SdpMLineIndex}",
-                    sessionId, candidate, sdpMid, sdpMLineIndex);
-
                 var iceCandidate = new RTCIceCandidateInit
                 {
                     candidate = candidate,
@@ -689,25 +602,8 @@ namespace RemotePlay.Services
 
                 session.PeerConnection.addIceCandidate(iceCandidate);
                 
-                var connectionState = session.PeerConnection.connectionState;
-                var iceConnectionState = session.PeerConnection.iceConnectionState;
-                var signalingState = session.PeerConnection.signalingState;
-                
-                _logger.LogInformation("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
-                    sessionId, connectionState, iceConnectionState, signalingState);
-                
-                // ✅ 如果 ICE 连接状态变成 connected，记录成功
-                if (iceConnectionState == RTCIceConnectionState.@connected)
-                {
-                    _logger.LogInformation("🎉 ICE 连接成功建立: SessionId={SessionId}, IceConnectionState={IceConnectionState}", 
-                        sessionId, iceConnectionState);
-                }
-                // ✅ 如果 ICE 连接状态变成 failed，记录失败并尝试诊断
-                else if (iceConnectionState == RTCIceConnectionState.failed)
-                {
-                    _logger.LogWarning("❌ ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
-                        sessionId, connectionState, signalingState);
-                }
+                _logger.LogInformation("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}",
+                    sessionId);
                 
                 return true;
             }
@@ -757,7 +653,6 @@ namespace RemotePlay.Services
             {
                 try
                 {
-                    // ✅ 自动停止流会话（如果存在）
                     if (_streamingService != null && session.StreamingSessionId.HasValue)
                     {
                         try
@@ -767,10 +662,6 @@ namespace RemotePlay.Services
                             {
                                 _logger.LogInformation("✅ 流会话已停止: {StreamingSessionId}", session.StreamingSessionId.Value);
                             }
-                            else
-                            {
-                                _logger.LogWarning("⚠️ 停止流会话失败或流会话不存在: {StreamingSessionId}", session.StreamingSessionId.Value);
-                            }
                         }
                         catch (Exception streamEx)
                         {
@@ -778,7 +669,6 @@ namespace RemotePlay.Services
                         }
                     }
 
-                    // ✅ 自动断开控制器连接
                     if (_controllerService != null && Guid.TryParse(sessionId, out var sessionGuid))
                     {
                         try
@@ -809,7 +699,6 @@ namespace RemotePlay.Services
         /// </summary>
         public void RemoveSession(string sessionId)
         {
-            // 异步调用但不等待（fire-and-forget）
             _ = RemoveSessionAsync(sessionId);
         }
 
@@ -856,7 +745,6 @@ namespace RemotePlay.Services
                         foundVideo = false;
                     }
 
-                    // 🎥 视频优化
                     if (foundVideo && !videoOptimized && trimmed.StartsWith("a=") &&
                         !trimmed.StartsWith("a=rtcp:") && trimmed.Length > 2)
                     {
@@ -866,7 +754,6 @@ namespace RemotePlay.Services
                         if (!sdp.Contains("a=minBufferedPlaybackTime"))
                             optimizedLines.Add("a=minBufferedPlaybackTime:0");
 
-                        // 启用 RTCP feedback、低延迟 H.264/H.265 编码模式
                         optimizedLines.Add("a=rtcp-fb:96 nack pli");
                         optimizedLines.Add("a=rtcp-fb:96 goog-remb");
                         optimizedLines.Add("a=rtcp-fb:96 transport-cc");
@@ -876,7 +763,6 @@ namespace RemotePlay.Services
                         videoOptimized = true;
                     }
 
-                    // 🔊 音频优化
                     if (foundAudio && !audioOptimized && trimmed.StartsWith("a=") &&
                         !trimmed.StartsWith("a=rtcp:") && trimmed.Length > 2)
                     {
@@ -892,7 +778,6 @@ namespace RemotePlay.Services
 
                 var result = string.Join("\r\n", optimizedLines);
 
-                // 验证完整性
                 if (!result.Contains("v=0") || !result.Contains("m="))
                 {
                     _logger.LogWarning("⚠️ SDP 优化后结构不完整，使用原始 SDP");
@@ -1157,7 +1042,6 @@ namespace RemotePlay.Services
                 return candidate ?? string.Empty;
             }
 
-            // ✅ 确保 candidate 字符串以 "candidate:" 开头（WebRTC 标准格式）
             var candidateStr = candidate?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(candidateStr))
             {
@@ -1167,15 +1051,11 @@ namespace RemotePlay.Services
             if (!candidateStr.StartsWith("candidate:", StringComparison.OrdinalIgnoreCase))
             {
                 candidateStr = "candidate:" + candidateStr;
-                _logger.LogDebug("✅ 已为 candidate 添加 'candidate:' 前缀");
             }
 
-            // 检查 candidate 是否已包含 ufrag
             var candidateLower = candidateStr.ToLowerInvariant();
             if (candidateLower.Contains("ufrag"))
             {
-                // ✅ 即使已有 ufrag，也检查是否是正确的前端 ufrag（从 remoteDescription 提取）
-                // 如果 remoteDescription 已设置，优先使用前端的 ufrag
                 try
                 {
                     var remoteDescription = peerConnection.remoteDescription;
@@ -1185,48 +1065,33 @@ namespace RemotePlay.Services
                         var frontendUfrag = ExtractIceUfragFromSdp(sdp);
                         if (!string.IsNullOrWhiteSpace(frontendUfrag))
                         {
-                            // 检查当前 candidate 的 ufrag 是否匹配前端的 ufrag
                             var currentUfragMatch = System.Text.RegularExpressions.Regex.Match(candidateStr, @"ufrag\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                             if (currentUfragMatch.Success)
                             {
                                 var currentUfrag = currentUfragMatch.Groups[1].Value;
                                 if (currentUfrag != frontendUfrag)
                                 {
-                                    // 如果不匹配，替换为前端的 ufrag
                                     candidateStr = System.Text.RegularExpressions.Regex.Replace(candidateStr, @"ufrag\s+\w+", $"ufrag {frontendUfrag}", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                                    _logger.LogDebug("✅ 已更新 candidate 的 ufrag: {Old} -> {New}", currentUfrag, frontendUfrag);
                                 }
                             }
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "⚠️ 检查 ufrag 匹配失败，使用原始 candidate");
-                }
+                catch { }
                 
-                _logger.LogDebug("ℹ️ Candidate 已包含 ufrag");
                 return candidateStr;
             }
 
-            // ✅ 关键修复：后端生成的 candidate 要发送给前端，所以应该使用前端的 ufrag（从 Answer SDP 中提取）
-            // 优先从 remoteDescription（Answer SDP）提取前端的 ufrag
             string? ufrag = null;
             try
             {
-                // 首先尝试从 remoteDescription 提取（这是前端的 ufrag，后端 candidate 应该使用这个）
                 var remoteDescription = peerConnection.remoteDescription;
                 if (remoteDescription?.sdp != null)
                 {
                     var sdp = remoteDescription.sdp.ToString();
                     ufrag = ExtractIceUfragFromSdp(sdp);
-                    if (!string.IsNullOrWhiteSpace(ufrag))
-                    {
-                        _logger.LogDebug("✅ 从 remoteDescription（Answer SDP）提取到前端的 ufrag: {Ufrag}", ufrag);
-                    }
                 }
 
-                // 如果 remoteDescription 还没有设置（Answer 设置前），才从 localDescription 提取
                 if (string.IsNullOrWhiteSpace(ufrag))
                 {
                     var localDescription = peerConnection.localDescription;
@@ -1234,36 +1099,27 @@ namespace RemotePlay.Services
                     {
                         var sdp = localDescription.sdp.ToString();
                         ufrag = ExtractIceUfragFromSdp(sdp);
-                        if (!string.IsNullOrWhiteSpace(ufrag))
-                        {
-                            _logger.LogDebug("⚠️ remoteDescription 未设置，从 localDescription 提取到 ufrag: {Ufrag}（这可能导致不匹配）", ufrag);
-                        }
                     }
                 }
 
-                // 如果找到了 ufrag，添加到 candidate
                 if (!string.IsNullOrWhiteSpace(ufrag))
                 {
                     candidateStr = candidateStr.TrimEnd();
-                    // 确保有 generation 字段
                     if (!candidateStr.EndsWith("generation 0", StringComparison.OrdinalIgnoreCase) &&
                         !candidateStr.EndsWith("generation", StringComparison.OrdinalIgnoreCase))
                     {
-                        // 检查是否已经有 generation（可能格式不同）
                         if (!candidateLower.Contains("generation"))
                         {
                             candidateStr += " generation 0";
                         }
                     }
                     candidateStr += " ufrag " + ufrag;
-                    _logger.LogInformation("✅ 已为 candidate 添加 ufrag: {Ufrag}, 原始: {Original}, 修改后: {Modified}",
-                        ufrag, candidateStr.Length > 80 ? candidateStr.Substring(0, 80) + "..." : candidateStr,
-                        candidateStr.Length > 80 ? candidateStr.Substring(0, 80) + "..." : candidateStr);
+                    _logger.LogInformation("✅ 已为 candidate 添加 ufrag: {Ufrag}",
+                        ufrag);
                 }
                 else
                 {
-                    _logger.LogWarning("⚠️ 无法从 SDP 中提取 ice-ufrag，candidate 将缺少 ufrag: {Candidate}",
-                        candidateStr.Length > 80 ? candidateStr.Substring(0, 80) + "..." : candidateStr);
+                    _logger.LogWarning("⚠️ 无法从 SDP 中提取 ice-ufrag，candidate 将缺少 ufrag");
                 }
             }
             catch (Exception ex)
@@ -1287,7 +1143,6 @@ namespace RemotePlay.Services
             var lines = sdp.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
             foreach (var line in lines)
             {
-                // 支持多种格式：a=ice-ufrag:xxx 或 a=ice-ufrag xxx
                 if (line.StartsWith("a=ice-ufrag:", StringComparison.OrdinalIgnoreCase))
                 {
                     var ufrag = line.Substring("a=ice-ufrag:".Length).Trim();
@@ -1335,12 +1190,11 @@ namespace RemotePlay.Services
         public required RTCPeerConnection PeerConnection { get; init; }
         public required WebRTCReceiver Receiver { get; init; }
         public DateTime CreatedAt { get; init; }
-        public Guid? StreamingSessionId { get; set; } // ✅ 关联的 Streaming Session ID（用于请求关键帧）
+        public Guid? StreamingSessionId { get; set; }
         public string? PreferredVideoCodec { get; init; }
         
-        // 存储后端新生成的 ICE candidate（Answer 设置后）
         private readonly List<RTCIceCandidateInit> _pendingIceCandidates = new();
-        private readonly HashSet<string> _candidateKeys = new(); // 用于去重
+        private readonly HashSet<string> _candidateKeys = new();
         private readonly object _candidatesLock = new();
 
         public RTCPeerConnectionState ConnectionState => PeerConnection.connectionState;
@@ -1352,14 +1206,11 @@ namespace RemotePlay.Services
             {
                 var result = _pendingIceCandidates.ToList();
                 _pendingIceCandidates.Clear();
-                _candidateKeys.Clear(); // 清空去重集合
+                _candidateKeys.Clear();
                 return result;
             }
         }
         
-        /// <summary>
-        /// 清理所有待处理的 candidate（Answer 设置后使用，清理使用错误 ufrag 的 candidate）
-        /// </summary>
         public void ClearPendingIceCandidates()
         {
             lock (_candidatesLock)
@@ -1378,8 +1229,6 @@ namespace RemotePlay.Services
 
             lock (_candidatesLock)
             {
-                // ✅ 改进去重逻辑：基于 candidate 的核心部分（去掉 ufrag 和 generation）进行去重
-                // 这样可以避免同一个 candidate 因为 ufrag 不同而被存储多次
                 var candidateKey = GetCandidateCoreKey(candidate.candidate);
                 
                 if (!_candidateKeys.Contains(candidateKey))
@@ -1389,7 +1238,6 @@ namespace RemotePlay.Services
                 }
                 else
                 {
-                    // 如果已存在，检查是否需要更新（使用更正确的 ufrag）
                     var existingIndex = _pendingIceCandidates.FindIndex(c => GetCandidateCoreKey(c.candidate) == candidateKey);
                     if (existingIndex >= 0)
                     {
@@ -1397,7 +1245,6 @@ namespace RemotePlay.Services
                         var existingHasUfrag = existing.candidate?.ToLowerInvariant().Contains("ufrag") ?? false;
                         var newHasUfrag = candidate.candidate?.ToLowerInvariant().Contains("ufrag") ?? false;
                         
-                        // 如果新的 candidate 有 ufrag 而旧的没有，或者新的 ufrag 来自 remoteDescription（更正确），则替换
                         if ((!existingHasUfrag && newHasUfrag) || 
                             (newHasUfrag && existingHasUfrag && candidate.candidate != existing.candidate))
                         {
@@ -1408,9 +1255,6 @@ namespace RemotePlay.Services
             }
         }
         
-        /// <summary>
-        /// 获取 candidate 的核心键（去掉 ufrag 和 generation 等可变字段）
-        /// </summary>
         private string GetCandidateCoreKey(string candidate)
         {
             if (string.IsNullOrWhiteSpace(candidate))
@@ -1418,15 +1262,12 @@ namespace RemotePlay.Services
                 return candidate;
             }
             
-            // 移除 ufrag 和 generation 字段，只保留核心部分
-            // 格式：candidate:xxx 1 udp priority ip port typ type ...
             var parts = candidate.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var coreParts = new List<string>();
             
             foreach (var part in parts)
             {
                 var partLower = part.ToLowerInvariant();
-                // 跳过 ufrag、generation、network-cost 等可变字段
                 if (partLower == "ufrag" || partLower == "generation" || partLower == "network-cost" ||
                     (coreParts.Count > 0 && (coreParts[coreParts.Count - 1].ToLowerInvariant() == "ufrag" ||
                                              coreParts[coreParts.Count - 1].ToLowerInvariant() == "generation" ||
@@ -1441,5 +1282,9 @@ namespace RemotePlay.Services
         }
     }
 }
+
+
+
+
 
 

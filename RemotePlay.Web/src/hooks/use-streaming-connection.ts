@@ -1702,12 +1702,29 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       // ✅ Answer 设置后，定期获取后端的 ICE candidate（特别是 TURN relay candidate）
       // 后端的 ICE gathering 可能在 Answer 设置后才完成
-      const checkBackendIceCandidates = async () => {
+      let emptyResponseCount = 0
+      const MAX_EMPTY_RESPONSES = 3 // 连续 3 次空响应后停止
+      const POLL_INTERVAL_MS = 1000 // 1 秒查询一次
+      const MAX_POLL_DURATION_MS = 8000 // 最多查询 8 秒
+      
+      const checkBackendIceCandidates = async (): Promise<boolean> => {
+        // 检查连接状态，如果已连接则无需继续查询
+        if (peerConnection.iceConnectionState === 'connected' || peerConnection.iceConnectionState === 'completed') {
+          console.log('✅ ICE 连接已建立，停止查询后端 Candidate')
+          return false
+        }
+        
+        if (peerConnection.connectionState === 'connected') {
+          console.log('✅ WebRTC 连接已建立，停止查询后端 Candidate')
+          return false
+        }
+        
         try {
           const response = await streamingService.getPendingIceCandidates(webrtcSessionIdValue)
           if (response.success && response.data) {
             const candidates = response.data.candidates || []
             if (candidates.length > 0) {
+              emptyResponseCount = 0 // 重置空响应计数
               console.log('📥 收到后端 ICE Candidate:', candidates.length, '个', {
                 candidates: candidates.map((c: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }) => ({
                   candidate: c.candidate?.substring(0, 60) + '...',
@@ -1782,14 +1799,25 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
                   }
                 }
               }
+              return true // 继续查询
             } else {
-              console.debug('📭 后端暂无待处理的 ICE Candidate')
+              emptyResponseCount++
+              console.debug('📭 后端暂无待处理的 ICE Candidate', `(${emptyResponseCount}/${MAX_EMPTY_RESPONSES})`)
+              
+              // 如果连续多次空响应，停止查询
+              if (emptyResponseCount >= MAX_EMPTY_RESPONSES) {
+                console.log('✅ 连续空响应，停止查询后端 Candidate')
+                return false
+              }
+              return true // 继续查询
             }
           } else {
             console.debug('⚠️ 获取后端 ICE Candidate API 调用失败:', response.errorMessage || response.message)
+            return true // API 失败时继续查询
           }
         } catch (error) {
           console.warn('⚠️ 获取后端 ICE Candidate 异常:', error)
+          return true // 异常时继续查询
         }
       }
 
@@ -1797,19 +1825,33 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       console.log('🔍 开始检查后端 ICE Candidate...')
       await checkBackendIceCandidates()
 
-      // 然后每 500ms 检查一次，持续 15 秒（总共 30 次，确保能获取到 TURN relay candidate）
+      // 然后每 1 秒检查一次，最多持续 8 秒（最多 8 次）
       let checkCount = 0
-      const maxChecks = 30
+      const maxChecks = Math.floor(MAX_POLL_DURATION_MS / POLL_INTERVAL_MS)
+      const startTime = Date.now()
+      
       const backendCandidateCheckInterval = setInterval(async () => {
+        // 检查是否超时
+        if (Date.now() - startTime >= MAX_POLL_DURATION_MS) {
+          clearInterval(backendCandidateCheckInterval)
+          console.log('✅ 查询后端 ICE Candidate 超时，已检查', checkCount, '次')
+          return
+        }
+        
         checkCount++
         console.debug(`🔍 检查后端 ICE Candidate (${checkCount}/${maxChecks})...`)
-        await checkBackendIceCandidates()
-      }, 500)
+        const shouldContinue = await checkBackendIceCandidates()
+        
+        if (!shouldContinue) {
+          clearInterval(backendCandidateCheckInterval)
+          console.log('✅ 停止检查后端 ICE Candidate（已检查', checkCount, '次）')
+        }
+      }, POLL_INTERVAL_MS)
 
       setTimeout(() => {
         clearInterval(backendCandidateCheckInterval)
-        console.log('✅ 停止检查后端 ICE Candidate（已检查', checkCount, '次）')
-      }, 15000)
+        console.log('✅ 查询后端 ICE Candidate 超时，已检查', checkCount, '次')
+      }, MAX_POLL_DURATION_MS)
 
       const connectResponse = await streamingService.connectToRemotePlaySession(webrtcSessionIdValue, sessionId)
       if (!connectResponse.success) {
