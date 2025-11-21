@@ -1286,11 +1286,12 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               const fadeIn = (timestamp: number) => {
                 const elapsed = timestamp - startTime
                 const progress = Math.min(1, elapsed / fadeDurationMs)
-                video.volume = targetVolume * progress
+                const volume = Math.max(0, Math.min(1, targetVolume * progress)) // 确保音量在 [0, 1] 范围内
+                video.volume = volume
                 if (progress < 1) {
                   requestAnimationFrame(fadeIn)
                 } else {
-                  video.volume = targetVolume
+                  video.volume = Math.max(0, Math.min(1, targetVolume)) // 确保最终音量在 [0, 1] 范围内
                   console.log('🔊 音量淡入完成，音频已启用')
                 }
               }
@@ -1504,18 +1505,44 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         }
       }
 
+      let receivedCandidateTypes = new Set<string>()
+      let hasRelayCandidate = false
+      let hasSrflxCandidate = false
+      let hasHostCandidate = false
+      
       peerConnection.onicecandidate = async (event) => {
         if (event.candidate && webrtcSessionIdValue) {
+          const candidateType = event.candidate.type || 'unknown'
+          const candidateStr = event.candidate.candidate || ''
+          
+          // 统计候选地址类型
+          receivedCandidateTypes.add(candidateType)
+          if (candidateType === 'relay') {
+            hasRelayCandidate = true
+            console.log('🌐 收到 TURN relay 候选地址（最稳定）')
+          } else if (candidateType === 'srflx') {
+            hasSrflxCandidate = true
+            console.log('📡 收到 STUN 服务器反射候选地址')
+          } else if (candidateType === 'host') {
+            hasHostCandidate = true
+          }
+          
           console.log('🧊 ICE Candidate 收到:', {
-            candidate: event.candidate.candidate,
-            type: event.candidate.type,
+            candidate: candidateStr.substring(0, 80) + (candidateStr.length > 80 ? '...' : ''),
+            type: candidateType,
             protocol: event.candidate.protocol,
             address: event.candidate.address,
             port: event.candidate.port,
             priority: event.candidate.priority,
             sdpMid: event.candidate.sdpMid,
             sdpMLineIndex: event.candidate.sdpMLineIndex,
+            summary: {
+              hasRelay: hasRelayCandidate,
+              hasSrflx: hasSrflxCandidate,
+              hasHost: hasHostCandidate,
+            },
           })
+          
           try {
             await streamingService.sendICECandidate({
               sessionId: webrtcSessionIdValue,
@@ -1528,7 +1555,19 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             console.error('❌ 发送 ICE Candidate 失败:', error)
           }
         } else if (!event.candidate) {
-          console.log('🧊 ICE Candidate gathering 完成')
+          console.log('🧊 ICE Candidate gathering 完成', {
+            receivedTypes: Array.from(receivedCandidateTypes),
+            hasRelay: hasRelayCandidate,
+            hasSrflx: hasSrflxCandidate,
+            hasHost: hasHostCandidate,
+            recommendation: !hasRelayCandidate && !hasSrflxCandidate 
+              ? '⚠️ 只有 host 候选地址，多层 NAT 环境下可能连接不稳定'
+              : hasRelayCandidate 
+              ? '✅ 有 TURN relay 候选地址，连接应该更稳定'
+              : hasSrflxCandidate 
+              ? '⚠️ 有 STUN 反射候选地址，但无 TURN，多层 NAT 可能有问题'
+              : '✅ 候选地址收集完成',
+          })
         }
       }
 
@@ -1536,11 +1575,16 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         const state = peerConnection.connectionState
         const iceState = peerConnection.iceConnectionState
         const signalingState = peerConnection.signalingState
+        const iceGatheringState = peerConnection.iceGatheringState
+        
         console.log('🔌 WebRTC 连接状态变化:', {
           connectionState: state,
           iceConnectionState: iceState,
           signalingState: signalingState,
+          iceGatheringState: iceGatheringState,
+          timestamp: new Date().toISOString(),
         })
+        
         const localizedState =
           state === 'connected'
             ? t('streaming.connection.state.connected')
@@ -1552,8 +1596,12 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             ? t('streaming.connection.state.failed')
             : state
         setConnectionState(localizedState)
+        
         if (state === 'connected') {
-          console.log('✅ WebRTC 连接已建立')
+          console.log('✅ WebRTC 连接已建立', {
+            iceConnectionState: iceState,
+            signalingState: signalingState,
+          })
           reinforceLatencyHints(peerConnection)
           setIsConnecting(false)
           setIsConnected(true)
@@ -1627,7 +1675,23 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             }
           }
         } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-          console.warn('⚠️ WebRTC 连接断开或失败:', state)
+          console.warn('⚠️ WebRTC 连接断开或失败:', {
+            connectionState: state,
+            iceConnectionState: iceState,
+            signalingState: signalingState,
+            iceGatheringState: iceGatheringState,
+            timestamp: new Date().toISOString(),
+          })
+          
+          // 分析断开原因
+          if (iceState === 'failed') {
+            console.error('❌ 断开原因：ICE 连接失败，可能是网络不可达或 TURN 服务器问题')
+          } else if (iceState === 'disconnected') {
+            console.warn('⚠️ 断开原因：ICE 连接断开，可能是网络波动或 NAT 映射过期')
+          } else if (state === 'failed') {
+            console.error('❌ 断开原因：WebRTC 连接失败')
+          }
+          
           setIsConnected(false)
           isConnectedRef.current = false
           setIsConnecting(false)
@@ -1637,17 +1701,42 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       peerConnection.oniceconnectionstatechange = () => {
         const state = peerConnection.iceConnectionState
         const connectionState = peerConnection.connectionState
+        const signalingState = peerConnection.signalingState
+        const iceGatheringState = peerConnection.iceGatheringState
+        
         console.log('🧊 ICE 连接状态变化:', {
           iceConnectionState: state,
           connectionState: connectionState,
+          signalingState: signalingState,
+          iceGatheringState: iceGatheringState,
         })
+        
         if (state === 'connected' || state === 'completed') {
           console.log('✅ ICE 连接已建立:', state)
           reinforceLatencyHints(peerConnection)
         } else if (state === 'failed') {
-          console.error('❌ ICE 连接失败')
+          console.error('❌ ICE 连接失败', {
+            connectionState,
+            signalingState,
+            iceGatheringState,
+          })
         } else if (state === 'disconnected') {
-          console.warn('⚠️ ICE 连接已断开')
+          console.warn('⚠️ ICE 连接已断开', {
+            connectionState,
+            signalingState,
+            iceGatheringState,
+            timestamp: new Date().toISOString(),
+          })
+          
+          // 如果连接刚建立就断开，可能是网络不稳定或 TURN 服务器问题
+          if (connectionState === 'connected' || connectionState === 'connecting') {
+            console.warn('⚠️ ICE 断开时连接仍处于活跃状态，可能是网络波动或 TURN 服务器不稳定')
+          }
+        } else if (state === 'checking') {
+          console.log('🔄 ICE 连接检查中...', {
+            connectionState,
+            signalingState,
+          })
         }
       }
 
