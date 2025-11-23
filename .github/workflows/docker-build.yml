@@ -17,11 +17,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: backend
-            display_name: Backend (RemotePlay)
+          - name: server
+            display_name: Server (RemotePlay)
             dockerfile: RemotePlay/Dockerfile
             context: RemotePlay
-            image_basename: remoteplay-backend
+            image_basename: remoteplay-server
           - name: dbtool
             display_name: DBTool (RemotePlay.DBTool)
             dockerfile: RemotePlay.DBTool/Dockerfile
