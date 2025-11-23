@@ -19,6 +19,7 @@ import {
   type DeviceStreamingSettings,
 } from '@/service/playstation.service'
 import { useDeviceStatus } from '@/hooks/use-device-status'
+import { useDevice } from '@/hooks/use-device'
 import type { Console } from '@/types/device'
 import { mapDeviceStatus } from '@/utils/device-status'
 
@@ -47,6 +48,7 @@ export default function Devices() {
   const dropCompletedRef = useRef(false)
   const [isReorderMode, setIsReorderMode] = useState(false)
   const { toast } = useToast()
+  const { isMobile } = useDevice()
 
   // 启用手柄导航（只在没有对话框打开时启用）
   useGamepadNavigation(!bindDialogOpen && !settingsDialogOpen)
@@ -389,6 +391,15 @@ export default function Devices() {
 
   const handleReorderToggle = useCallback(
     (next: boolean) => {
+      // 在移动端禁用拖拽排序功能
+      if (isMobile && next) {
+        toast({
+          title: t('devices.console.reorderModeNotAvailableTitle', { defaultValue: '功能不可用' }),
+          description: t('devices.console.reorderModeNotAvailableDescription', { defaultValue: '移动端暂不支持拖拽排序功能' }),
+          variant: 'default',
+        })
+        return false
+      }
       if (next && consoles.length <= 1) {
         return false
       }
@@ -411,7 +422,7 @@ export default function Devices() {
       })
       return true
     },
-    [consoles.length, toast, t]
+    [consoles.length, toast, t, isMobile]
   )
 
   useEffect(() => {
@@ -528,19 +539,19 @@ export default function Devices() {
       <DevicesHeader />
 
       {/* Main Content */}
-      <main className="relative z-10 container mx-auto px-6 py-12">
+      <main className="relative z-10 container mx-auto px-3 sm:px-6 py-4 sm:py-6 md:py-12">
         {/* 主标题 */}
-        <div className="flex items-center gap-3 mb-12">
-          <h2 className="text-4xl font-bold text-gray-900 dark:text-white">
+        <div className="flex items-center gap-2 sm:gap-3 mb-4 sm:mb-6 md:mb-12">
+          <h2 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-bold text-gray-900 dark:text-white">
             {t('devices.title')}
           </h2>
-          {consoles.length > 1 && (
+          {consoles.length > 1 && !isMobile && (
             <Button
               type="button"
               variant="ghost"
               size="icon"
               className={cn(
-                'h-10 w-10 rounded-full border transition-all',
+                'h-8 w-8 sm:h-9 sm:w-9 md:h-10 md:w-10 rounded-full border transition-all',
                 isReorderMode
                   ? 'border-blue-500 bg-blue-600 text-white hover:bg-blue-600/90 hover:text-white'
                   : 'border-transparent text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
@@ -566,9 +577,15 @@ export default function Devices() {
         </div>
 
         {/* 主机卡片 */}
-        <div className="flex flex-wrap gap-6 items-stretch">
+        <div className={cn(
+          'flex flex-wrap items-stretch',
+          isMobile ? 'gap-3 justify-center' : 'gap-3 sm:gap-4 md:gap-6 justify-center sm:justify-start'
+        )}>
           {isLoading ? (
-            <div className="flex gap-6">
+            <div className={cn(
+              'flex',
+              isMobile ? 'flex-col w-full gap-3' : 'flex-row gap-6'
+            )}>
               {[1, 2].map((i) => (
                 <DeviceCardSkeleton key={i} />
               ))}
