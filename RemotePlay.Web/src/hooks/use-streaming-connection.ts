@@ -15,9 +15,10 @@ import { apiRequest } from '@/service/api-client'
 import { optimizeSdpForLowLatency, optimizeVideoForLowLatency } from '@/utils/webrtc-optimization'
 import { createKeyboardHandler } from '@/utils/keyboard-mapping'
 import { GamepadButton, PS5_BUTTON_MAP, type GamepadInputEvent } from '@/service/gamepad.service'
-import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
+import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, MOBILE_SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
 import { useStickInputState } from './use-streaming-connection/stick-input-state'
 import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
+import { isMobileDevice } from '@/utils/device-detection'
 
 type ToastFn = (props: { title?: string; description?: string; variant?: 'default' | 'destructive'; [key: string]: any }) => void
 
@@ -820,7 +821,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     sendLatest()
-    stickIntervalRef.current = window.setInterval(sendLatest, SEND_INTERVAL_MS)
+    // 移动端使用更长的发送间隔以优化性能
+    const sendInterval = isMobileDevice() ? MOBILE_SEND_INTERVAL_MS : SEND_INTERVAL_MS
+    stickIntervalRef.current = window.setInterval(sendLatest, sendInterval)
   }, [getNormalizedState, isGamepadEnabled])
 
   const handleGamepadInput = useCallback(
@@ -878,7 +881,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             Math.abs(normalized.rightX - lastSent.rightX) +
             Math.abs(normalized.rightY - lastSent.rightY)
           const triggerDiff = Math.abs(normalized.l2 - lastSent.l2) + Math.abs(normalized.r2 - lastSent.r2)
-          const shouldHeartbeat = now - lastSent.timestamp >= SEND_INTERVAL_MS
+          // 移动端使用更长的发送间隔
+          const sendInterval = isMobileDevice() ? MOBILE_SEND_INTERVAL_MS : SEND_INTERVAL_MS
+          const shouldHeartbeat = now - lastSent.timestamp >= sendInterval
           const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
           const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
@@ -1431,10 +1436,13 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               setIsConnected(true)
               isConnectedRef.current = true
               setConnectionState(t('streaming.connection.state.connected'))
-              toast({
-                title: t('streaming.connection.toast.connectedTitle'),
-                description: t('streaming.connection.toast.connectedDescription'),
-              })
+              // 移动端默认不显示连接成功提示
+              if (!isMobileDevice()) {
+                toast({
+                  title: t('streaming.connection.toast.connectedTitle'),
+                  description: t('streaming.connection.toast.connectedDescription'),
+                })
+              }
             })
 
             video.addEventListener('pause', () => {
@@ -2212,6 +2220,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     isStatsMonitoringEnabled: isStatsEnabled,
     setStatsMonitoring,
     refreshStream,
+    webrtcSessionId,
   }
 }
 

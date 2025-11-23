@@ -8,6 +8,7 @@ import {
   LEFT_STICK_DIRECTIONS,
 } from '@/types/controller-mapping'
 import controllerSvgUrl from '@/assets/ps5-controller.svg'
+import { useDevice } from '@/hooks/use-device'
 
 interface PS5ControllerLayoutProps {
   mappings: Record<ControllerButton, ButtonMapping>
@@ -93,6 +94,7 @@ export function PS5ControllerLayout({
   leftStickListening,
 }: PS5ControllerLayoutProps) {
   const { t, i18n } = useTranslation()
+  const { isMobile, isTablet } = useDevice()
   const containerRef = useRef<HTMLDivElement>(null)
   const leftLabelRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<HTMLDivElement>(null)
@@ -281,17 +283,18 @@ export function PS5ControllerLayout({
     return '#9ca3af' // gray-400
   }
 
-  const controllerWidth = 500
-  const controllerHeight = 300
-  const labelColumnWidth = 140 // 增加宽度以容纳更长的文本
+  // 根据设备类型调整尺寸
+  const controllerWidth = isMobile ? 300 : isTablet ? 400 : 500
+  const controllerHeight = isMobile ? 180 : isTablet ? 240 : 300
+  const labelColumnWidth = isMobile ? 100 : isTablet ? 120 : 140
   const maxColumnLength = Math.max(LEFT_BUTTONS.length, RIGHT_BUTTONS.length)
   const totalHeight = LABEL_LIST_START_Y + maxColumnLength * LABEL_ITEM_HEIGHT
 
   return (
-    <div className="w-full max-w-6xl mx-auto relative rounded-lg p-6">
+    <div className="w-full max-w-6xl mx-auto relative rounded-lg p-2 sm:p-4 md:p-6">
       <div
         ref={containerRef}
-        className="relative flex gap-8 items-start justify-center"
+        className={`relative flex ${isMobile ? 'flex-col gap-4' : 'gap-4 md:gap-8'} items-start justify-center`}
         style={{ minHeight: `${Math.max(controllerHeight, totalHeight)}px` }}
       >
         {layoutPositions && (
@@ -342,28 +345,30 @@ export function PS5ControllerLayout({
         )}
 
         {/* 左侧标签 */}
-        <div ref={leftLabelRef} className="flex-1 flex justify-end" style={{ zIndex: 2 }}>
-          <div className="min-w-0" style={{ width: `${labelColumnWidth}px`, paddingTop: `${LABEL_LIST_START_Y}px` }}>
-            {LEFT_BUTTONS.map((button) => {
-              const mapping = mappings[button]
-              const display = getMappingDisplay(mapping)
-              const color = getLabelColor(button)
-              return (
-                <div
-                  key={button}
-                  className="flex items-center justify-end gap-2 px-2 py-1.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors min-w-0"
-                  style={{ height: `${LABEL_ITEM_HEIGHT}px` }}
-                  onClick={() => onButtonClick(button)}
-                >
-                  {display && <span className="text-base font-bold text-blue-600 dark:text-blue-400 flex-shrink-0">{display}</span>}
-                  <span className="text-sm font-medium truncate" style={{ color }}>
-                    {getButtonName(button)}
-                  </span>
-                </div>
-              )
-            })}
+        {!isMobile && (
+          <div ref={leftLabelRef} className="flex-1 flex justify-end" style={{ zIndex: 2 }}>
+            <div className="min-w-0" style={{ width: `${labelColumnWidth}px`, paddingTop: `${LABEL_LIST_START_Y}px` }}>
+              {LEFT_BUTTONS.map((button) => {
+                const mapping = mappings[button]
+                const display = getMappingDisplay(mapping)
+                const color = getLabelColor(button)
+                return (
+                  <div
+                    key={button}
+                    className="flex items-center justify-end gap-2 px-2 py-1.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors min-w-0"
+                    style={{ height: `${LABEL_ITEM_HEIGHT}px` }}
+                    onClick={() => onButtonClick(button)}
+                  >
+                    {display && <span className="text-base font-bold text-blue-600 dark:text-blue-400 flex-shrink-0">{display}</span>}
+                    <span className="text-sm font-medium truncate" style={{ color }}>
+                      {getButtonName(button)}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* 中间手柄 */}
         <div ref={controllerRef} className="flex-shrink-0 relative" style={{ width: `${controllerWidth}px`, zIndex: 2 }}>
@@ -378,34 +383,36 @@ export function PS5ControllerLayout({
         </div>
 
         {/* 右侧标签 */}
-        <div ref={rightLabelRef} className="flex-1 flex justify-start" style={{ zIndex: 2 }}>
-          <div className="min-w-0" style={{ width: `${labelColumnWidth}px`, paddingTop: `${LABEL_LIST_START_Y}px` }}>
-            {RIGHT_BUTTONS.map((button) => {
-              const mapping = mappings[button]
-              const display = getMappingDisplay(mapping)
-              const color = getLabelColor(button)
-              return (
-                <div
-                  key={button}
-                  className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors min-w-0"
-                  style={{ height: `${LABEL_ITEM_HEIGHT}px` }}
-                  onClick={() => onButtonClick(button)}
-                >
-                  <span className="text-sm font-medium truncate" style={{ color }}>
-                    {getButtonName(button)}
-                  </span>
-                  {display && <span className="text-base font-bold text-blue-600 dark:text-blue-400 flex-shrink-0">{display}</span>}
-                </div>
-              )
-            })}
+        {!isMobile && (
+          <div ref={rightLabelRef} className="flex-1 flex justify-start" style={{ zIndex: 2 }}>
+            <div className="min-w-0" style={{ width: `${labelColumnWidth}px`, paddingTop: `${LABEL_LIST_START_Y}px` }}>
+              {RIGHT_BUTTONS.map((button) => {
+                const mapping = mappings[button]
+                const display = getMappingDisplay(mapping)
+                const color = getLabelColor(button)
+                return (
+                  <div
+                    key={button}
+                    className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors min-w-0"
+                    style={{ height: `${LABEL_ITEM_HEIGHT}px` }}
+                    onClick={() => onButtonClick(button)}
+                  >
+                    <span className="text-sm font-medium truncate" style={{ color }}>
+                      {getButtonName(button)}
+                    </span>
+                    {display && <span className="text-base font-bold text-blue-600 dark:text-blue-400 flex-shrink-0">{display}</span>}
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ zIndex: 3 }}>
-        <div className="rounded-lg border border-blue-100 dark:border-blue-900/40 bg-white/70 dark:bg-slate-900/60 p-4 shadow-sm">
+      <div className={`mt-4 sm:mt-6 md:mt-8 grid grid-cols-1 ${isMobile ? '' : 'lg:grid-cols-2'} gap-3 sm:gap-4`} style={{ zIndex: 3 }}>
+        <div className="rounded-lg border border-blue-100 dark:border-blue-900/40 bg-white/70 dark:bg-slate-900/60 p-3 sm:p-4 shadow-sm">
           <div className="flex flex-col">
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-white">
               {t('devices.controllerMapping.leftStick.title')}
             </h4>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -413,7 +420,7 @@ export function PS5ControllerLayout({
             </p>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-3 sm:mt-4 grid grid-cols-2 gap-2 sm:gap-3">
             {LEFT_STICK_DIRECTIONS.map((direction) => {
               const isActive = leftStickListening === direction
               const hasMapping = Boolean(leftStickMapping[direction])
@@ -470,15 +477,15 @@ export function PS5ControllerLayout({
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-slate-900/60 p-4 shadow-sm">
-          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+        <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-slate-900/60 p-3 sm:p-4 shadow-sm">
+          <h4 className="text-xs sm:text-sm font-semibold text-gray-900 dark:text-white">
             {t('devices.controllerMapping.rightStick.title')}
           </h4>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             {t('devices.controllerMapping.rightStick.description')}
           </p>
 
-          <ul className="mt-4 space-y-2 text-sm text-gray-700 dark:text-gray-300">
+          <ul className="mt-3 sm:mt-4 space-y-2 text-xs sm:text-sm text-gray-700 dark:text-gray-300">
             <li className="flex items-center justify-between rounded-md bg-gray-100/70 dark:bg-slate-800/60 px-3 py-2">
               <span>{t('devices.controllerMapping.rightStick.axisX')}</span>
               <span className="font-semibold text-blue-600 dark:text-blue-400">

@@ -1,8 +1,15 @@
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { useDevice } from '@/hooks/use-device'
+import { cn } from '@/lib/utils'
 
 export function DeviceCardSkeleton() {
+  const { isMobile, isTablet } = useDevice()
+  
   return (
-    <Card className="w-[280px] animate-pulse bg-white dark:bg-gray-800 rounded-2xl border-2 border-gray-200 dark:border-gray-700 shadow-lg overflow-hidden flex flex-col">
+    <Card className={cn(
+      'animate-pulse bg-white dark:bg-gray-800 rounded-2xl border-2 border-gray-200 dark:border-gray-700 shadow-lg overflow-hidden flex flex-col',
+      isMobile ? 'w-full min-h-[320px]' : isTablet ? 'w-[calc(50%-0.75rem)] min-h-[360px]' : 'w-[280px] min-h-[360px]'
+    )}>
       <CardHeader className="pt-8 pb-6">
         <div className="relative mb-4">
           <div className="absolute top-0 right-0 h-7 w-7 rounded-full bg-gray-200 dark:bg-gray-700"></div>

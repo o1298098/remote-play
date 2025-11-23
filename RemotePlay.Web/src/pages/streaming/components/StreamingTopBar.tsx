@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Activity, RotateCw } from 'lucide-react'
+import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown } from 'lucide-react'
+import { useDevice } from '@/hooks/use-device'
 
 interface StreamingTopBarProps {
   onBack: () => void
@@ -17,7 +18,9 @@ export function StreamingTopBar({
   onRefresh,
 }: StreamingTopBarProps) {
   const { t } = useTranslation()
+  const { isMobile } = useDevice()
   const [isVisible, setIsVisible] = useState(false)
+  const [isMobileBarVisible, setIsMobileBarVisible] = useState(false)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mouseMoveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -45,6 +48,11 @@ export function StreamingTopBar({
   }
 
   useEffect(() => {
+    // 移动端不显示顶部栏，桌面端根据鼠标移动显示
+    if (isMobile) {
+      return
+    }
+
     let lastMouseMoveTime = Date.now()
 
     const handleMouseMove = () => {
@@ -78,8 +86,102 @@ export function StreamingTopBar({
         clearTimeout(mouseMoveTimeoutRef.current)
       }
     }
-  }, [isVisible])
+  }, [isVisible, isMobile])
 
+  // 移动端：底部工具栏
+  if (isMobile) {
+    return (
+      <>
+        {/* 触发图标按钮 - 右下角，始终显示 */}
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsMobileBarVisible(!isMobileBarVisible)
+          }}
+          className="fixed z-[99] w-8 h-8 rounded-full bg-black/80 backdrop-blur-md border border-white/40 flex items-center justify-center text-white shadow-lg active:scale-90 transition-all pointer-events-auto"
+          style={{
+            touchAction: 'manipulation',
+            right: '12px',
+            bottom: isMobileBarVisible ? '64px' : '12px',
+            WebkitTapHighlightColor: 'transparent',
+          }}
+          aria-label={isMobileBarVisible ? t('streaming.menu.hide', '隐藏菜单') : t('streaming.menu.show', '显示菜单')}
+        >
+          {isMobileBarVisible ? (
+            <ChevronDown className="h-4 w-4" strokeWidth={2} />
+          ) : (
+            <ChevronUp className="h-4 w-4" strokeWidth={2} />
+          )}
+        </button>
+
+        {/* 底部工具栏 */}
+        <div
+          className={`fixed bottom-0 left-0 right-0 z-[99] pointer-events-auto transition-transform duration-300 ease-out ${
+            isMobileBarVisible ? 'translate-y-0' : 'translate-y-full'
+          }`}
+        >
+          <div className="bg-black/60 backdrop-blur-sm border-t border-white/20 px-4 py-2">
+            <div className="flex items-center justify-center gap-6">
+              {/* 返回按钮 */}
+              <button
+                onClick={onBack}
+                className="flex items-center justify-center text-white/80 hover:text-white active:scale-95 transition-all"
+                style={{
+                  touchAction: 'manipulation',
+                  width: '40px',
+                  height: '40px',
+                }}
+                aria-label={t('streaming.menu.back', '返回')}
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+
+              {/* 刷新按钮 */}
+              {onRefresh && (
+                <button
+                  onClick={() => onRefresh()}
+                  className="flex items-center justify-center text-white/80 hover:text-white active:scale-95 transition-all"
+                  style={{
+                    touchAction: 'manipulation',
+                    width: '40px',
+                    height: '40px',
+                  }}
+                  aria-label={t('streaming.refresh.label', '刷新串流')}
+                >
+                  <RotateCw className="h-5 w-5" />
+                </button>
+              )}
+
+              {/* 统计开关 */}
+              {onStatsToggle && (
+                <button
+                  onClick={() => onStatsToggle(!isStatsEnabled)}
+                  className={`flex items-center justify-center active:scale-95 transition-all ${
+                    isStatsEnabled ? 'text-white' : 'text-white/80 hover:text-white'
+                  }`}
+                  style={{
+                    touchAction: 'manipulation',
+                    width: '40px',
+                    height: '40px',
+                  }}
+                  aria-label={
+                    isStatsEnabled
+                      ? t('streaming.monitor.disable', '关闭统计')
+                      : t('streaming.monitor.enable', '显示统计')
+                  }
+                >
+                  <Activity className="h-5 w-5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // 桌面端：保持原有顶部栏行为
   return (
     <div
       className="fixed top-0 left-0 right-0 z-[9999]"
@@ -116,6 +218,8 @@ export function StreamingTopBar({
                 pointerEvents: 'auto',
                 width: '48px',
                 height: '48px',
+                minWidth: '48px',
+                minHeight: '48px',
                 borderRadius: '50%',
                 background: 'transparent',
               }}
@@ -140,7 +244,7 @@ export function StreamingTopBar({
                   aria-label={t('streaming.refresh.label', '刷新串流')}
                   title={t('streaming.refresh.label', '刷新串流')}
                 >
-                  <RotateCw className="h-5 w-5 text-white" />
+                  <RotateCw className="h-5 w-5" />
                 </Button>
               )}
 
@@ -170,7 +274,7 @@ export function StreamingTopBar({
                     : t('streaming.monitor.enable')
                 }
               >
-                <Activity className="h-5 w-5 text-white" />
+                <Activity className="h-5 w-5" />
               </Button>
               )}
             </div>

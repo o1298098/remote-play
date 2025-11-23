@@ -86,5 +86,49 @@
   .dark .animate-gamepad-blink {
     animation: gamepad-blink-dark 3s ease-in-out infinite;
   }
+
+  /* 移动端优化样式 */
+  @media (max-width: 768px) {
+    /* 防止移动端双击缩放 */
+    * {
+      touch-action: manipulation;
+    }
+    
+    /* 优化按钮点击区域 */
+    button, a, [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+    
+    /* 防止文本选择（在游戏控制区域） */
+    .no-select {
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    
+    /* 优化滚动性能 */
+    .smooth-scroll {
+      -webkit-overflow-scrolling: touch;
+      overflow-scrolling: touch;
+    }
+  }
+
+  /* 移动端全屏优化 */
+  @supports (-webkit-touch-callout: none) {
+    /* iOS Safari 特定样式 */
+    .fullscreen-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 100vh;
+      height: -webkit-fill-available;
+    }
+  }
 }
 

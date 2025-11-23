@@ -7,6 +7,7 @@ import { Settings as SettingsIcon, ChevronDown } from 'lucide-react'
 import { PS4Icon } from '@/components/icons/PS4Icon'
 import { PS5Icon } from '@/components/icons/PS5Icon'
 import { cn } from '@/lib/utils'
+import { useDevice } from '@/hooks/use-device'
 import type { Console } from '@/types/device'
 
 type DragHandler = (event: DragEvent<HTMLDivElement>, consoleItem: Console) => void
@@ -43,6 +44,7 @@ export function DeviceCard({
   isReorderMode = false,
 }: DeviceCardProps) {
   const { t } = useTranslation()
+  const { isMobile, isTablet } = useDevice()
   const cardRef = useRef<HTMLDivElement | null>(null)
   const dragPreviewRef = useRef<HTMLDivElement | null>(null)
   const isOffline = consoleItem.status === 'offline'
@@ -104,7 +106,8 @@ export function DeviceCard({
   }
 
   const cardClassName = cn(
-    'group w-[280px] min-h-[360px] h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-blue-50 dark:hover:from-blue-900/20 hover:to-indigo-50 dark:hover:to-indigo-900/20 rounded-2xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl transition-all transition-transform duration-300 overflow-hidden relative flex flex-col select-none',
+    'group h-full bg-white dark:bg-gray-800 hover:bg-gradient-to-br hover:from-blue-50 dark:hover:from-blue-900/20 hover:to-indigo-50 dark:hover:to-indigo-900/20 rounded-2xl border-2 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 shadow-lg hover:shadow-2xl transition-all transition-transform duration-300 overflow-hidden relative flex flex-col select-none',
+    isMobile ? 'w-full min-h-[320px]' : isTablet ? 'w-[calc(50%-0.75rem)] min-h-[360px]' : 'w-[280px] min-h-[360px]',
     onDragStart && isReorderMode && 'cursor-grab active:cursor-grabbing',
     isDragging && 'opacity-0 border-blue-400 dark:border-blue-500 border-dashed',
     isDragOver && !isDragging && 'border-blue-500 dark:border-blue-400 ring-2 ring-blue-200 dark:ring-blue-700'
@@ -158,32 +161,46 @@ export function DeviceCard({
       {/* 装饰性渐变背景 */}
       <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 dark:from-blue-500/10 via-transparent to-indigo-500/5 dark:to-indigo-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
       
-      <CardHeader className="pt-8 pb-6 relative z-10">
+      <CardHeader className={cn('relative z-10', isMobile ? 'pt-6 pb-4' : 'pt-8 pb-6')}>
         {/* 图标区域 - 带渐变背景圆环 */}
         <div className="relative mb-4">
           {/* 设置按钮 - 绝对定位在右上角 */}
           <Button
             variant="ghost"
             size="icon"
-            className="absolute top-0 right-0 h-7 w-7 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-full transition-all z-10"
+            className={cn(
+              'absolute top-0 right-0 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-full transition-all z-10',
+              isMobile ? 'h-9 w-9 min-h-[44px] min-w-[44px]' : 'h-7 w-7'
+            )}
             onClick={(e) => {
               e.stopPropagation()
               onSettings(consoleItem.id, consoleItem.name)
             }}
             aria-label={t('devices.console.openSettings')}
           >
-            <SettingsIcon className="h-4 w-4" />
+            <SettingsIcon className={isMobile ? 'h-5 w-5' : 'h-4 w-4'} />
           </Button>
           
           {/* 图标容器 - 完全居中 */}
           <div className="flex justify-center items-center relative">
             {/* 背景装饰圆环 */}
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-100 dark:from-blue-900/40 via-indigo-100 dark:via-indigo-900/40 to-purple-100 dark:to-purple-900/40 opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 blur-xl"></div>
+              <div className={cn(
+                'rounded-full bg-gradient-to-br from-blue-100 dark:from-blue-900/40 via-indigo-100 dark:via-indigo-900/40 to-purple-100 dark:to-purple-900/40 opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 blur-xl',
+                isMobile ? 'w-24 h-24' : 'w-32 h-32'
+              )}></div>
             </div>
             {/* 图标 */}
             <div className="relative transform group-hover:scale-110 transition-transform duration-300 flex items-center justify-center w-full">
-              {getConsoleIcon(consoleItem.type)}
+              {isMobile ? (
+                consoleItem.type === 'PS5' ? (
+                  <PS5Icon className="h-16 w-16 text-blue-600 dark:text-blue-400" />
+                ) : (
+                  <PS4Icon className="h-16 w-16 text-blue-600 dark:text-blue-400" />
+                )
+              ) : (
+                getConsoleIcon(consoleItem.type)
+              )}
             </div>
           </div>
         </div>
@@ -211,9 +228,12 @@ export function DeviceCard({
         </div>
       </CardHeader>
       
-      <CardContent className="px-6 pb-6 space-y-4 relative z-10 flex flex-col flex-1">
+      <CardContent className={cn('relative z-10 flex flex-col flex-1', isMobile ? 'px-4 pb-4 space-y-3' : 'px-6 pb-6 space-y-4')}>
         <div className="space-y-2">
-          <h3 className="text-gray-900 dark:text-white text-lg font-bold group-hover:text-blue-900 dark:group-hover:text-blue-400 transition-colors">
+          <h3 className={cn(
+            'text-gray-900 dark:text-white font-bold group-hover:text-blue-900 dark:group-hover:text-blue-400 transition-colors',
+            isMobile ? 'text-base' : 'text-lg'
+          )}>
             {consoleItem.name}
           </h3>
           <div className="space-y-1.5 min-h-[42px]">
@@ -241,13 +261,15 @@ export function DeviceCard({
             )}
           </div>
         </div>
-        <div className="pt-4 border-t border-gray-200 dark:border-gray-700 group-hover:border-blue-200 dark:group-hover:border-blue-700 transition-colors mt-auto">
+        <div className={cn('border-t border-gray-200 dark:border-gray-700 group-hover:border-blue-200 dark:group-hover:border-blue-700 transition-colors mt-auto', isMobile ? 'pt-3' : 'pt-4')}>
           <Button
-            className={`w-full shadow-md hover:shadow-lg hover:scale-[1.02] transition-all duration-200 flex items-center justify-center gap-2 font-semibold ${
+            className={cn(
+              'w-full shadow-md hover:shadow-lg hover:scale-[1.02] transition-all duration-200 flex items-center justify-center gap-2 font-semibold',
+              isMobile ? 'min-h-[44px] text-base' : 'text-sm',
               isActionDisabled
                 ? 'bg-gray-400 dark:bg-gray-600 hover:bg-gray-500 dark:hover:bg-gray-700 text-white cursor-not-allowed'
                 : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white'
-            }`}
+            )}
             variant="default"
             disabled={isActionDisabled}
             onClick={(e) => {
@@ -264,7 +286,7 @@ export function DeviceCard({
                 ? t('devices.console.connect') 
                 : t('devices.console.register')}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg] group-hover:translate-x-1 transition-transform" />
+            <ChevronDown className={cn('rotate-[-90deg] group-hover:translate-x-1 transition-transform', isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5')} />
           </Button>
         </div>
       </CardContent>
