@@ -4,21 +4,22 @@ import { useDevice } from '@/hooks/use-device'
 import { controllerService } from '@/service/controller.service'
 import { getStreamingButtonName } from '@/types/controller-mapping'
 import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown } from 'lucide-react'
-import plainL2Icon from '@/assets/plain-L2.svg'
-import plainL1Icon from '@/assets/plain-L1.svg'
-import plainR2Icon from '@/assets/plain-R2.svg'
-import plainR1Icon from '@/assets/plain-R1.svg'
-import triangleIcon from '@/assets/triangle.svg'
-import squareIcon from '@/assets/square.svg'
-import circleIcon from '@/assets/circle.svg'
-import crossIcon from '@/assets/cross.svg'
-import directionUpIcon from '@/assets/direction-up.svg'
-import directionLeftIcon from '@/assets/direction-left.svg'
-import directionRightIcon from '@/assets/direction-right.svg'
-import directionDownIcon from '@/assets/direction-down.svg'
-import psIcon from '@/assets/outline-PS.svg'
-import shareIcon from '@/assets/plain-small-share.svg'
-import optionsIcon from '@/assets/plain-small-option.svg'
+// PNG 图标导入
+import plainL2Png from '@/assets/plain-L2.png'
+import plainL1Png from '@/assets/plain-L1.png'
+import plainR2Png from '@/assets/plain-R2.png'
+import plainR1Png from '@/assets/plain-R1.png'
+import trianglePng from '@/assets/triangle.png'
+import squarePng from '@/assets/square.png'
+import circlePng from '@/assets/circle.png'
+import crossPng from '@/assets/cross.png'
+import directionUpPng from '@/assets/direction-up.png'
+import directionLeftPng from '@/assets/direction-left.png'
+import directionRightPng from '@/assets/direction-right.png'
+import directionDownPng from '@/assets/direction-down.png'
+import sharePng from '@/assets/plain-small-share.png'
+import optionsPng from '@/assets/plain-small-option.png'
+import psPng from '@/assets/outline-PS.png'
 
 // ==================== 类型定义 ====================
 interface VirtualJoystickState {
@@ -42,7 +43,7 @@ interface MobileVirtualControllerProps {
 
 interface ButtonConfig {
   name: string
-  icon: string
+  icon: string | React.ComponentType<React.SVGProps<SVGSVGElement>>
   alt: string
   style: React.CSSProperties
 }
@@ -52,13 +53,13 @@ const STICK_CONFIG = {
   radius: 60,
   maxDistance: 15, // 响应距离：手指只需移动15px就能达到最大值（用于计算发送值）
   displayMaxDistance: 50, // 显示距离：摇杆视觉显示的最大移动距离（用于视觉反馈）
-  throttleMs: 50,
+  throttleMs: 16, // 降低到 16ms (约 60fps) 以获得更流畅的响应
   responseCurve: 0.25, // 极其激进的响应曲线，极小移动就有高响应
 } as const
 
 const BUTTON_FEEDBACK = {
   duration: 200,
-  filter: 'brightness(1.1) saturate(2.5) hue-rotate(210deg) drop-shadow(0 0 12px rgba(50, 150, 255, 0.9))',
+  filter: 'brightness(1.3) saturate(3) hue-rotate(200deg) drop-shadow(0 0 15px rgba(50, 150, 255, 1))',
 } as const
 
 const JOYSTICK_AREA = {
@@ -72,24 +73,22 @@ const JOYSTICK_AREA = {
 const LEFT_BUTTONS: ButtonConfig[] = [
   {
     name: 'L2',
-    icon: plainL2Icon,
+    icon: plainL2Png,
     alt: 'L2',
     style: {
-      top: '20%',
-      left: '60%',
-      transform: 'rotate(-12deg)',
+      top: '23%',
+      left: '50%',
       width: '100px',
       height: '100px',
     },
   },
   {
     name: 'L1',
-    icon: plainL1Icon,
+    icon: plainL1Png,
     alt: 'L1',
     style: {
       top: '45%',
-      left: '140%',
-      transform: 'rotate(-12deg)',
+      left: '130%',
       width: '100px',
       height: '100px',
     },
@@ -99,49 +98,53 @@ const LEFT_BUTTONS: ButtonConfig[] = [
 const DPAD_BUTTONS: ButtonConfig[] = [
   {
     name: 'DPAD_UP',
-    icon: directionUpIcon,
+    icon: directionUpPng,
     alt: 'Up',
     style: {
       top: '130%',
-      left: '150%',
+      left: '140%',
       transform: 'translateX(-50%)',
-      width: '55px',
+      // UP: viewBox 17×23，保持高度 55px，宽度按比例
+      width: `${(55 * 17) / 23}px`, // ≈ 40.65px
       height: '55px',
     },
   },
   {
     name: 'DPAD_LEFT',
-    icon: directionLeftIcon,
+    icon: directionLeftPng,
     alt: 'Left',
     style: {
-      left: '70%',
+      left: '60%',
       top: '200%',
       transform: 'translateY(-50%)',
+      // LEFT: viewBox 23×17，保持宽度 55px，高度按比例
       width: '55px',
-      height: '55px',
+      height: `${(55 * 17) / 23}px`, // ≈ 40.65px
     },
   },
   {
     name: 'DPAD_RIGHT',
-    icon: directionRightIcon,
+    icon: directionRightPng,
     alt: 'Right',
     style: {
-      left: '170%',
+      left: '160%',
       top: '200%',
       transform: 'translateY(-50%)',
+      // RIGHT: viewBox 23×17，保持宽度 55px，高度按比例
       width: '55px',
-      height: '55px',
+      height: `${(55 * 17) / 23}px`, // ≈ 40.65px
     },
   },
   {
     name: 'DPAD_DOWN',
-    icon: directionDownIcon,
+    icon: directionDownPng,
     alt: 'Down',
     style: {
       top: '210%',
-      left: '150%',
+      left: '140%',
       transform: 'translateX(-50%)',
-      width: '55px',
+      // DOWN: viewBox 17×23，保持高度 55px，宽度按比例
+      width: `${(55 * 17) / 23}px`, // ≈ 40.65px
       height: '55px',
     },
   },
@@ -150,24 +153,22 @@ const DPAD_BUTTONS: ButtonConfig[] = [
 const RIGHT_BUTTONS: ButtonConfig[] = [
   {
     name: 'R2',
-    icon: plainR2Icon,
+    icon: plainR2Png,
     alt: 'R2',
     style: {
-      top: '20%',
+      top: '23%',
       right: '20%',
-      transform: 'rotate(12deg)',
       width: '100px',
       height: '100px',
     },
   },
   {
     name: 'R1',
-    icon: plainR1Icon,
+    icon: plainR1Png,
     alt: 'R1',
     style: {
       top: '45%',
       right: '100%',
-      transform: 'rotate(12deg)',
       width: '100px',
       height: '100px',
     },
@@ -177,7 +178,7 @@ const RIGHT_BUTTONS: ButtonConfig[] = [
 const ACTION_BUTTONS: ButtonConfig[] = [
   {
     name: 'TRIANGLE',
-    icon: triangleIcon,
+    icon: trianglePng,
     alt: 'Triangle',
     style: {
       top: '120%',
@@ -189,7 +190,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
   },
   {
     name: 'SQUARE',
-    icon: squareIcon,
+    icon: squarePng,
     alt: 'Square',
     style: {
       right: '150%',
@@ -201,7 +202,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
   },
   {
     name: 'CIRCLE',
-    icon: circleIcon,
+    icon: circlePng,
     alt: 'Circle',
     style: {
       right: '40%',
@@ -213,14 +214,14 @@ const ACTION_BUTTONS: ButtonConfig[] = [
   },
   {
     name: 'CROSS',
-    icon: crossIcon,
+    icon: crossPng,
     alt: 'Cross',
     style: {
       top: '230%',
       right: '70%',
       transform: 'translateX(-50%)',
-      width: '45px',
-      height: '45px',
+      width: '46px',
+      height: '46px',
     },
   },
 ]
@@ -228,7 +229,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
 const BOTTOM_BUTTONS: ButtonConfig[] = [
   {
     name: 'SHARE',
-    icon: shareIcon,
+    icon: sharePng,
     alt: 'Share',
     style: {
       width: '20px',
@@ -237,7 +238,7 @@ const BOTTOM_BUTTONS: ButtonConfig[] = [
   },
   {
     name: 'PS',
-    icon: psIcon,
+    icon: psPng,
     alt: 'PS',
     style: {
       width: '20px',
@@ -246,7 +247,7 @@ const BOTTOM_BUTTONS: ButtonConfig[] = [
   },
   {
     name: 'OPTIONS',
-    icon: optionsIcon,
+    icon: optionsPng,
     alt: 'Options',
     style: {
       width: '20px',
@@ -264,6 +265,7 @@ interface VirtualButtonProps {
 
 function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
   const isBottomButton = config.name === 'PS' || config.name === 'SHARE' || config.name === 'OPTIONS'
+  const IconComponent = typeof config.icon === 'string' ? null : config.icon
   
   return (
     <button
@@ -279,14 +281,33 @@ function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
         onClick(config.name)
       }}
     >
-      <img
-        src={config.icon}
-        alt={config.alt}
-        className="w-full h-full transition-all duration-200"
-        style={{
-          filter: isActive ? BUTTON_FEEDBACK.filter : 'none',
-        }}
-      />
+      {IconComponent ? (
+        <IconComponent
+          className="w-full h-full transition-all duration-200"
+          style={{
+            filter: isActive ? BUTTON_FEEDBACK.filter : 'none',
+            WebkitFontSmoothing: 'antialiased',
+            MozOsxFontSmoothing: 'grayscale',
+            textRendering: 'optimizeLegibility',
+            imageRendering: 'auto',
+            shapeRendering: 'geometricPrecision',
+            transform: 'scale(1)',
+            WebkitTransform: 'scale(1)',
+          }}
+        />
+      ) : (
+        <img
+          src={config.icon as string}
+          alt={config.alt}
+          className="w-full h-full transition-all duration-200"
+          style={{
+            filter: isActive ? BUTTON_FEEDBACK.filter : 'none',
+            imageRendering: 'auto',
+            WebkitFontSmoothing: 'antialiased',
+            MozOsxFontSmoothing: 'grayscale',
+          }}
+        />
+      )}
     </button>
   )
 }
@@ -368,6 +389,16 @@ export function MobileVirtualController({
     right: null,
   })
   const bottomBarToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 使用 ref 存储最新的摇杆值，避免闭包陷阱
+  const sticksValueRef = useRef<{ left: { x: number; y: number }; right: { x: number; y: number } }>({
+    left: { x: 0, y: 0 },
+    right: { x: 0, y: 0 },
+  })
+  // 使用 ref 存储摇杆的初始触摸位置，避免闭包陷阱
+  const stickInitialPosRef = useRef<{ left: { x: number; y: number } | null; right: { x: number; y: number } | null }>({
+    left: null,
+    right: null,
+  })
 
   // ==================== 摇杆处理逻辑 ====================
   const calculateStickValue = useCallback(
@@ -408,12 +439,35 @@ export function MobileVirtualController({
   const sendSticksThrottled = useCallback(
     (() => {
       let lastSendTime = 0
+      let pendingFrame: number | null = null
       return (leftX: number, leftY: number, rightX: number, rightY: number) => {
+        // 更新 ref 中的最新值
+        sticksValueRef.current.left = { x: leftX, y: leftY }
+        sticksValueRef.current.right = { x: rightX, y: rightY }
+
         const now = Date.now()
         if (now - lastSendTime >= STICK_CONFIG.throttleMs && sessionId) {
           lastSendTime = now
+          // 取消待处理的帧
+          if (pendingFrame !== null) {
+            cancelAnimationFrame(pendingFrame)
+            pendingFrame = null
+          }
           controllerService.sendSticks(leftX, leftY, rightX, rightY).catch(() => {
             // 静默处理错误
+          })
+        } else if (sessionId && pendingFrame === null) {
+          // 如果还在节流期内，使用 requestAnimationFrame 确保在下一帧发送
+          pendingFrame = requestAnimationFrame(() => {
+            pendingFrame = null
+            const current = sticksValueRef.current
+            const now = Date.now()
+            if (now - lastSendTime >= STICK_CONFIG.throttleMs) {
+              lastSendTime = now
+              controllerService.sendSticks(current.left.x, current.left.y, current.right.x, current.right.y).catch(() => {
+            // 静默处理错误
+              })
+            }
           })
         }
       }
@@ -425,14 +479,14 @@ export function MobileVirtualController({
     (
       stickType: 'left' | 'right',
       touch: Touch,
-      currentStick: VirtualJoystickState,
-      otherStick: VirtualJoystickState
+      initialX: number,
+      initialY: number
     ) => {
       const { x, y, displayX, displayY } = calculateStickValue(
         touch.clientX,
         touch.clientY,
-        currentStick.touchX,
-        currentStick.touchY
+        initialX,
+        initialY
       )
       const setter = stickType === 'left' ? setLeftStick : setRightStick
 
@@ -446,6 +500,8 @@ export function MobileVirtualController({
           touchX: prev.touchX,
           touchY: prev.touchY,
         }
+        // 使用 ref 获取最新的另一个摇杆值，避免闭包陷阱
+        const otherStick = stickType === 'left' ? sticksValueRef.current.right : sticksValueRef.current.left
         if (stickType === 'left') {
           sendSticksThrottled(x, y, otherStick.x, otherStick.y)
         } else {
@@ -502,10 +558,14 @@ export function MobileVirtualController({
 
         if (isLeftArea && isBottomMiddleVertical && activeTouchIdRef.current.left === null) {
           activeTouchIdRef.current.left = touch.identifier
+          stickInitialPosRef.current.left = { x: touchX, y: touchY }
           setLeftStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: true, touchX, touchY })
+          sticksValueRef.current.left = { x: 0, y: 0 }
         } else if (isRightArea && isBottomMiddleVertical && activeTouchIdRef.current.right === null) {
           activeTouchIdRef.current.right = touch.identifier
+          stickInitialPosRef.current.right = { x: touchX, y: touchY }
           setRightStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: true, touchX, touchY })
+          sticksValueRef.current.right = { x: 0, y: 0 }
         }
       }
     },
@@ -517,22 +577,26 @@ export function MobileVirtualController({
       if (!isMobile || !sessionId) return
 
       // 处理左摇杆
-      if (activeTouchIdRef.current.left !== null) {
+      if (activeTouchIdRef.current.left !== null && stickInitialPosRef.current.left) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.left)
         if (touch) {
-          updateStick('left', touch, leftStick, rightStick)
+          // 使用 ref 获取初始位置，避免依赖过时的状态
+          const initialPos = stickInitialPosRef.current.left
+          updateStick('left', touch, initialPos.x, initialPos.y)
         }
       }
 
       // 处理右摇杆
-      if (activeTouchIdRef.current.right !== null) {
+      if (activeTouchIdRef.current.right !== null && stickInitialPosRef.current.right) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.right)
         if (touch) {
-          updateStick('right', touch, rightStick, leftStick)
+          // 使用 ref 获取初始位置，避免依赖过时的状态
+          const initialPos = stickInitialPosRef.current.right
+          updateStick('right', touch, initialPos.x, initialPos.y)
         }
       }
     },
-    [isMobile, sessionId, leftStick, rightStick, updateStick]
+    [isMobile, sessionId, updateStick]
   )
 
   const handleGlobalTouchEnd = useCallback(
@@ -546,12 +610,17 @@ export function MobileVirtualController({
         )
         if (!touchStillActive) {
           activeTouchIdRef.current.left = null
+          stickInitialPosRef.current.left = null
           setLeftStick(() => {
             if (sessionId) {
+              // 使用 ref 获取最新的右摇杆值
+              const rightStick = sticksValueRef.current.right
               sendSticksThrottled(0, 0, rightStick.x, rightStick.y)
             }
             return { x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 }
           })
+          // 更新 ref
+          sticksValueRef.current.left = { x: 0, y: 0 }
         }
       }
 
@@ -562,12 +631,17 @@ export function MobileVirtualController({
         )
         if (!touchStillActive) {
           activeTouchIdRef.current.right = null
+          stickInitialPosRef.current.right = null
           setRightStick(() => {
             if (sessionId) {
+              // 使用 ref 获取最新的左摇杆值
+              const leftStick = sticksValueRef.current.left
               sendSticksThrottled(leftStick.x, leftStick.y, 0, 0)
             }
             return { x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 }
           })
+          // 更新 ref
+          sticksValueRef.current.right = { x: 0, y: 0 }
         }
       }
     },

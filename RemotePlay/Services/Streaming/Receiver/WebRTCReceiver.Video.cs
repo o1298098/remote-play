@@ -9,8 +9,9 @@ namespace RemotePlay.Services.Streaming.Receiver
     {
         /// <summary>
         /// 安全调用反射方法，带超时保护（防止 WebRTC 发送阻塞）
+        /// ✅ 修复：返回是否成功，避免超时或失败时静默丢弃视频包
         /// </summary>
-        private void SafeInvokeMethod(Action invokeAction, string methodName, int timeoutMs = 100)
+        private bool SafeInvokeMethod(Action invokeAction, string methodName, int timeoutMs = 100)
         {
             var invokeTask = Task.Run(invokeAction);
             var timeoutTask = Task.Delay(timeoutMs);
@@ -20,16 +21,23 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 if (_videoPacketCount % 10 == 0) // 限流日志
                 {
-                    _logger.LogWarning("⚠️ {Method} 调用超时（{Timeout}ms），可能 WebRTC 发送阻塞", methodName, timeoutMs);
+                    _logger.LogWarning("⚠️ {Method} 调用超时（{Timeout}ms），可能 WebRTC 发送阻塞，视频包可能丢失", methodName, timeoutMs);
                 }
-                return; // 超时后直接返回，避免阻塞
+                return false; // 超时后返回 false，表示发送失败
             }
             
             // 检查是否有异常
             if (invokeTask.IsFaulted)
             {
-                throw invokeTask.Exception?.InnerException ?? invokeTask.Exception ?? new Exception($"{methodName} failed");
+                var ex = invokeTask.Exception?.InnerException ?? invokeTask.Exception ?? new Exception($"{methodName} failed");
+                if (_videoPacketCount % 10 == 0)
+                {
+                    _logger.LogWarning(ex, "⚠️ {Method} 调用失败，视频包可能丢失", methodName);
+                }
+                throw ex;
             }
+            
+            return true; // 成功
         }
         
         public void OnVideoPacket(byte[] packet)
@@ -88,19 +96,35 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
 
                 // ✅ 对齐帧时间戳策略：在每帧开始时只更新一次时间戳
+                // ✅ 修复：确保时间戳始终递增，避免时间戳回退或停滞导致浏览器认为视频流异常
                 {
                     var now = DateTime.UtcNow;
                     if (_videoPacketCount > 0)
                     {
                         var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                        if (elapsed > 0)
+                        if (elapsed > 0 && elapsed < 1.0) // 限制最大增量，避免异常大的时间戳跳跃
                         {
                             _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
                         }
-                        else
+                        else if (elapsed <= 0)
                         {
+                            // ✅ 修复：如果时间没有前进（系统时间异常），使用固定增量
                             _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
                         }
+                        else
+                        {
+                            // ✅ 修复：如果时间跳跃过大（可能是系统时间调整），使用合理的增量
+                            _videoTimestamp += (uint)(1.0 * VIDEO_CLOCK_RATE); // 最多 1 秒的增量
+                            if (_videoPacketCount % 100 == 0)
+                            {
+                                _logger.LogWarning("⚠️ 视频时间戳异常跳跃: {Elapsed}秒，已限制增量", elapsed);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // 第一个包，初始化时间戳
+                        _videoTimestamp = 0;
                     }
                     _lastVideoPacketTime = now;
                 }
@@ -157,12 +181,17 @@ namespace RemotePlay.Services.Streaming.Receiver
                         _lastVideoPacketTime = now;
 
                         // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                        SafeInvokeMethod(
+                        bool sent = SafeInvokeMethod(
                             () => _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, videoData }),
                             "SendVideo",
                             100);
 
-                        _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
+                        if (sent)
+                        {
+                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
+                            return true;
+                        }
+                        // 如果发送失败，返回 false 继续尝试其他方式
 
                         return true;
                     }
@@ -201,6 +230,8 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                 var (connectionState, iceState, signalingState) = GetCachedConnectionState();
 
+                // ✅ 修复：放宽状态检查条件，允许在更多状态下尝试发送
+                // 避免因为状态检查过严导致视频包被静默丢弃
                 bool canSend = false;
 
                 if (signalingState == RTCSignalingState.stable)
@@ -210,7 +241,21 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         canSend = true;
                     }
-                    else if (iceState == RTCIceConnectionState.connected)
+                    else if (iceState == RTCIceConnectionState.connected ||
+                             iceState == RTCIceConnectionState.checking)
+                    {
+                        canSend = true;
+                    }
+                }
+                // ✅ 修复：即使信令状态不是 stable，如果 ICE 已连接，也尝试发送
+                // 这可以处理 Answer 设置后但信令状态还未更新的情况
+                else if (signalingState == RTCSignalingState.have_local_offer ||
+                         signalingState == RTCSignalingState.have_remote_pranswer)
+                {
+                    if (iceState == RTCIceConnectionState.connected ||
+                        iceState == RTCIceConnectionState.checking ||
+                        connectionState == RTCPeerConnectionState.connected ||
+                        connectionState == RTCPeerConnectionState.connecting)
                     {
                         canSend = true;
                     }
@@ -249,26 +294,67 @@ namespace RemotePlay.Services.Streaming.Receiver
                         if (_cachedSendVideoMethod != null)
                         {
                             // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                            SafeInvokeMethod(
+                            // ✅ 修复：检查返回值，如果失败则继续尝试其他发送方式
+                            bool sent = SafeInvokeMethod(
                                 () => _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, data }),
                                 "SendVideo",
                                 100);
                             
-                            return;
+                            if (sent)
+                            {
+                                return;
+                            }
+                            // 如果超时或失败，继续尝试 NAL 解析方式
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        // ✅ 修复：记录异常但不吞掉，继续尝试其他发送方式
+                        if (_videoPacketCount % 10 == 0)
+                        {
+                            _logger.LogWarning(ex, "⚠️ SendVideo 直接发送失败，尝试 NAL 解析方式");
+                        }
                     }
                 }
 
                 var nalUnits = ParseAnnexBNalUnits(data);
 
-                if (nalUnits.Count == 0 && _videoPacketCount < 5)
+                // ✅ 修复：如果 NAL 解析失败，尝试直接发送原始数据（可能是单个 NAL unit）
+                if (nalUnits.Count == 0)
                 {
-                    _logger.LogWarning("⚠️ 未解析到 NAL units，数据长度: {Length}, 前 16 字节: {Hex}",
-                        data.Length,
-                        data.Length > 0 ? Convert.ToHexString(data.Take(Math.Min(16, data.Length)).ToArray()) : "empty");
+                    if (_videoPacketCount < 5 || _videoPacketCount % 100 == 0)
+                    {
+                        _logger.LogWarning("⚠️ 未解析到 NAL units，尝试直接发送原始数据。数据长度: {Length}, 前 16 字节: {Hex}",
+                            data.Length,
+                            data.Length > 0 ? Convert.ToHexString(data.Take(Math.Min(16, data.Length)).ToArray()) : "empty");
+                    }
+                    
+                    // ✅ 修复：如果解析失败，尝试直接发送原始数据（可能是单个 NAL unit 或已封装格式）
+                    // 这可以处理某些特殊情况下的视频数据格式
+                    try
+                    {
+                        if (_cachedSendVideoMethod != null)
+                        {
+                            bool sent = SafeInvokeMethod(
+                                () => _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, data }),
+                                "SendVideo(raw)",
+                                100);
+                            if (sent)
+                            {
+                                return;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (_videoPacketCount < 5 || _videoPacketCount % 100 == 0)
+                        {
+                            _logger.LogWarning(ex, "⚠️ 直接发送原始视频数据失败");
+                        }
+                    }
+                    
+                    // 如果直接发送也失败，返回（不继续处理空列表）
+                    return;
                 }
 
                 for (int i = 0; i < nalUnits.Count; i++)
@@ -450,12 +536,15 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         parameters[1].ParameterType == typeof(byte[]))
                                     {
                                         // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                        SafeInvokeMethod(
+                                        bool sent = SafeInvokeMethod(
                                             () => method.Invoke(_peerConnection, new object[] { _videoTimestamp, nalUnit }),
                                             "SendVideo(nalUnit)",
                                             100);
-                                        videoSent = true;
-                                        break;
+                                        if (sent)
+                                        {
+                                            videoSent = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -512,7 +601,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                             }
 
                                             // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            SafeInvokeMethod(
+                                            bool sent = SafeInvokeMethod(
                                                 () => method.Invoke(_peerConnection, new object[] {
                                                     SDPMediaTypesEnum.video,
                                                     rtpBytes,
@@ -522,8 +611,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                                                 }),
                                                 "SendRtpRaw(5)",
                                                 100);
-                                            rtpSent = true;
-                                            break;
+                                            if (sent)
+                                            {
+                                                rtpSent = true;
+                                                break;
+                                            }
                                         }
                                     }
                                     else if (parameters.Length == 6)
@@ -554,7 +646,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                             try
                                             {
                                                 // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                                SafeInvokeMethod(
+                                                bool sent = SafeInvokeMethod(
                                                     () => method.Invoke(_peerConnection, new object[] {
                                                         SDPMediaTypesEnum.video,
                                                         rtpBytes,
@@ -565,8 +657,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                                                     }),
                                                     "SendRtpRaw(6)",
                                                     100);
-                                                rtpSent = true;
-                                                break;
+                                                if (sent)
+                                                {
+                                                    rtpSent = true;
+                                                    break;
+                                                }
                                             }
                                             catch (Exception invokeEx)
                                             {
@@ -590,34 +685,43 @@ namespace RemotePlay.Services.Streaming.Receiver
                                             parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
                                         {
                                             // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            SafeInvokeMethod(
+                                            bool sent = SafeInvokeMethod(
                                                 () => method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video }),
                                                 "SendRtpRaw(2)",
                                                 100);
-                                            rtpSent = true;
-                                            break;
+                                            if (sent)
+                                            {
+                                                rtpSent = true;
+                                                break;
+                                            }
                                         }
                                         else if (parameters[0].ParameterType == typeof(byte[]) &&
                                                  parameters[1].ParameterType == typeof(int))
                                         {
                                             // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            SafeInvokeMethod(
+                                            bool sent = SafeInvokeMethod(
                                                 () => method.Invoke(_peerConnection, new object[] { rtpBytes, payloadType }),
                                                 "SendRtpRaw(2-int)",
                                                 100);
-                                            rtpSent = true;
-                                            break;
+                                            if (sent)
+                                            {
+                                                rtpSent = true;
+                                                break;
+                                            }
                                         }
                                     }
                                     else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
                                     {
                                         // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                        SafeInvokeMethod(
+                                        bool sent = SafeInvokeMethod(
                                             () => method.Invoke(_peerConnection, new object[] { rtpBytes }),
                                             "SendRtpRaw(1)",
                                             100);
-                                        rtpSent = true;
-                                        break;
+                                        if (sent)
+                                        {
+                                            rtpSent = true;
+                                            break;
+                                        }
                                     }
                                 }
                                 catch (Exception ex)
@@ -680,11 +784,14 @@ namespace RemotePlay.Services.Streaming.Receiver
                                     if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
                                     {
                                         // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                        SafeInvokeMethod(
+                                        bool sent = SafeInvokeMethod(
                                             () => method.Invoke(_videoTrack, new object[] { nalUnit }),
                                             "SendVideoTrack",
                                             100);
-                                        return;
+                                        if (sent)
+                                        {
+                                            return;
+                                        }
                                     }
                                 }
                                 catch { }
@@ -816,7 +923,7 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                                     int markerBit = rtpPacket.Header.MarkerBit;
                                     // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                    SafeInvokeMethod(
+                                    bool fragmentSent = SafeInvokeMethod(
                                         () => method.Invoke(_peerConnection, new object[] {
                                             SDPMediaTypesEnum.video,
                                             payloadOnly,
@@ -826,8 +933,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         }),
                                         "SendRtpRaw(fragment)",
                                         100);
-                                    sent = true;
-                                    break;
+                                    if (fragmentSent)
+                                    {
+                                        sent = true;
+                                        break;
+                                    }
                                 }
                             }
                             catch { }
@@ -850,22 +960,28 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
                                         {
                                             // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            SafeInvokeMethod(
+                                            bool fragmentSent = SafeInvokeMethod(
                                                 () => method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video }),
                                                 "SendRtpRaw(2-fragment)",
                                                 100);
-                                            sent = true;
-                                            break;
+                                            if (fragmentSent)
+                                            {
+                                                sent = true;
+                                                break;
+                                            }
                                         }
                                         else if (parameters[1].ParameterType == typeof(int))
                                         {
                                             // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            SafeInvokeMethod(
+                                            bool fragmentSent = SafeInvokeMethod(
                                                 () => method.Invoke(_peerConnection, new object[] { rtpBytes, (int)rtpPacket.Header.PayloadType }),
                                                 "SendRtpRaw(2-int-fragment)",
                                                 100);
-                                            sent = true;
-                                            break;
+                                            if (fragmentSent)
+                                            {
+                                                sent = true;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
