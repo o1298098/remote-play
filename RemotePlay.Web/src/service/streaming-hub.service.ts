@@ -17,6 +17,10 @@ export class StreamingHubService {
   private connection: signalR.HubConnection | null = null
   private connectingPromise: Promise<signalR.HubConnection> | null = null
   private pendingKeyframeResolvers: Array<(success: boolean) => void> = []
+  
+  // ✅ ICE Restart 事件回调
+  public onIceRestartOffer?: (offerSdp: string) => void
+  public onIceRestartFailed?: (reason: string) => void
 
   private ensureConnection(): Promise<signalR.HubConnection> {
     if (this.connection && this.connection.state === signalR.HubConnectionState.Connected) {
@@ -48,6 +52,22 @@ export class StreamingHubService {
         resolver(success)
       } else {
         console.debug('收到 KeyframeRequested 事件，但没有待处理请求', success)
+      }
+    })
+
+    // ✅ 监听 ICE Restart Offer 事件
+    connection.on('IceRestartOffer', (offerSdp: string) => {
+      console.log('🔄 收到 ICE Restart Offer，触发重新协商')
+      if (this.onIceRestartOffer) {
+        this.onIceRestartOffer(offerSdp)
+      }
+    })
+
+    // ✅ 监听 ICE Restart 失败事件
+    connection.on('IceRestartFailed', (reason: string) => {
+      console.warn('❌ ICE Restart 失败:', reason)
+      if (this.onIceRestartFailed) {
+        this.onIceRestartFailed(reason)
       }
     })
 
@@ -144,6 +164,44 @@ export class StreamingHubService {
     this.connection = null
     this.connectingPromise = null
     this.pendingKeyframeResolvers.splice(0, this.pendingKeyframeResolvers.length)
+  }
+
+  /**
+   * 获取待处理的 ICE Restart Offer
+   */
+  async getIceRestartOffer(sessionId: string): Promise<string | null> {
+    if (!sessionId) {
+      console.warn('获取 ICE Restart Offer 失败：SessionId 为空')
+      return null
+    }
+
+    try {
+      const connection = await this.ensureConnection()
+      const offer = await connection.invoke<string | null>('GetIceRestartOffer', sessionId)
+      return offer
+    } catch (error) {
+      console.error('获取 ICE Restart Offer 失败:', error)
+      return null
+    }
+  }
+
+  /**
+   * 处理 ICE Restart（触发后端重新协商）
+   */
+  async handleIceRestart(sessionId: string): Promise<boolean> {
+    if (!sessionId) {
+      console.warn('处理 ICE Restart 失败：SessionId 为空')
+      return false
+    }
+
+    try {
+      const connection = await this.ensureConnection()
+      await connection.invoke('HandleIceRestart', sessionId)
+      return true
+    } catch (error) {
+      console.error('处理 ICE Restart 失败:', error)
+      return false
+    }
   }
 }
 

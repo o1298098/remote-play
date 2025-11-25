@@ -8,7 +8,9 @@ using RemotePlay.Models.Base;
 using RemotePlay.Models.Context;
 using RemotePlay.Models.PlayStation;
 using RemotePlay.Services;
+using RemotePlay.Services.RemotePlay;
 using RemotePlay.Services.Streaming.Receiver;
+using RemotePlay.Services.Streaming.Controller;
 using RemotePlay.Utils;
 using System;
 using System.Linq;
@@ -765,7 +767,7 @@ namespace RemotePlay.Controllers
         public async Task<ActionResult> ControllerButton(
             [FromBody] ControllerButtonRequest request)
         {
-            if (!Enum.TryParse<RemotePlay.Services.Streaming.FeedbackEvent.ButtonType>(
+            if (!Enum.TryParse<FeedbackEvent.ButtonType>(
                 request.Button.ToUpper(), out var buttonType))
             {
                 return BadRequest(new ApiErrorResponse

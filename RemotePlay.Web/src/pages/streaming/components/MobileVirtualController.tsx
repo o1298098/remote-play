@@ -285,64 +285,85 @@ function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isLongPressingRef = useRef(false)
   const touchStartTimeRef = useRef(0)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    
-    touchStartTimeRef.current = Date.now()
-    isLongPressingRef.current = false
-    
-    // 清除可能存在的定时器
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    
-    // 设置长按检测定时器
-    longPressTimerRef.current = setTimeout(() => {
-      isLongPressingRef.current = true
-      onClick(config.name, 'press')
-    }, LONG_PRESS_DELAY_MS)
-  }, [config.name, onClick])
-  
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    
-    // 清除长按定时器
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
-    
-    // 如果已经触发了长按，发送释放事件
-    if (isLongPressingRef.current) {
-      onClick(config.name, 'release')
+  // 使用原生事件监听器以避免 passive 事件监听器问题
+  useEffect(() => {
+    const button = buttonRef.current
+    if (!button) return
+
+    const handleTouchStart = (e: TouchEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      touchStartTimeRef.current = Date.now()
       isLongPressingRef.current = false
-    } else {
-      // 短按，发送点击事件
-      const pressDuration = Date.now() - touchStartTimeRef.current
-      if (pressDuration < LONG_PRESS_DELAY_MS) {
-        onClick(config.name, 'tap')
+      
+      // 清除可能存在的定时器
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
+      
+      // 设置长按检测定时器
+      longPressTimerRef.current = setTimeout(() => {
+        isLongPressingRef.current = true
+        onClick(config.name, 'press')
+      }, LONG_PRESS_DELAY_MS)
+    }
+    
+    const handleTouchEnd = (e: TouchEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      // 清除长按定时器
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
+      
+      // 如果已经触发了长按，发送释放事件
+      if (isLongPressingRef.current) {
+        onClick(config.name, 'release')
+        isLongPressingRef.current = false
+      } else {
+        // 短按，发送点击事件
+        const pressDuration = Date.now() - touchStartTimeRef.current
+        if (pressDuration < LONG_PRESS_DELAY_MS) {
+          onClick(config.name, 'tap')
+        }
       }
     }
-  }, [config.name, onClick])
-  
-  const handleTouchCancel = useCallback((e: React.TouchEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
     
-    // 清除长按定时器
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
+    const handleTouchCancel = (e: TouchEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      // 清除长按定时器
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
+      
+      // 如果正在长按，发送释放事件
+      if (isLongPressingRef.current) {
+        onClick(config.name, 'release')
+        isLongPressingRef.current = false
+      }
     }
     
-    // 如果正在长按，发送释放事件
-    if (isLongPressingRef.current) {
-      onClick(config.name, 'release')
-      isLongPressingRef.current = false
+    // 使用 { passive: false } 确保 preventDefault 可以工作
+    button.addEventListener('touchstart', handleTouchStart, { passive: false })
+    button.addEventListener('touchend', handleTouchEnd, { passive: false })
+    button.addEventListener('touchcancel', handleTouchCancel, { passive: false })
+    
+    return () => {
+      button.removeEventListener('touchstart', handleTouchStart)
+      button.removeEventListener('touchend', handleTouchEnd)
+      button.removeEventListener('touchcancel', handleTouchCancel)
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current)
+      }
     }
   }, [config.name, onClick])
   
@@ -351,29 +372,18 @@ function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
     e.stopPropagation()
   }, [])
   
-  // 清理定时器
-  useEffect(() => {
-    return () => {
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current)
-      }
-    }
-  }, [])
-  
   return (
     <button
+      ref={buttonRef}
       className={`flex items-center justify-center active:scale-95 transition-all ${
         isBottomButton ? 'relative' : 'absolute'
       }`}
       style={{
-        touchAction: 'manipulation',
+        touchAction: 'none',
         WebkitUserSelect: 'none',
         userSelect: 'none',
         ...config.style,
       }}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
       onContextMenu={handleContextMenu}
     >
       {IconComponent ? (

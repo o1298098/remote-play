@@ -23,8 +23,8 @@ namespace RemotePlay.Services.Streaming.Quality
             {
                 var padding = new byte[64];
                 HeaderWithPadding = new byte[header.Length + padding.Length];
-                Buffer.BlockCopy(header, 0, HeaderWithPadding, 0, header.Length);
-                Buffer.BlockCopy(padding, 0, HeaderWithPadding, header.Length, padding.Length);
+                System.Buffer.BlockCopy(header, 0, HeaderWithPadding, 0, header.Length);
+                System.Buffer.BlockCopy(padding, 0, HeaderWithPadding, header.Length, padding.Length);
             }
         }
 

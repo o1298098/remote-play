@@ -217,41 +217,41 @@ builder.Services.Configure<WebRTCConfig>(
     builder.Configuration.GetSection("WebRTC"));
 
 // 配置设备状态更新服务
-builder.Services.Configure<RemotePlay.Services.DeviceStatusUpdateConfig>(
+builder.Services.Configure<RemotePlay.Services.Device.DeviceStatusUpdateConfig>(
     builder.Configuration.GetSection("RemotePlay:DeviceStatusUpdate"));
 
 // 注册HttpClient
 builder.Services.AddHttpClient();
 
 // 注册核心服务
-builder.Services.AddSingleton<RemotePlay.Contracts.Services.IDeviceDiscoveryService, RemotePlay.Services.DeviceDiscoveryService>();
-builder.Services.AddScoped<RemotePlay.Contracts.Services.IRegisterService, RemotePlay.Services.RegisterService>();
-builder.Services.AddScoped<RemotePlay.Services.IRemotePlayService, RemotePlay.Services.RemotePlayService>();
+builder.Services.AddSingleton<RemotePlay.Contracts.Services.IDeviceDiscoveryService, RemotePlay.Services.Device.DeviceDiscoveryService>();
+builder.Services.AddScoped<RemotePlay.Contracts.Services.IRegisterService, RemotePlay.Services.Session.RegisterService>();
+builder.Services.AddScoped<RemotePlay.Services.RemotePlay.IRemotePlayService, RemotePlay.Services.RemotePlay.RemotePlayService>();
 // 会话配置与服务
 builder.Services.Configure<RemotePlay.Models.PlayStation.SessionConfig>(o => { });
-builder.Services.AddSingleton<RemotePlay.Contracts.Services.ISessionService, RemotePlay.Services.SessionService>();
-builder.Services.AddSingleton<RemotePlay.Contracts.Services.IStreamingService, RemotePlay.Services.StreamingService>();
-builder.Services.AddSingleton<RemotePlay.Contracts.Services.IControllerService, RemotePlay.Services.ControllerService>();
-builder.Services.AddScoped<RemotePlay.Contracts.Services.IDeviceSettingsService, RemotePlay.Services.DeviceSettingsService>();
+builder.Services.AddSingleton<RemotePlay.Contracts.Services.ISessionService, RemotePlay.Services.Session.SessionService>();
+builder.Services.AddSingleton<RemotePlay.Contracts.Services.IStreamingService, RemotePlay.Services.Streaming.StreamingService>();
+builder.Services.AddSingleton<RemotePlay.Contracts.Services.IControllerService, RemotePlay.Services.Controller.ControllerService>();
+builder.Services.AddScoped<RemotePlay.Contracts.Services.IDeviceSettingsService, RemotePlay.Services.Device.DeviceSettingsService>();
 
 // 注册Profile相关服务
-builder.Services.AddScoped<RemotePlay.Contracts.Services.IOAuthService, RemotePlay.Services.OAuthService>();
-builder.Services.AddScoped<RemotePlay.Contracts.Services.IProfileService, RemotePlay.Services.ProfileService>();
+builder.Services.AddScoped<RemotePlay.Contracts.Services.IOAuthService, RemotePlay.Services.Auth.OAuthService>();
+builder.Services.AddScoped<RemotePlay.Contracts.Services.IProfileService, RemotePlay.Services.Profile.ProfileService>();
 
 // 注册认证服务
-builder.Services.AddScoped<RemotePlay.Contracts.Services.IAuthService, RemotePlay.Services.AuthService>();
+builder.Services.AddScoped<RemotePlay.Contracts.Services.IAuthService, RemotePlay.Services.Auth.AuthService>();
 
 // 注册WebRTC服务
-builder.Services.AddSingleton<RemotePlay.Services.WebRTCSignalingService>();
+builder.Services.AddSingleton<RemotePlay.Services.WebRTC.WebRTCSignalingService>();
 
 // 注册延时统计服务
-builder.Services.AddSingleton<RemotePlay.Services.LatencyStatisticsService>();
+builder.Services.AddSingleton<RemotePlay.Services.Statistics.LatencyStatisticsService>();
 
 // 注册 HLS 清理后台服务
-builder.Services.AddHostedService<RemotePlay.Services.HlsCleanupService>();
+builder.Services.AddHostedService<RemotePlay.Services.Hls.HlsCleanupService>();
 
 // 注册设备状态更新后台服务
-builder.Services.AddHostedService<RemotePlay.Services.DeviceStatusUpdateService>();
+builder.Services.AddHostedService<RemotePlay.Services.Device.DeviceStatusUpdateService>();
 #endregion
 
 var app = builder.Build();

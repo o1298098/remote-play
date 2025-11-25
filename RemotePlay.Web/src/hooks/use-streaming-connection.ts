@@ -55,6 +55,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const isConnectedRef = useRef<boolean>(false)
   const hasAttemptedInitialConnectRef = useRef<boolean>(false)
   const rumbleSettingsRef = useRef<RumbleSettings>(getRumbleSettings())
+  
+  // ✅ ICE Restart 相关状态
+  const iceRestartTimeoutRef = useRef<number | null>(null)
+  const iceDisconnectedTimeRef = useRef<number | null>(null)
 
   const {
     getNormalizedState,
@@ -940,6 +944,21 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     controllerService.disconnect().catch(() => {})
+    // ✅ 清理 ICE Restart 相关资源
+    if (typeof window !== 'undefined') {
+      // 清理会在组件卸载时自动处理
+    }
+    
+    // ✅ 清理 ICE Restart 相关资源
+    if (iceRestartTimeoutRef.current !== null) {
+      window.clearTimeout(iceRestartTimeoutRef.current)
+      iceRestartTimeoutRef.current = null
+    }
+    
+    // ✅ 清理 SignalR 事件监听
+    streamingHubService.onIceRestartOffer = undefined
+    streamingHubService.onIceRestartFailed = undefined
+    
     streamingHubService.disconnect().catch(() => {})
 
     if (peerConnectionRef.current) {
@@ -1132,6 +1151,38 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
       })
+      
+      // ✅ 监听 DataChannel 事件（用于 keepalive）
+      // 注意：DataChannel 由后端在 createOffer 前创建，前端只需要监听
+      peerConnection.ondatachannel = (event) => {
+        const channel = event.channel
+        console.log('📡 收到 DataChannel:', {
+          label: channel.label,
+          id: channel.id,
+          readyState: channel.readyState,
+        })
+        
+        // ✅ 如果是 keepalive DataChannel，监听其状态
+        if (channel.label === 'keepalive') {
+          channel.onopen = () => {
+            console.log('✅ Keepalive DataChannel 已打开')
+          }
+          
+          channel.onclose = () => {
+            console.warn('⚠️ Keepalive DataChannel 已关闭')
+          }
+          
+          channel.onerror = (error) => {
+            console.warn('⚠️ Keepalive DataChannel 错误:', error)
+          }
+          
+          // ✅ 监听 keepalive 消息（可选，用于确认连接活跃）
+          channel.onmessage = (event) => {
+            // keepalive 消息是 1 字节的 0x00（由后端自动发送，前端只需确认收到）
+            console.debug('📥 收到 Keepalive 消息')
+          }
+        }
+      }
 
       console.log('✅ RTCPeerConnection 已创建:', {
         connectionState: peerConnection.connectionState,
@@ -1706,6 +1757,96 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         }
       }
 
+      // ✅ ICE Restart 处理函数（使用 ref 存储状态，避免闭包问题）
+      const handleIceRestart = async () => {
+        if (!webrtcSessionIdRef.current) {
+          console.warn('⚠️ 无法执行 ICE Restart：SessionId 为空')
+          return
+        }
+        
+        try {
+          console.log('🔄 开始处理 ICE Restart...')
+          
+          // ✅ 方法1：尝试从后端获取待处理的 Offer
+          const offer = await streamingHubService.getIceRestartOffer(webrtcSessionIdRef.current)
+          
+          if (offer) {
+            console.log('✅ 收到 ICE Restart Offer，重新协商...')
+            await handleIceRestartOffer(offer)
+            return
+          }
+          
+          // ✅ 方法2：如果后端没有待处理的 Offer，主动触发 ICE Restart
+          const success = await streamingHubService.handleIceRestart(webrtcSessionIdRef.current)
+          if (success) {
+            // 等待后端创建新的 Offer
+            setTimeout(async () => {
+              const newOffer = await streamingHubService.getIceRestartOffer(webrtcSessionIdRef.current!)
+              if (newOffer) {
+                await handleIceRestartOffer(newOffer)
+              }
+            }, 1000)
+          }
+        } catch (error) {
+          console.error('❌ ICE Restart 处理失败:', error)
+        }
+      }
+      
+      // ✅ 处理 ICE Restart Offer（在 PeerConnection 创建后定义，以便访问）
+      const handleIceRestartOffer = async (offerSdp: string) => {
+        const currentPeerConnection = peerConnectionRef.current
+        if (!currentPeerConnection || !webrtcSessionIdRef.current) {
+          console.warn('⚠️ 无法处理 ICE Restart Offer：PeerConnection 或 SessionId 为空')
+          return
+        }
+        
+        try {
+          console.log('🔄 设置新的 ICE Restart Offer...')
+          
+          // ✅ 设置新的 remote description
+          await currentPeerConnection.setRemoteDescription({
+            type: 'offer',
+            sdp: offerSdp,
+          })
+          
+          // ✅ 创建新的 Answer
+          const answer = await currentPeerConnection.createAnswer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+          })
+          
+          if (answer.sdp) {
+            try {
+              const optimizedSdp = optimizeSdpForLowLatency(answer.sdp, {
+                preferLanCandidates: isLikelyLan,
+              })
+              if (optimizedSdp && optimizedSdp.length > 10) {
+                answer.sdp = optimizedSdp
+              }
+            } catch (sdpError) {
+              console.warn('SDP 优化出错，使用原始 SDP:', sdpError)
+            }
+          }
+          
+          await currentPeerConnection.setLocalDescription(answer)
+          reinforceLatencyHints(currentPeerConnection)
+          
+          // ✅ 发送新的 Answer
+          await streamingService.sendAnswer({
+            sessionId: webrtcSessionIdRef.current,
+            sdp: answer.sdp || '',
+            type: 'answer',
+          })
+          
+          console.log('✅ ICE Restart Answer 已发送')
+        } catch (error) {
+          console.error('❌ 处理 ICE Restart Offer 失败:', error)
+        }
+      }
+      
+      // ✅ 更新 SignalR 事件监听，使用已定义的 handleIceRestartOffer
+      streamingHubService.onIceRestartOffer = handleIceRestartOffer
+      
       peerConnection.oniceconnectionstatechange = () => {
         const state = peerConnection.iceConnectionState
         const connectionState = peerConnection.connectionState
@@ -1722,12 +1863,31 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         if (state === 'connected' || state === 'completed') {
           console.log('✅ ICE 连接已建立:', state)
           reinforceLatencyHints(peerConnection)
+          
+          // ✅ 连接恢复，清除断开计时器
+          if (iceRestartTimeoutRef.current !== null) {
+            window.clearTimeout(iceRestartTimeoutRef.current)
+            iceRestartTimeoutRef.current = null
+          }
+          iceDisconnectedTimeRef.current = null
         } else if (state === 'failed') {
           console.error('❌ ICE 连接失败', {
             connectionState,
             signalingState,
             iceGatheringState,
           })
+          
+          // ✅ 延迟后尝试 ICE Restart（避免短暂抖动）
+          if (iceRestartTimeoutRef.current !== null) {
+            window.clearTimeout(iceRestartTimeoutRef.current)
+          }
+          iceRestartTimeoutRef.current = window.setTimeout(() => {
+            if (peerConnection.iceConnectionState === 'failed' || 
+                peerConnection.iceConnectionState === 'disconnected') {
+              console.log('🔄 ICE 连接持续失败，触发 ICE Restart')
+              handleIceRestart()
+            }
+          }, 10000) // 10秒后触发
         } else if (state === 'disconnected') {
           console.warn('⚠️ ICE 连接已断开', {
             connectionState,
@@ -1736,15 +1896,42 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             timestamp: new Date().toISOString(),
           })
           
-          // 如果连接刚建立就断开，可能是网络不稳定或 TURN 服务器问题
+          // ✅ 记录断开时间
+          if (iceDisconnectedTimeRef.current === null) {
+            iceDisconnectedTimeRef.current = Date.now()
+          }
+          
+          // ✅ 如果连接刚建立就断开，可能是网络不稳定或 TURN 服务器问题
           if (connectionState === 'connected' || connectionState === 'connecting') {
             console.warn('⚠️ ICE 断开时连接仍处于活跃状态，可能是网络波动或 TURN 服务器不稳定')
           }
+          
+          // ✅ 延迟后尝试 ICE Restart（避免短暂抖动，disconnected 持续 > 10秒才触发）
+          if (iceRestartTimeoutRef.current !== null) {
+            window.clearTimeout(iceRestartTimeoutRef.current)
+          }
+          iceRestartTimeoutRef.current = window.setTimeout(() => {
+            if (peerConnection.iceConnectionState === 'disconnected' || 
+                peerConnection.iceConnectionState === 'failed') {
+              const disconnectedDuration = iceDisconnectedTimeRef.current ? Date.now() - iceDisconnectedTimeRef.current : 0
+              if (disconnectedDuration >= 10000) {
+                console.log('🔄 ICE 连接持续断开超过 10 秒，触发 ICE Restart')
+                handleIceRestart()
+              }
+            }
+          }, 10000) // 10秒后触发
         } else if (state === 'checking') {
           console.log('🔄 ICE 连接检查中...', {
             connectionState,
             signalingState,
           })
+          
+          // ✅ 如果正在检查，清除断开计时器
+          if (iceRestartTimeoutRef.current !== null) {
+            window.clearTimeout(iceRestartTimeoutRef.current)
+            iceRestartTimeoutRef.current = null
+          }
+          iceDisconnectedTimeRef.current = null
         }
       }
 

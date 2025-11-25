@@ -1,5 +1,8 @@
 
 
+using RemotePlay.Services.Streaming.Protocol;
+using System;
+
 namespace RemotePlay.Services.Streaming.AV
 {
     /// <summary>
@@ -105,7 +108,7 @@ namespace RemotePlay.Services.Streaming.AV
                 }
 
                 byte[] unitData = new byte[unitSize];
-                Buffer.BlockCopy(decryptedData, unitOffset, unitData, 0, unitSize);
+                System.Buffer.BlockCopy(decryptedData, unitOffset, unitData, 0, unitSize);
 
                 // 发送单个 unit 作为音频帧
                 ProcessSingleUnit(frameIndex, unitData, onFrameReady);

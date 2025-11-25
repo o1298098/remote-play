@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Services.Streaming;
+using RemotePlay.Services.Streaming.Controller;
 
 namespace RemotePlay.Hubs
 {

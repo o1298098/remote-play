@@ -2,6 +2,8 @@ using RemotePlay.Models.PlayStation;
 using RemotePlay.Models.Streaming;
 using RemotePlay.Services.Streaming.Quality;
 using RemotePlay.Services.Streaming.Receiver;
+using RemotePlay.Services.Streaming.Buffer;
+using RemotePlay.Services.Streaming.Protocol;
 using RemotePlay.Utils.Crypto;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -485,9 +487,20 @@ namespace RemotePlay.Services.Streaming.AV
 
             _queue.Enqueue(packet);
 
-            if (_queue.Count > 100 && (_workerTask == null || _workerTask.IsCompleted) && _cipher != null)
+            // ✅ 当队列积压时，输出警告日志
+            int queueCount = _queue.Count;
+            if (queueCount > 200)
             {
-                _logger.LogError("❌ Queue has {Size} packets but worker not running! Starting...", _queue.Count);
+                _logger.LogError("🚨 队列严重积压: {QueueCount} 个包等待处理", queueCount);
+            }
+            else if (queueCount > 100 && queueCount % 50 == 0) // 每50个包输出一次，避免日志过多
+            {
+                _logger.LogWarning("⚠️ 队列积压: {QueueCount} 个包等待处理", queueCount);
+            }
+
+            if (queueCount > 100 && (_workerTask == null || _workerTask.IsCompleted) && _cipher != null)
+            {
+                _logger.LogError("❌ Queue has {Size} packets but worker not running! Starting...", queueCount);
                 StartWorker();
             }
         }
@@ -570,6 +583,8 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 _logger.LogInformation("✅ AVHandler2 worker started");
                 int processedCount = 0;
+                DateTime lastQueueLogTime = DateTime.UtcNow;
+                const int QUEUE_LOG_INTERVAL_SECONDS = 5; // 每5秒输出一次队列状态
 
                 while (!token.IsCancellationRequested && !_ct.IsCancellationRequested)
                 {
@@ -589,6 +604,33 @@ namespace RemotePlay.Services.Streaming.AV
                         {
                             _logger.LogError(ex, "❌ Error processing AV packet frame={Frame}", pkt.FrameIndex);
                         }
+                    }
+
+                    // ✅ 定期输出队列积压状态（每5秒）
+                    var now = DateTime.UtcNow;
+                    if ((now - lastQueueLogTime).TotalSeconds >= QUEUE_LOG_INTERVAL_SECONDS)
+                    {
+                        int queueCount = _queue.Count;
+                        var videoReorderStats = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
+                        
+                        // 根据队列大小选择日志级别
+                        if (queueCount > 200)
+                        {
+                            _logger.LogError("🚨 队列严重积压: 主队列={QueueCount}, 视频重排序队列: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker已处理={ProcessedCount}",
+                                queueCount, videoReorderStats.processed, videoReorderStats.dropped, videoReorderStats.timeoutDropped, videoReorderStats.bufferSize, processedCount);
+                        }
+                        else if (queueCount > 100)
+                        {
+                            _logger.LogWarning("⚠️ 队列积压: 主队列={QueueCount}, 视频重排序队列: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker已处理={ProcessedCount}",
+                                queueCount, videoReorderStats.processed, videoReorderStats.dropped, videoReorderStats.timeoutDropped, videoReorderStats.bufferSize, processedCount);
+                        }
+                        else if (queueCount > 0 || videoReorderStats.bufferSize > 0)
+                        {
+                            _logger.LogInformation("📊 队列状态: 主队列={QueueCount}, 视频重排序队列: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker已处理={ProcessedCount}",
+                                queueCount, videoReorderStats.processed, videoReorderStats.dropped, videoReorderStats.timeoutDropped, videoReorderStats.bufferSize, processedCount);
+                        }
+                        
+                        lastQueueLogTime = now;
                     }
 
                     if (_queue.IsEmpty)

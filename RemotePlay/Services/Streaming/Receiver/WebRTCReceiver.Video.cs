@@ -498,7 +498,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 rtpPacket.Header.SyncSource = _videoSsrc;
                 rtpPacket.Header.MarkerBit = isFrameEnd ? 1 : 0;
 
-                Buffer.BlockCopy(nalUnit, 0, rtpPacket.Payload, 0, nalUnit.Length);
+                System.Buffer.BlockCopy(nalUnit, 0, rtpPacket.Payload, 0, nalUnit.Length);
 
                 try
                 {
@@ -888,7 +888,7 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                     rtpPacket.Payload[0] = fuIndicator;
                     rtpPacket.Payload[1] = fuHeader;
-                    Buffer.BlockCopy(nalUnit, fragmentStart, rtpPacket.Payload, 2, fragmentLength);
+                    System.Buffer.BlockCopy(nalUnit, fragmentStart, rtpPacket.Payload, 2, fragmentLength);
 
                     try
                     {
@@ -919,7 +919,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                     var payloadOnly = new byte[2 + fragmentLength];
                                     payloadOnly[0] = fuIndicator;
                                     payloadOnly[1] = fuHeader;
-                                    Buffer.BlockCopy(nalUnit, fragmentStart, payloadOnly, 2, fragmentLength);
+                                    System.Buffer.BlockCopy(nalUnit, fragmentStart, payloadOnly, 2, fragmentLength);
 
                                     int markerBit = rtpPacket.Header.MarkerBit;
                                     // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
