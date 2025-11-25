@@ -26,7 +26,10 @@ build-remoteplay:
     - |
       set -e
       cd RemotePlay
-      docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+      # 安装 QEMU 以支持跨平台构建
+      apk add --no-cache qemu-user-static
+      # 创建或使用多架构 builder
+      docker buildx create --use --name multiarch-builder --driver docker-container --driver-opt image=moby/buildkit:latest || docker buildx use multiarch-builder
       docker buildx inspect multiarch-builder --bootstrap
       TAG_ARGS="-t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$BRANCH_TAG"
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
@@ -61,7 +64,10 @@ build-dbtool:
   script:
     - |
       set -e
-      docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+      # 安装 QEMU 以支持跨平台构建
+      apk add --no-cache qemu-user-static
+      # 创建或使用多架构 builder
+      docker buildx create --use --name multiarch-builder --driver docker-container --driver-opt image=moby/buildkit:latest || docker buildx use multiarch-builder
       docker buildx inspect multiarch-builder --bootstrap
       TAG_ARGS="-t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$BRANCH_TAG"
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
@@ -99,7 +105,10 @@ build-web:
     - |
       set -e
       cd RemotePlay.Web
-      docker buildx create --use --name multiarch-builder || docker buildx use multiarch-builder
+      # 安装 QEMU 以支持跨平台构建
+      apk add --no-cache qemu-user-static
+      # 创建或使用多架构 builder
+      docker buildx create --use --name multiarch-builder --driver docker-container --driver-opt image=moby/buildkit:latest || docker buildx use multiarch-builder
       docker buildx inspect multiarch-builder --bootstrap
       TAG_ARGS="-t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:$BRANCH_TAG"
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then

@@ -4,7 +4,7 @@ import { useDevice } from '@/hooks/use-device'
 import { controllerService } from '@/service/controller.service'
 import { getStreamingButtonName } from '@/types/controller-mapping'
 import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown } from 'lucide-react'
-// PNG 图标导入
+import { AXIS_DEADZONE, MOBILE_SEND_INTERVAL_MS, MAX_HEARTBEAT_INTERVAL_MS } from '@/hooks/use-streaming-connection/constants'
 import plainL2Png from '@/assets/plain-L2.png'
 import plainL1Png from '@/assets/plain-L1.png'
 import plainR2Png from '@/assets/plain-R2.png'
@@ -21,12 +21,11 @@ import sharePng from '@/assets/plain-small-share.png'
 import optionsPng from '@/assets/plain-small-option.png'
 import psPng from '@/assets/outline-PS.png'
 
-// ==================== 类型定义 ====================
 interface VirtualJoystickState {
-  x: number // 响应曲线处理后的值（-1 到 1），用于发送
-  y: number // 响应曲线处理后的值（-1 到 1），用于发送
-  displayX: number // 实际物理移动距离（像素），用于显示
-  displayY: number // 实际物理移动距离（像素），用于显示
+  x: number
+  y: number
+  displayX: number
+  displayY: number
   isActive: boolean
   touchX: number
   touchY: number
@@ -48,19 +47,40 @@ interface ButtonConfig {
   style: React.CSSProperties
 }
 
-// ==================== 常量配置 ====================
 const STICK_CONFIG = {
   radius: 60,
-  maxDistance: 15, // 响应距离：手指只需移动15px就能达到最大值（用于计算发送值）
-  displayMaxDistance: 50, // 显示距离：摇杆视觉显示的最大移动距离（用于视觉反馈）
-  throttleMs: 16, // 降低到 16ms (约 60fps) 以获得更流畅的响应
-  responseCurve: 0.25, // 极其激进的响应曲线，极小移动就有高响应
+  maxDistance: 15,
+  displayMaxDistance: 50,
+  responseCurve: 0.25,
 } as const
 
 const BUTTON_FEEDBACK = {
   duration: 200,
   filter: 'brightness(1.3) saturate(3) hue-rotate(200deg) drop-shadow(0 0 15px rgba(50, 150, 255, 1))',
 } as const
+
+// 震动反馈配置
+const VIBRATION_PATTERNS: Record<'tap' | 'press' | 'release', number[]> = {
+  tap: [10], // 短按：10ms 震动
+  press: [15], // 长按开始：15ms 震动
+  release: [8], // 释放：8ms 震动
+}
+
+/**
+ * 触发手机震动反馈
+ * @param pattern 震动模式数组，例如 [10, 50, 10] 表示震动10ms，暂停50ms，再震动10ms
+ */
+function vibrate(pattern: number | number[]): void {
+  if (typeof window === 'undefined' || !navigator.vibrate) {
+    return
+  }
+  
+  try {
+    navigator.vibrate(pattern)
+  } catch (error) {
+    // 忽略震动错误（某些浏览器可能不支持）
+  }
+}
 
 const JOYSTICK_AREA = {
   left: { minX: 0.05, maxX: 0.4 },
@@ -69,7 +89,6 @@ const JOYSTICK_AREA = {
   buttonExclude: { width: 250, height: 400 },
 } as const
 
-// ==================== 按钮配置 ====================
 const LEFT_BUTTONS: ButtonConfig[] = [
   {
     name: 'L2',
@@ -104,8 +123,7 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       top: '130%',
       left: '140%',
       transform: 'translateX(-50%)',
-      // UP: viewBox 17×23，保持高度 55px，宽度按比例
-      width: `${(55 * 17) / 23}px`, // ≈ 40.65px
+      width: `${(55 * 17) / 23}px`,
       height: '55px',
     },
   },
@@ -117,9 +135,8 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       left: '60%',
       top: '200%',
       transform: 'translateY(-50%)',
-      // LEFT: viewBox 23×17，保持宽度 55px，高度按比例
       width: '55px',
-      height: `${(55 * 17) / 23}px`, // ≈ 40.65px
+      height: `${(55 * 17) / 23}px`,
     },
   },
   {
@@ -130,9 +147,8 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       left: '160%',
       top: '200%',
       transform: 'translateY(-50%)',
-      // RIGHT: viewBox 23×17，保持宽度 55px，高度按比例
       width: '55px',
-      height: `${(55 * 17) / 23}px`, // ≈ 40.65px
+      height: `${(55 * 17) / 23}px`,
     },
   },
   {
@@ -143,8 +159,7 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       top: '210%',
       left: '140%',
       transform: 'translateX(-50%)',
-      // DOWN: viewBox 17×23，保持高度 55px，宽度按比例
-      width: `${(55 * 17) / 23}px`, // ≈ 40.65px
+      width: `${(55 * 17) / 23}px`,
       height: '55px',
     },
   },
@@ -256,16 +271,94 @@ const BOTTOM_BUTTONS: ButtonConfig[] = [
   },
 ]
 
-// ==================== 可复用组件 ====================
 interface VirtualButtonProps {
   config: ButtonConfig
   isActive: boolean
-  onClick: (buttonName: string) => void
+  onClick: (buttonName: string, action: 'press' | 'release' | 'tap') => void
 }
+
+const LONG_PRESS_DELAY_MS = 200 // 长按检测延迟（毫秒）
 
 function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
   const isBottomButton = config.name === 'PS' || config.name === 'SHARE' || config.name === 'OPTIONS'
   const IconComponent = typeof config.icon === 'string' ? null : config.icon
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isLongPressingRef = useRef(false)
+  const touchStartTimeRef = useRef(0)
+  
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    touchStartTimeRef.current = Date.now()
+    isLongPressingRef.current = false
+    
+    // 清除可能存在的定时器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    
+    // 设置长按检测定时器
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressingRef.current = true
+      onClick(config.name, 'press')
+    }, LONG_PRESS_DELAY_MS)
+  }, [config.name, onClick])
+  
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // 清除长按定时器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    
+    // 如果已经触发了长按，发送释放事件
+    if (isLongPressingRef.current) {
+      onClick(config.name, 'release')
+      isLongPressingRef.current = false
+    } else {
+      // 短按，发送点击事件
+      const pressDuration = Date.now() - touchStartTimeRef.current
+      if (pressDuration < LONG_PRESS_DELAY_MS) {
+        onClick(config.name, 'tap')
+      }
+    }
+  }, [config.name, onClick])
+  
+  const handleTouchCancel = useCallback((e: React.TouchEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // 清除长按定时器
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    
+    // 如果正在长按，发送释放事件
+    if (isLongPressingRef.current) {
+      onClick(config.name, 'release')
+      isLongPressingRef.current = false
+    }
+  }, [config.name, onClick])
+  
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+  
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current)
+      }
+    }
+  }, [])
   
   return (
     <button
@@ -274,12 +367,14 @@ function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
       }`}
       style={{
         touchAction: 'manipulation',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
         ...config.style,
       }}
-      onTouchStart={(e) => {
-        e.stopPropagation()
-        onClick(config.name)
-      }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
+      onContextMenu={handleContextMenu}
     >
       {IconComponent ? (
         <IconComponent
@@ -306,6 +401,7 @@ function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
             WebkitFontSmoothing: 'antialiased',
             MozOsxFontSmoothing: 'grayscale',
           }}
+          draggable={false}
         />
       )}
     </button>
@@ -321,7 +417,6 @@ interface VirtualJoystickProps {
 function VirtualJoystick({ stick, radius, maxDistance }: VirtualJoystickProps) {
   if (!stick.isActive) return null
 
-  // 使用实际的物理移动距离来显示，限制在显示范围内
   const displayX = Math.max(-maxDistance, Math.min(maxDistance, stick.displayX || 0))
   const displayY = Math.max(-maxDistance, Math.min(maxDistance, stick.displayY || 0))
 
@@ -340,7 +435,7 @@ function VirtualJoystick({ stick, radius, maxDistance }: VirtualJoystickProps) {
           className="w-12 h-12 rounded-full bg-white/60 border-2 border-white"
           style={{
             transform: `translate(${displayX}px, ${displayY}px)`,
-            transition: 'transform 0.05s linear', // 快速响应，50ms 动画
+            transition: 'transform 0.05s linear',
           }}
         />
       </div>
@@ -348,11 +443,6 @@ function VirtualJoystick({ stick, radius, maxDistance }: VirtualJoystickProps) {
   )
 }
 
-// ==================== 主组件 ====================
-/**
- * 移动端虚拟控制器组件
- * 完全复刻 PlayStation Remote Play 虚拟按键布局
- */
 export function MobileVirtualController({
   sessionId,
   isVisible,
@@ -389,37 +479,28 @@ export function MobileVirtualController({
     right: null,
   })
   const bottomBarToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // 使用 ref 存储最新的摇杆值，避免闭包陷阱
   const sticksValueRef = useRef<{ left: { x: number; y: number }; right: { x: number; y: number } }>({
     left: { x: 0, y: 0 },
     right: { x: 0, y: 0 },
   })
-  // 使用 ref 存储摇杆的初始触摸位置，避免闭包陷阱
   const stickInitialPosRef = useRef<{ left: { x: number; y: number } | null; right: { x: number; y: number } | null }>({
     left: null,
     right: null,
   })
-
-  // ==================== 摇杆处理逻辑 ====================
   const calculateStickValue = useCallback(
     (touchX: number, touchY: number, initialX: number, initialY: number) => {
       const dx = touchX - initialX
       const dy = touchY - initialY
       const distance = Math.sqrt(dx * dx + dy * dy)
 
-      // 计算实际的物理移动距离（用于显示）- 使用更大的显示范围
       const clampedDisplayDistance = Math.min(distance, STICK_CONFIG.displayMaxDistance)
       const displayX = distance > 0 ? (dx / distance) * clampedDisplayDistance : 0
       const displayY = distance > 0 ? (dy / distance) * clampedDisplayDistance : 0
 
-      // 计算响应曲线处理后的值（用于发送）- 使用较小的响应范围以提高灵敏度
       let x = 0
       let y = 0
       if (distance > 0) {
-        // 使用非常激进的响应曲线：极小移动就能达到高值
         const normalizedDistance = Math.min(distance / STICK_CONFIG.maxDistance, 1)
-        
-        // 使用指数 0.25 的响应曲线，让摇杆极其灵敏
         const responseValue = Math.pow(normalizedDistance, STICK_CONFIG.responseCurve)
         
         x = (dx / distance) * responseValue
@@ -436,44 +517,68 @@ export function MobileVirtualController({
     []
   )
 
-  const sendSticksThrottled = useCallback(
-    (() => {
-      let lastSendTime = 0
-      let pendingFrame: number | null = null
-      return (leftX: number, leftY: number, rightX: number, rightY: number) => {
-        // 更新 ref 中的最新值
-        sticksValueRef.current.left = { x: leftX, y: leftY }
-        sticksValueRef.current.right = { x: rightX, y: rightY }
+  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; timestamp: number }>({
+    leftX: 0,
+    leftY: 0,
+    rightX: 0,
+    rightY: 0,
+    timestamp: 0,
+  })
+  const stickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-        const now = Date.now()
-        if (now - lastSendTime >= STICK_CONFIG.throttleMs && sessionId) {
-          lastSendTime = now
-          // 取消待处理的帧
-          if (pendingFrame !== null) {
-            cancelAnimationFrame(pendingFrame)
-            pendingFrame = null
-          }
-          controllerService.sendSticks(leftX, leftY, rightX, rightY).catch(() => {
-            // 静默处理错误
-          })
-        } else if (sessionId && pendingFrame === null) {
-          // 如果还在节流期内，使用 requestAnimationFrame 确保在下一帧发送
-          pendingFrame = requestAnimationFrame(() => {
-            pendingFrame = null
-            const current = sticksValueRef.current
-            const now = Date.now()
-            if (now - lastSendTime >= STICK_CONFIG.throttleMs) {
-              lastSendTime = now
-              controllerService.sendSticks(current.left.x, current.left.y, current.right.x, current.right.y).catch(() => {
-            // 静默处理错误
-              })
-            }
-          })
+  const updateSticksValue = useCallback(
+    (leftX: number, leftY: number, rightX: number, rightY: number) => {
+      sticksValueRef.current.left = { x: leftX, y: leftY }
+      sticksValueRef.current.right = { x: rightX, y: rightY }
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!sessionId) {
+      if (stickIntervalRef.current !== null) {
+        clearInterval(stickIntervalRef.current)
+        stickIntervalRef.current = null
+      }
+      return
+    }
+
+    const sendLatest = () => {
+      const now = performance.now()
+      const current = sticksValueRef.current
+      const lastSent = lastSentRef.current
+      
+      const stickDiff =
+        Math.abs(current.left.x - lastSent.leftX) +
+        Math.abs(current.left.y - lastSent.leftY) +
+        Math.abs(current.right.x - lastSent.rightX) +
+        Math.abs(current.right.y - lastSent.rightY)
+      
+      const shouldHeartbeat = now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS
+      const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
+
+      if (shouldSendSticks) {
+        controllerService.sendSticks(current.left.x, current.left.y, current.right.x, current.right.y).catch(() => {})
+        lastSentRef.current = {
+          leftX: current.left.x,
+          leftY: current.left.y,
+          rightX: current.right.x,
+          rightY: current.right.y,
+          timestamp: now,
         }
       }
-    })(),
-    [sessionId]
-  )
+    }
+
+    sendLatest()
+    stickIntervalRef.current = window.setInterval(sendLatest, MOBILE_SEND_INTERVAL_MS)
+
+    return () => {
+      if (stickIntervalRef.current !== null) {
+        clearInterval(stickIntervalRef.current)
+        stickIntervalRef.current = null
+      }
+    }
+  }, [sessionId])
 
   const updateStick = useCallback(
     (
@@ -500,17 +605,16 @@ export function MobileVirtualController({
           touchX: prev.touchX,
           touchY: prev.touchY,
         }
-        // 使用 ref 获取最新的另一个摇杆值，避免闭包陷阱
         const otherStick = stickType === 'left' ? sticksValueRef.current.right : sticksValueRef.current.left
         if (stickType === 'left') {
-          sendSticksThrottled(x, y, otherStick.x, otherStick.y)
+          updateSticksValue(x, y, otherStick.x, otherStick.y)
         } else {
-          sendSticksThrottled(otherStick.x, otherStick.y, x, y)
+          updateSticksValue(otherStick.x, otherStick.y, x, y)
         }
         return newState
       })
     },
-    [calculateStickValue, sendSticksThrottled]
+    [calculateStickValue, updateSticksValue]
   )
 
   const handleGlobalTouchStart = useCallback(
@@ -523,7 +627,6 @@ export function MobileVirtualController({
         const viewportWidth = window.innerWidth
         const viewportHeight = window.innerHeight
 
-        // 检查触摸目标是否是按钮元素
         const target = e.target as HTMLElement
         if (
           target &&
@@ -534,7 +637,6 @@ export function MobileVirtualController({
           continue
         }
 
-        // 排除按钮区域
         const isLeftButtonArea =
           touchX < JOYSTICK_AREA.buttonExclude.width && touchY < JOYSTICK_AREA.buttonExclude.height
         const isRightButtonArea =
@@ -545,7 +647,6 @@ export function MobileVirtualController({
           continue
         }
 
-        // 判断摇杆区域
         const isLeftArea =
           touchX < viewportWidth * JOYSTICK_AREA.left.maxX &&
           touchX > viewportWidth * JOYSTICK_AREA.left.minX
@@ -576,21 +677,17 @@ export function MobileVirtualController({
     (e: TouchEvent) => {
       if (!isMobile || !sessionId) return
 
-      // 处理左摇杆
       if (activeTouchIdRef.current.left !== null && stickInitialPosRef.current.left) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.left)
         if (touch) {
-          // 使用 ref 获取初始位置，避免依赖过时的状态
           const initialPos = stickInitialPosRef.current.left
           updateStick('left', touch, initialPos.x, initialPos.y)
         }
       }
 
-      // 处理右摇杆
       if (activeTouchIdRef.current.right !== null && stickInitialPosRef.current.right) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.right)
         if (touch) {
-          // 使用 ref 获取初始位置，避免依赖过时的状态
           const initialPos = stickInitialPosRef.current.right
           updateStick('right', touch, initialPos.x, initialPos.y)
         }
@@ -603,7 +700,6 @@ export function MobileVirtualController({
     (e: TouchEvent) => {
       if (!isMobile) return
 
-      // 检查左摇杆
       if (activeTouchIdRef.current.left !== null) {
         const touchStillActive = Array.from(e.touches).some(
           (t) => t.identifier === activeTouchIdRef.current.left
@@ -611,20 +707,11 @@ export function MobileVirtualController({
         if (!touchStillActive) {
           activeTouchIdRef.current.left = null
           stickInitialPosRef.current.left = null
-          setLeftStick(() => {
-            if (sessionId) {
-              // 使用 ref 获取最新的右摇杆值
-              const rightStick = sticksValueRef.current.right
-              sendSticksThrottled(0, 0, rightStick.x, rightStick.y)
-            }
-            return { x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 }
-          })
-          // 更新 ref
           sticksValueRef.current.left = { x: 0, y: 0 }
+          setLeftStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 })
         }
       }
 
-      // 检查右摇杆
       if (activeTouchIdRef.current.right !== null) {
         const touchStillActive = Array.from(e.touches).some(
           (t) => t.identifier === activeTouchIdRef.current.right
@@ -632,23 +719,14 @@ export function MobileVirtualController({
         if (!touchStillActive) {
           activeTouchIdRef.current.right = null
           stickInitialPosRef.current.right = null
-          setRightStick(() => {
-            if (sessionId) {
-              // 使用 ref 获取最新的左摇杆值
-              const leftStick = sticksValueRef.current.left
-              sendSticksThrottled(leftStick.x, leftStick.y, 0, 0)
-            }
-            return { x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 }
-          })
-          // 更新 ref
           sticksValueRef.current.right = { x: 0, y: 0 }
+          setRightStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 })
         }
       }
     },
-    [isMobile, sessionId, leftStick, rightStick, sendSticksThrottled]
+    [isMobile]
   )
 
-  // 注册全局触摸事件
   useEffect(() => {
     if (typeof window === 'undefined' || !isMobile || !isVisible) return
 
@@ -663,33 +741,57 @@ export function MobileVirtualController({
     }
   }, [isMobile, isVisible, handleGlobalTouchStart, handleGlobalTouchMove, handleGlobalTouchEnd])
 
-  // ==================== 按钮处理逻辑 ====================
+  const activeButtonTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  
   const handleButtonClick = useCallback(
-    async (buttonName: string) => {
+    async (buttonName: string, action: 'press' | 'release' | 'tap' = 'tap') => {
       if (!sessionId) return
 
-      // 设置按钮激活状态（视觉反馈）
-      setActiveButton(buttonName)
-      setTimeout(() => {
+      // 清除之前的定时器
+      if (activeButtonTimeoutRef.current) {
+        clearTimeout(activeButtonTimeoutRef.current)
+        activeButtonTimeoutRef.current = null
+      }
+
+      // 触发震动反馈
+      vibrate(VIBRATION_PATTERNS[action])
+
+      // 对于 press 和 tap，显示按钮反馈
+      if (action === 'press') {
+        // 长按：保持激活状态直到释放
+        setActiveButton(buttonName)
+      } else if (action === 'tap') {
+        // 短按：短暂显示反馈
+        setActiveButton(buttonName)
+        activeButtonTimeoutRef.current = setTimeout(() => {
+          setActiveButton(null)
+        }, BUTTON_FEEDBACK.duration)
+      } else if (action === 'release') {
+        // 释放：清除激活状态
         setActiveButton(null)
-      }, BUTTON_FEEDBACK.duration)
+      }
 
       try {
         const streamingButtonName = getStreamingButtonName(buttonName as any)
-        await controllerService.sendButton(streamingButtonName, 'tap', 50)
-      } catch {
-        // 静默处理错误
-      }
+        await controllerService.sendButton(streamingButtonName, action, action === 'tap' ? 50 : 0)
+      } catch {}
     },
     [sessionId]
   )
+  
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (activeButtonTimeoutRef.current) {
+        clearTimeout(activeButtonTimeoutRef.current)
+      }
+    }
+  }, [])
 
-  // ==================== 底部栏显示/隐藏逻辑 ====================
   const handleBottomBarToggle = useCallback(() => {
     setIsBottomBarVisible((prev) => !prev)
   }, [])
 
-  // 自动隐藏底部栏（3秒后）
   useEffect(() => {
     if (isBottomBarVisible) {
       if (bottomBarToggleTimeoutRef.current) {
@@ -706,7 +808,6 @@ export function MobileVirtualController({
     }
   }, [isBottomBarVisible])
 
-  // 点击底部栏时重置自动隐藏定时器
   const handleBottomBarInteraction = useCallback(() => {
     if (isBottomBarVisible && bottomBarToggleTimeoutRef.current) {
       clearTimeout(bottomBarToggleTimeoutRef.current)
@@ -722,7 +823,6 @@ export function MobileVirtualController({
 
   return (
     <div className="fixed inset-0 pointer-events-none z-[100]" style={{ touchAction: 'none' }}>
-      {/* 摇杆 */}
       <VirtualJoystick
         stick={leftStick}
         radius={STICK_CONFIG.radius}
@@ -734,7 +834,6 @@ export function MobileVirtualController({
         maxDistance={STICK_CONFIG.displayMaxDistance}
       />
 
-      {/* 左侧按钮区域 */}
       <div className="absolute pointer-events-auto" style={{ top: '0', left: '16px' }}>
         {LEFT_BUTTONS.map((config) => (
           <VirtualButton
@@ -745,7 +844,6 @@ export function MobileVirtualController({
           />
         ))}
 
-        {/* D-pad */}
         <div
           className="relative pointer-events-auto"
           style={{
@@ -765,7 +863,6 @@ export function MobileVirtualController({
         </div>
       </div>
 
-      {/* 右侧按钮区域 */}
       <div className="absolute pointer-events-auto" style={{ top: '0', right: '16px' }}>
         {RIGHT_BUTTONS.map((config) => (
           <VirtualButton
@@ -776,7 +873,6 @@ export function MobileVirtualController({
           />
         ))}
 
-        {/* 动作按钮 */}
         <div
           className="relative pointer-events-auto"
           style={{
@@ -796,7 +892,6 @@ export function MobileVirtualController({
         </div>
       </div>
 
-      {/* 触发图标按钮 - 右下角，始终显示 */}
       <button
         onClick={(e) => {
           e.preventDefault()
@@ -819,7 +914,6 @@ export function MobileVirtualController({
         )}
       </button>
 
-      {/* 底部栏按钮 */}
       <div
         className={`fixed bottom-0 left-0 right-0 z-[100] pointer-events-auto transition-transform duration-300 ease-out ${
           isBottomBarVisible ? 'translate-y-0' : 'translate-y-full'
@@ -829,9 +923,7 @@ export function MobileVirtualController({
       >
         <div className="bg-black/30 backdrop-blur-sm border-t border-white/20 px-4 py-1.5">
           <div className="flex items-center justify-between">
-          {/* 左侧：原有底栏按键 */}
           <div className="flex items-center gap-3">
-            {/* 返回按钮 */}
             {onBack && (
               <button
                 onClick={(e) => {
@@ -850,7 +942,6 @@ export function MobileVirtualController({
               </button>
             )}
 
-            {/* 刷新按钮 */}
             {onRefresh && (
               <button
                 onClick={(e) => {
@@ -869,7 +960,6 @@ export function MobileVirtualController({
               </button>
             )}
 
-            {/* 统计开关 */}
             {onStatsToggle && (
               <button
                 onClick={(e) => {
@@ -895,7 +985,6 @@ export function MobileVirtualController({
             )}
           </div>
 
-            {/* 中间：PS、Share、Options 按键 */}
             <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-6">
               {BOTTOM_BUTTONS.map((config) => (
                 <VirtualButton
@@ -907,7 +996,6 @@ export function MobileVirtualController({
               ))}
             </div>
 
-            {/* 右侧：占位，保持布局平衡 */}
             <div className="flex items-center gap-3" style={{ width: '120px' }}></div>
           </div>
         </div>

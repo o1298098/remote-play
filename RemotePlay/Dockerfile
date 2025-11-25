@@ -4,13 +4,26 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER root
 
-# 安装 ffmpeg
+# 安装 ffmpeg - 支持多架构
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y wget xz-utils \
- && wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
- && tar -xJf ffmpeg-release-amd64-static.tar.xz \
- && cp ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ \
+ && if [ "$TARGETARCH" = "amd64" ]; then \
+      wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -O ffmpeg.tar.xz && \
+      tar -xJf ffmpeg.tar.xz && \
+      cp ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ && \
+      rm -rf ffmpeg-*-amd64-static; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+      wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz -O ffmpeg.tar.xz && \
+      tar -xJf ffmpeg.tar.xz && \
+      cp ffmpeg-*-arm64-static/ffmpeg /usr/local/bin/ && \
+      rm -rf ffmpeg-*-arm64-static; \
+    else \
+      echo "Unsupported architecture: $TARGETARCH, falling back to apt-get" && \
+      apt-get install -y ffmpeg; \
+    fi \
  && chmod +x /usr/local/bin/ffmpeg \
- && rm -rf /var/lib/apt/lists/* ffmpeg-release-amd64-static.tar.xz ffmpeg-*-amd64-static
+ && rm -rf /var/lib/apt/lists/* ffmpeg.tar.xz \
+ && ffmpeg -version
 
 WORKDIR /app
 EXPOSE 8080
