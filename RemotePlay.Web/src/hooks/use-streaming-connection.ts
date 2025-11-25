@@ -1177,7 +1177,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           }
           
           // ✅ 监听 keepalive 消息（可选，用于确认连接活跃）
-          channel.onmessage = (event) => {
+          channel.onmessage = (_event) => {
             // keepalive 消息是 1 字节的 0x00（由后端自动发送，前端只需确认收到）
             console.debug('📥 收到 Keepalive 消息')
           }
