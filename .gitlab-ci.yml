@@ -26,8 +26,8 @@ build-remoteplay:
     - |
       set -e
       cd RemotePlay
-      # 安装 QEMU 以支持跨平台构建
-      apk add --no-cache qemu-user-static
+      # 设置 QEMU 以支持跨平台构建
+      docker run --rm --privileged tonistiigi/binfmt --install all
       # 创建或使用多架构 builder
       docker buildx create --use --name multiarch-builder --driver docker-container --driver-opt image=moby/buildkit:latest || docker buildx use multiarch-builder
       docker buildx inspect multiarch-builder --bootstrap
@@ -64,8 +64,8 @@ build-dbtool:
   script:
     - |
       set -e
-      # 安装 QEMU 以支持跨平台构建
-      apk add --no-cache qemu-user-static
+      # 设置 QEMU 以支持跨平台构建
+      docker run --rm --privileged tonistiigi/binfmt --install all
       # 创建或使用多架构 builder
       docker buildx create --use --name multiarch-builder --driver docker-container --driver-opt image=moby/buildkit:latest || docker buildx use multiarch-builder
       docker buildx inspect multiarch-builder --bootstrap
@@ -105,8 +105,8 @@ build-web:
     - |
       set -e
       cd RemotePlay.Web
-      # 安装 QEMU 以支持跨平台构建
-      apk add --no-cache qemu-user-static
+      # 设置 QEMU 以支持跨平台构建
+      docker run --rm --privileged tonistiigi/binfmt --install all
       # 创建或使用多架构 builder
       docker buildx create --use --name multiarch-builder --driver docker-container --driver-opt image=moby/buildkit:latest || docker buildx use multiarch-builder
       docker buildx inspect multiarch-builder --bootstrap

@@ -43,10 +43,11 @@ jobs:
           OWNER_LC="$(echo "${OWNER_LC}" | tr '[:upper:]' '[:lower:]')"
           echo "OWNER_LC=${OWNER_LC}" >> "$GITHUB_ENV"
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
 
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push'
