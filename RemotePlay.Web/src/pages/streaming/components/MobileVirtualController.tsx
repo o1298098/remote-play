@@ -4,7 +4,9 @@ import { useDevice } from '@/hooks/use-device'
 import { controllerService } from '@/service/controller.service'
 import { getStreamingButtonName } from '@/types/controller-mapping'
 import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown } from 'lucide-react'
-import { AXIS_DEADZONE, MOBILE_SEND_INTERVAL_MS, MAX_HEARTBEAT_INTERVAL_MS } from '@/hooks/use-streaming-connection/constants'
+import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, TRIGGER_DEADZONE, SEND_INTERVAL_MS } from '@/hooks/use-streaming-connection/constants'
+import { useStickInputState } from '@/hooks/use-streaming-connection/stick-input-state'
+import { createKeyboardHandler } from '@/utils/keyboard-mapping'
 import plainL2Png from '@/assets/plain-L2.png'
 import plainL1Png from '@/assets/plain-L1.png'
 import plainR2Png from '@/assets/plain-R2.png'
@@ -20,16 +22,6 @@ import directionDownPng from '@/assets/direction-down.png'
 import sharePng from '@/assets/plain-small-share.png'
 import optionsPng from '@/assets/plain-small-option.png'
 import psPng from '@/assets/outline-PS.png'
-
-interface VirtualJoystickState {
-  x: number
-  y: number
-  displayX: number
-  displayY: number
-  isActive: boolean
-  touchX: number
-  touchY: number
-}
 
 interface MobileVirtualControllerProps {
   sessionId: string | null
@@ -49,9 +41,12 @@ interface ButtonConfig {
 
 const STICK_CONFIG = {
   radius: 60,
-  maxDistance: 15,
-  displayMaxDistance: 50,
-  responseCurve: 0.25,
+  // 增大移动范围，使摇杆更灵活（真实摇杆通常有更大的物理移动范围）
+  // 80像素约等于20-25mm，接近真实摇杆的物理移动范围
+  maxDistance: 80, // 从15增加到80，允许更大的移动范围，提供更精确的控制
+  // 增大视觉反馈范围，让用户看到更大的移动范围
+  displayMaxDistance: 60, // 从50增加到60，提供更好的视觉反馈
+  responseCurve: 0.95,
 } as const
 
 const BUTTON_FEEDBACK = {
@@ -419,33 +414,49 @@ function VirtualButton({ config, isActive, onClick }: VirtualButtonProps) {
 }
 
 interface VirtualJoystickProps {
-  stick: VirtualJoystickState
+  isActive: boolean
+  position: { x: number; y: number }
   radius: number
   maxDistance: number
+  containerRef?: React.RefObject<HTMLDivElement>
+  innerCircleRef?: React.RefObject<HTMLDivElement>
 }
 
-function VirtualJoystick({ stick, radius, maxDistance }: VirtualJoystickProps) {
-  if (!stick.isActive) return null
+function VirtualJoystick({ isActive, position, radius, maxDistance: _maxDistance, containerRef, innerCircleRef }: VirtualJoystickProps) {
+  const defaultContainerRef = useRef<HTMLDivElement>(null)
+  const defaultInnerRef = useRef<HTMLDivElement>(null)
+  const actualContainerRef = containerRef || defaultContainerRef
+  const actualInnerRef = innerCircleRef || defaultInnerRef
 
-  const displayX = Math.max(-maxDistance, Math.min(maxDistance, stick.displayX || 0))
-  const displayY = Math.max(-maxDistance, Math.min(maxDistance, stick.displayY || 0))
+  // 使用 useEffect 来同步容器位置（只在触摸开始/结束时更新）
+  useEffect(() => {
+    if (!isActive || !actualContainerRef.current) {
+      return
+    }
+
+    // 只在触摸开始或位置变化时更新容器位置
+    actualContainerRef.current.style.left = `${position.x - radius}px`
+    actualContainerRef.current.style.top = `${position.y - radius}px`
+  }, [isActive, position.x, position.y, radius, actualContainerRef])
+
+  if (!isActive) return null
 
   return (
     <div
+      ref={actualContainerRef}
       className="absolute pointer-events-none"
       style={{
-        left: `${stick.touchX - radius}px`,
-        top: `${stick.touchY - radius}px`,
         width: `${radius * 2}px`,
         height: `${radius * 2}px`,
       }}
     >
       <div className="w-full h-full rounded-full bg-white/20 border-2 border-white/40 flex items-center justify-center">
         <div
+          ref={actualInnerRef}
           className="w-12 h-12 rounded-full bg-white/60 border-2 border-white"
           style={{
-            transform: `translate(${displayX}px, ${displayY}px)`,
-            transition: 'transform 0.05s linear',
+            willChange: 'transform',
+            transform: `translate(0px, 0px)`, // 初始位置，实际位置由直接 DOM 操作控制
           }}
         />
       </div>
@@ -463,58 +474,77 @@ export function MobileVirtualController({
 }: MobileVirtualControllerProps) {
   const { t } = useTranslation()
   const { isMobile } = useDevice()
-  const [leftStick, setLeftStick] = useState<VirtualJoystickState>({
-    x: 0,
-    y: 0,
-    displayX: 0,
-    displayY: 0,
-    isActive: false,
-    touchX: 0,
-    touchY: 0,
-  })
-  const [rightStick, setRightStick] = useState<VirtualJoystickState>({
-    x: 0,
-    y: 0,
-    displayX: 0,
-    displayY: 0,
-    isActive: false,
-    touchX: 0,
-    touchY: 0,
-  })
+  
+  // 使用与PC端相同的摇杆输入状态管理
+  const {
+    getNormalizedState,
+    handleGamepadAxis,
+    setKeyboardLeftStick,
+    reset: resetStickInput,
+  } = useStickInputState()
+  
+  const keyboardCleanupRef = useRef<(() => void) | null>(null)
+  
+  const [leftStickActive, setLeftStickActive] = useState(false)
+  const [rightStickActive, setRightStickActive] = useState(false)
+  const [leftStickPosition, setLeftStickPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [rightStickPosition, setRightStickPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  
   const [activeButton, setActiveButton] = useState<string | null>(null)
   const [isBottomBarVisible, setIsBottomBarVisible] = useState(false)
+
+  // 使用 ref 存储摇杆数据，touchmove 时只更新 ref，不触发 React 重渲染
+  const leftStickDataRef = useRef<{ x: number; y: number; displayX: number; displayY: number }>({
+    x: 0,
+    y: 0,
+    displayX: 0,
+    displayY: 0,
+  })
+  const rightStickDataRef = useRef<{ x: number; y: number; displayX: number; displayY: number }>({
+    x: 0,
+    y: 0,
+    displayX: 0,
+    displayY: 0,
+  })
 
   const activeTouchIdRef = useRef<{ left: number | null; right: number | null }>({
     left: null,
     right: null,
   })
   const bottomBarToggleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sticksValueRef = useRef<{ left: { x: number; y: number }; right: { x: number; y: number } }>({
-    left: { x: 0, y: 0 },
-    right: { x: 0, y: 0 },
-  })
+  const leftStickInnerRef = useRef<HTMLDivElement>(null)
+  const rightStickInnerRef = useRef<HTMLDivElement>(null)
+  const leftStickContainerRef = useRef<HTMLDivElement>(null)
+  const rightStickContainerRef = useRef<HTMLDivElement>(null)
   const stickInitialPosRef = useRef<{ left: { x: number; y: number } | null; right: { x: number; y: number } | null }>({
     left: null,
     right: null,
   })
+  // 计算原始摇杆值（用于显示和输入）
   const calculateStickValue = useCallback(
     (touchX: number, touchY: number, initialX: number, initialY: number) => {
       const dx = touchX - initialX
       const dy = touchY - initialY
       const distance = Math.sqrt(dx * dx + dy * dy)
 
+      // 视觉反馈：限制显示范围，但允许更大的实际输入范围
       const clampedDisplayDistance = Math.min(distance, STICK_CONFIG.displayMaxDistance)
       const displayX = distance > 0 ? (dx / distance) * clampedDisplayDistance : 0
       const displayY = distance > 0 ? (dy / distance) * clampedDisplayDistance : 0
 
+      // 计算原始摇杆值（-1 到 1），这个值会被传递给 handleGamepadAxis 进行归一化处理
+      // 真实摇杆是线性的：移动距离与输出值成正比
+      // 距离0% → 值0，距离50% → 值0.5，距离100% → 值1.0
       let x = 0
       let y = 0
       if (distance > 0) {
+        // 归一化距离（0 到 1），基于最大移动范围
+        // 完全线性：distance / maxDistance 直接作为输出值
         const normalizedDistance = Math.min(distance / STICK_CONFIG.maxDistance, 1)
-        const responseValue = Math.pow(normalizedDistance, STICK_CONFIG.responseCurve)
         
-        x = (dx / distance) * responseValue
-        y = (dy / distance) * responseValue
+        // 完全线性响应：移动距离直接映射到输出值
+        x = (dx / distance) * normalizedDistance
+        y = (dy / distance) * normalizedDistance
       }
 
       return {
@@ -527,22 +557,56 @@ export function MobileVirtualController({
     []
   )
 
-  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; timestamp: number }>({
+  // 使用与PC端相同的发送逻辑
+  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; l2: number; r2: number; timestamp: number }>({
     leftX: 0,
     leftY: 0,
     rightX: 0,
     rightY: 0,
+    l2: 0,
+    r2: 0,
     timestamp: 0,
   })
-  const stickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const stickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null) // 使用 setInterval，与PC端对齐
 
-  const updateSticksValue = useCallback(
-    (leftX: number, leftY: number, rightX: number, rightY: number) => {
-      sticksValueRef.current.left = { x: leftX, y: leftY }
-      sticksValueRef.current.right = { x: rightX, y: rightY }
-    },
-    []
-  )
+  // 设置键盘左摇杆输入（与PC端对齐）
+  useEffect(() => {
+    if (!sessionId) {
+      if (keyboardCleanupRef.current) {
+        keyboardCleanupRef.current()
+        keyboardCleanupRef.current = null
+      }
+      return
+    }
+
+    // 设置键盘控制（支持外接键盘）
+    const cleanup = createKeyboardHandler(
+      async (buttonName: string, action: 'press' | 'release') => {
+        if (!sessionId) return
+        try {
+          const streamingButtonName = getStreamingButtonName(buttonName as any)
+          await controllerService.sendButton(streamingButtonName, action, action === 'press' ? 50 : 0)
+        } catch (error) {
+          console.error('❌ 键盘控制失败:', error, '按钮:', buttonName, '动作:', action)
+        }
+      },
+      {
+        onLeftStickChange: (x: number, y: number) => {
+          // 使用与PC端相同的键盘左摇杆设置方法
+          setKeyboardLeftStick(x, y)
+        },
+      }
+    )
+
+    keyboardCleanupRef.current = cleanup
+
+    return () => {
+      if (keyboardCleanupRef.current) {
+        keyboardCleanupRef.current()
+        keyboardCleanupRef.current = null
+      }
+    }
+  }, [sessionId, setKeyboardLeftStick])
 
   useEffect(() => {
     if (!sessionId) {
@@ -550,37 +614,76 @@ export function MobileVirtualController({
         clearInterval(stickIntervalRef.current)
         stickIntervalRef.current = null
       }
+      resetStickInput()
+      lastSentRef.current = { leftX: 0, leftY: 0, rightX: 0, rightY: 0, l2: 0, r2: 0, timestamp: 0 }
       return
     }
 
     const sendLatest = () => {
       const now = performance.now()
-      const current = sticksValueRef.current
       const lastSent = lastSentRef.current
       
-      const stickDiff =
-        Math.abs(current.left.x - lastSent.leftX) +
-        Math.abs(current.left.y - lastSent.leftY) +
-        Math.abs(current.right.x - lastSent.rightX) +
-        Math.abs(current.right.y - lastSent.rightY)
+      const isTouchActive = activeTouchIdRef.current.left !== null || activeTouchIdRef.current.right !== null
       
+      let finalNormalized
+      if (isTouchActive) {
+        // 触摸激活时，直接使用原始值，跳过 getNormalizedState() 以减少延迟
+        const leftStickRaw = leftStickDataRef.current
+        const rightStickRaw = rightStickDataRef.current
+        
+        finalNormalized = {
+          leftX: activeTouchIdRef.current.left !== null ? leftStickRaw.x : 0,
+          leftY: activeTouchIdRef.current.left !== null ? leftStickRaw.y : 0,
+          rightX: activeTouchIdRef.current.right !== null ? rightStickRaw.x : 0,
+          rightY: activeTouchIdRef.current.right !== null ? rightStickRaw.y : 0,
+          l2: 0,
+          r2: 0,
+        }
+      } else {
+        // 触摸未激活时，使用归一化状态（用于键盘输入等）
+        const normalized = getNormalizedState()
+        finalNormalized = normalized
+      }
+      
+      const stickDiff =
+        Math.abs(finalNormalized.leftX - lastSent.leftX) +
+        Math.abs(finalNormalized.leftY - lastSent.leftY) +
+        Math.abs(finalNormalized.rightX - lastSent.rightX) +
+        Math.abs(finalNormalized.rightY - lastSent.rightY)
+      const triggerDiff = Math.abs(finalNormalized.l2 - lastSent.l2) + Math.abs(finalNormalized.r2 - lastSent.r2)
       const shouldHeartbeat = now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS
-      const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
+      
+      // 触摸激活时，每次循环都发送，不检查变化量，确保持续发送
+      // 否则只在有变化或心跳时发送
+      const shouldSendSticks = isTouchActive || stickDiff > AXIS_DEADZONE || shouldHeartbeat
+      const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
       if (shouldSendSticks) {
-        controllerService.sendSticks(current.left.x, current.left.y, current.right.x, current.right.y).catch(() => {})
-        lastSentRef.current = {
-          leftX: current.left.x,
-          leftY: current.left.y,
-          rightX: current.right.x,
-          rightY: current.right.y,
-          timestamp: now,
+        if (activeTouchIdRef.current.left !== null) {
+          console.log(`[左摇杆 发送]`, `x:${finalNormalized.leftX.toFixed(4)} y:${finalNormalized.leftY.toFixed(4)}`)
         }
+        
+        controllerService.sendSticks(finalNormalized.leftX, finalNormalized.leftY, finalNormalized.rightX, finalNormalized.rightY).catch((error) => {
+          if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
+            console.error('❌ 发送摇杆输入失败:', error)
+          }
+        })
+        
+        lastSentRef.current = { ...finalNormalized, timestamp: now }
+      }
+
+      if (shouldSendTriggers) {
+        const triggerState = isTouchActive ? { l2: 0, r2: 0 } : getNormalizedState()
+        controllerService.sendTriggers(triggerState.l2, triggerState.r2).catch((error) => {
+          if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
+            console.error('❌ 发送扳机压力失败:', error)
+          }
+        })
       }
     }
 
     sendLatest()
-    stickIntervalRef.current = window.setInterval(sendLatest, MOBILE_SEND_INTERVAL_MS)
+    stickIntervalRef.current = window.setInterval(sendLatest, SEND_INTERVAL_MS)
 
     return () => {
       if (stickIntervalRef.current !== null) {
@@ -588,7 +691,63 @@ export function MobileVirtualController({
         stickIntervalRef.current = null
       }
     }
-  }, [sessionId])
+  }, [sessionId, getNormalizedState, resetStickInput])
+
+  const performStickUpdate = useCallback(
+    (stickType: 'left' | 'right', touch: Touch, initialX: number, initialY: number) => {
+      const { x, y, displayX, displayY } = calculateStickValue(
+        touch.clientX,
+        touch.clientY,
+        initialX,
+        initialY
+      )
+      
+      const stickDataRef = stickType === 'left' ? leftStickDataRef : rightStickDataRef
+      stickDataRef.current = { x, y, displayX, displayY }
+      
+      const innerRef = stickType === 'left' ? leftStickInnerRef : rightStickInnerRef
+      if (innerRef.current) {
+        const clampedDisplayX = Math.max(-STICK_CONFIG.displayMaxDistance, Math.min(STICK_CONFIG.displayMaxDistance, displayX))
+        const clampedDisplayY = Math.max(-STICK_CONFIG.displayMaxDistance, Math.min(STICK_CONFIG.displayMaxDistance, displayY))
+        innerRef.current.style.transform = `translate(${clampedDisplayX}px, ${clampedDisplayY}px)`
+      }
+      
+      if (stickType === 'left') {
+        console.log(`[左摇杆]`, `x:${x.toFixed(4)} y:${y.toFixed(4)}`)
+      }
+      
+      if (sessionId) {
+        const isTouchActive = activeTouchIdRef.current.left !== null || activeTouchIdRef.current.right !== null
+        if (isTouchActive) {
+          const leftStickRaw = leftStickDataRef.current
+          const rightStickRaw = rightStickDataRef.current
+          
+          let sendLeftX = stickType === 'left' ? x : leftStickRaw.x
+          let sendLeftY = stickType === 'left' ? y : leftStickRaw.y
+          let sendRightX = stickType === 'right' ? x : rightStickRaw.x
+          let sendRightY = stickType === 'right' ? y : rightStickRaw.y
+          
+          controllerService.sendSticks(sendLeftX, sendLeftY, sendRightX, sendRightY).catch((error) => {
+            if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
+              console.error('❌ 立即发送摇杆输入失败:', error)
+            }
+          })
+          
+          const now = performance.now()
+          lastSentRef.current = {
+            leftX: sendLeftX,
+            leftY: sendLeftY,
+            rightX: sendRightX,
+            rightY: sendRightY,
+            l2: 0,
+            r2: 0,
+            timestamp: now,
+          }
+        }
+      }
+    },
+    [calculateStickValue, sessionId]
+  )
 
   const updateStick = useCallback(
     (
@@ -597,34 +756,9 @@ export function MobileVirtualController({
       initialX: number,
       initialY: number
     ) => {
-      const { x, y, displayX, displayY } = calculateStickValue(
-        touch.clientX,
-        touch.clientY,
-        initialX,
-        initialY
-      )
-      const setter = stickType === 'left' ? setLeftStick : setRightStick
-
-      setter((prev) => {
-        const newState = {
-          x,
-          y,
-          displayX,
-          displayY,
-          isActive: true,
-          touchX: prev.touchX,
-          touchY: prev.touchY,
-        }
-        const otherStick = stickType === 'left' ? sticksValueRef.current.right : sticksValueRef.current.left
-        if (stickType === 'left') {
-          updateSticksValue(x, y, otherStick.x, otherStick.y)
-        } else {
-          updateSticksValue(otherStick.x, otherStick.y, x, y)
-        }
-        return newState
-      })
+      performStickUpdate(stickType, touch, initialX, initialY)
     },
-    [calculateStickValue, updateSticksValue]
+    [performStickUpdate]
   )
 
   const handleGlobalTouchStart = useCallback(
@@ -669,29 +803,56 @@ export function MobileVirtualController({
 
         if (isLeftArea && isBottomMiddleVertical && activeTouchIdRef.current.left === null) {
           activeTouchIdRef.current.left = touch.identifier
-          stickInitialPosRef.current.left = { x: touchX, y: touchY }
-          setLeftStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: true, touchX, touchY })
-          sticksValueRef.current.left = { x: 0, y: 0 }
+          const initialPos = { x: touchX, y: touchY }
+          stickInitialPosRef.current.left = initialPos
+          // 初始化左摇杆状态（使用与PC端相同的处理）
+          handleGamepadAxis(0, 0) // LeftStickX
+          handleGamepadAxis(1, 0) // LeftStickY
+          // 只在 touchstart 时更新 state（控制显示）
+          leftStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
+          setLeftStickActive(true)
+          setLeftStickPosition({ x: touchX, y: touchY })
+          // 设置容器位置
+          if (leftStickContainerRef.current) {
+            leftStickContainerRef.current.style.left = `${touchX - STICK_CONFIG.radius}px`
+            leftStickContainerRef.current.style.top = `${touchY - STICK_CONFIG.radius}px`
+          }
         } else if (isRightArea && isBottomMiddleVertical && activeTouchIdRef.current.right === null) {
           activeTouchIdRef.current.right = touch.identifier
-          stickInitialPosRef.current.right = { x: touchX, y: touchY }
-          setRightStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: true, touchX, touchY })
-          sticksValueRef.current.right = { x: 0, y: 0 }
+          const initialPos = { x: touchX, y: touchY }
+          stickInitialPosRef.current.right = initialPos
+          // 初始化右摇杆状态（使用与PC端相同的处理）
+          handleGamepadAxis(2, 0) // RightStickX
+          handleGamepadAxis(3, 0) // RightStickY
+          // 只在 touchstart 时更新 state（控制显示）
+          rightStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
+          setRightStickActive(true)
+          setRightStickPosition({ x: touchX, y: touchY })
+          // 设置容器位置
+          if (rightStickContainerRef.current) {
+            rightStickContainerRef.current.style.left = `${touchX - STICK_CONFIG.radius}px`
+            rightStickContainerRef.current.style.top = `${touchY - STICK_CONFIG.radius}px`
+          }
         }
       }
     },
-    [isMobile, sessionId]
+    [isMobile, sessionId, handleGamepadAxis]
   )
 
   const handleGlobalTouchMove = useCallback(
     (e: TouchEvent) => {
       if (!isMobile || !sessionId) return
+      e.preventDefault() // 防止滚动
 
       if (activeTouchIdRef.current.left !== null && stickInitialPosRef.current.left) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.left)
         if (touch) {
           const initialPos = stickInitialPosRef.current.left
           updateStick('left', touch, initialPos.x, initialPos.y)
+        } else {
+          // 触摸丢失时，保持最后的值，不要立即归零
+          // 真实摇杆在物理上不会突然跳到0，应该平滑过渡
+          // 这里不处理，让循环继续发送最后的值，直到touchend
         }
       }
 
@@ -700,6 +861,8 @@ export function MobileVirtualController({
         if (touch) {
           const initialPos = stickInitialPosRef.current.right
           updateStick('right', touch, initialPos.x, initialPos.y)
+        } else {
+          // 触摸丢失时，保持最后的值，不要立即归零
         }
       }
     },
@@ -717,8 +880,16 @@ export function MobileVirtualController({
         if (!touchStillActive) {
           activeTouchIdRef.current.left = null
           stickInitialPosRef.current.left = null
-          sticksValueRef.current.left = { x: 0, y: 0 }
-          setLeftStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 })
+          // 重置左摇杆到中心位置（使用与PC端相同的处理）
+          handleGamepadAxis(0, 0) // LeftStickX
+          handleGamepadAxis(1, 0) // LeftStickY
+          leftStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
+          // 只在 touchend 时更新 state（控制隐藏）
+          setLeftStickActive(false)
+          // 重置视觉位置
+          if (leftStickInnerRef.current) {
+            leftStickInnerRef.current.style.transform = `translate(0px, 0px)`
+          }
         }
       }
 
@@ -729,12 +900,20 @@ export function MobileVirtualController({
         if (!touchStillActive) {
           activeTouchIdRef.current.right = null
           stickInitialPosRef.current.right = null
-          sticksValueRef.current.right = { x: 0, y: 0 }
-          setRightStick({ x: 0, y: 0, displayX: 0, displayY: 0, isActive: false, touchX: 0, touchY: 0 })
+          // 重置右摇杆到中心位置（使用与PC端相同的处理）
+          handleGamepadAxis(2, 0) // RightStickX
+          handleGamepadAxis(3, 0) // RightStickY
+          rightStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
+          // 只在 touchend 时更新 state（控制隐藏）
+          setRightStickActive(false)
+          // 重置视觉位置
+          if (rightStickInnerRef.current) {
+            rightStickInnerRef.current.style.transform = `translate(0px, 0px)`
+          }
         }
       }
     },
-    [isMobile]
+    [isMobile, handleGamepadAxis]
   )
 
   useEffect(() => {
@@ -834,14 +1013,20 @@ export function MobileVirtualController({
   return (
     <div className="fixed inset-0 pointer-events-none z-[100]" style={{ touchAction: 'none' }}>
       <VirtualJoystick
-        stick={leftStick}
+        isActive={leftStickActive}
+        position={leftStickPosition}
         radius={STICK_CONFIG.radius}
         maxDistance={STICK_CONFIG.displayMaxDistance}
+        containerRef={leftStickContainerRef}
+        innerCircleRef={leftStickInnerRef}
       />
       <VirtualJoystick
-        stick={rightStick}
+        isActive={rightStickActive}
+        position={rightStickPosition}
         radius={STICK_CONFIG.radius}
         maxDistance={STICK_CONFIG.displayMaxDistance}
+        containerRef={rightStickContainerRef}
+        innerCircleRef={rightStickInnerRef}
       />
 
       <div className="absolute pointer-events-auto" style={{ top: '0', left: '16px' }}>

@@ -1,8 +1,6 @@
 export const AXIS_DEADZONE = 0.002
-export const SEND_INTERVAL_MS = 8
-// 移动端使用更长的发送间隔以优化性能
-export const MOBILE_SEND_INTERVAL_MS = 50 // 20fps，适合移动端
-export const MAX_HEARTBEAT_INTERVAL_MS = 32
+export const SEND_INTERVAL_MS = 8 // 发送间隔
+export const MAX_HEARTBEAT_INTERVAL_MS = 32 // 心跳间隔
 export const TRIGGER_DEADZONE = 0.01
 
 export const QUICK_HOLD_ACTIVATE = 0.35

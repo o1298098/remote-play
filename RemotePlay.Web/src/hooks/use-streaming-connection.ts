@@ -15,7 +15,7 @@ import { apiRequest } from '@/service/api-client'
 import { optimizeSdpForLowLatency, optimizeVideoForLowLatency } from '@/utils/webrtc-optimization'
 import { createKeyboardHandler } from '@/utils/keyboard-mapping'
 import { GamepadButton, PS5_BUTTON_MAP, type GamepadInputEvent } from '@/service/gamepad.service'
-import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, MOBILE_SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
+import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
 import { useStickInputState } from './use-streaming-connection/stick-input-state'
 import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
 import { isMobileDevice } from '@/utils/device-detection'
@@ -825,9 +825,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     sendLatest()
-    // 移动端使用更长的发送间隔以优化性能
-    const sendInterval = isMobileDevice() ? MOBILE_SEND_INTERVAL_MS : SEND_INTERVAL_MS
-    stickIntervalRef.current = window.setInterval(sendLatest, sendInterval)
+    // 使用统一的发送间隔（8ms），移动端和PC端对齐
+    stickIntervalRef.current = window.setInterval(sendLatest, SEND_INTERVAL_MS)
   }, [getNormalizedState, isGamepadEnabled])
 
   const handleGamepadInput = useCallback(
@@ -885,9 +884,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             Math.abs(normalized.rightX - lastSent.rightX) +
             Math.abs(normalized.rightY - lastSent.rightY)
           const triggerDiff = Math.abs(normalized.l2 - lastSent.l2) + Math.abs(normalized.r2 - lastSent.r2)
-          // 移动端使用更长的发送间隔
-          const sendInterval = isMobileDevice() ? MOBILE_SEND_INTERVAL_MS : SEND_INTERVAL_MS
-          const shouldHeartbeat = now - lastSent.timestamp >= sendInterval
+          // 使用与发送逻辑相同的心跳间隔（MAX_HEARTBEAT_INTERVAL_MS）
+          const shouldHeartbeat = now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS
           const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
           const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
