@@ -540,7 +540,7 @@ namespace RemotePlay.Services.Controller
                     _logger.LogDebug("发送控制器事件到流: 事件数={EventCount}, 数据长度={DataLength}, 序列号={Sequence}, 会话={SessionId}", 
                         eventCount, data.Length, _sequenceEvent, _sessionId);
                     
-                    stream.SendFeedback(
+                    await stream.SendFeedbackAsync(
                         (int)FeedbackHeaderType.EVENT,
                         _sequenceEvent,
                         data);

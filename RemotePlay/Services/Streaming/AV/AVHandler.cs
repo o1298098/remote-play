@@ -485,10 +485,36 @@ namespace RemotePlay.Services.Streaming.AV
                 }
             }
 
+            // ✅ 关键修复：当队列积压时，主动丢弃旧包，避免延迟累积
+            int queueCount = _queue.Count;
+            const int MAX_QUEUE_SIZE = 150; // 最大队列大小
+            const int DROP_THRESHOLD = 100; // 超过此值开始丢弃旧包
+            
+            if (queueCount >= MAX_QUEUE_SIZE)
+            {
+                // 队列已满，丢弃最旧的包（丢弃到阈值以下）
+                int dropCount = queueCount - DROP_THRESHOLD + 1;
+                int dropped = 0;
+                while (_queue.TryDequeue(out var _) && dropped < dropCount)
+                {
+                    dropped++;
+                }
+                _logger.LogWarning("🚨 队列已满 ({QueueCount} 个包)，丢弃 {Dropped} 个旧包以降低延迟", 
+                    queueCount, dropped);
+            }
+            else if (queueCount >= DROP_THRESHOLD)
+            {
+                // 队列接近满，丢弃最旧的包
+                if (_queue.TryDequeue(out var _))
+                {
+                    _logger.LogDebug("⚠️ 队列积压 ({QueueCount} 个包)，丢弃 1 个旧包", queueCount);
+                }
+            }
+            
             _queue.Enqueue(packet);
+            queueCount = _queue.Count;
 
             // ✅ 当队列积压时，输出警告日志
-            int queueCount = _queue.Count;
             if (queueCount > 200)
             {
                 _logger.LogError("🚨 队列严重积压: {QueueCount} 个包等待处理", queueCount);
@@ -584,10 +610,20 @@ namespace RemotePlay.Services.Streaming.AV
                 _logger.LogInformation("✅ AVHandler2 worker started");
                 int processedCount = 0;
                 DateTime lastQueueLogTime = DateTime.UtcNow;
+                DateTime lastTimeoutCheckTime = DateTime.UtcNow;
                 const int QUEUE_LOG_INTERVAL_SECONDS = 5; // 每5秒输出一次队列状态
+                const int TIMEOUT_CHECK_INTERVAL_MS = 50; // ✅ 每50ms检查一次超时（确保及时清理）
 
                 while (!token.IsCancellationRequested && !_ct.IsCancellationRequested)
                 {
+                    // ✅ 关键修复：定期检查 ReorderQueue 的超时，即使没有新包到达
+                    var now = DateTime.UtcNow;
+                    if ((now - lastTimeoutCheckTime).TotalMilliseconds >= TIMEOUT_CHECK_INTERVAL_MS)
+                    {
+                        _videoReorderQueue?.Flush(false); // 检查超时
+                        lastTimeoutCheckTime = now;
+                    }
+
                     int batch = 50;
                     int processedInBatch = 0;
 
@@ -607,11 +643,27 @@ namespace RemotePlay.Services.Streaming.AV
                     }
 
                     // ✅ 定期输出队列积压状态（每5秒）
-                    var now = DateTime.UtcNow;
                     if ((now - lastQueueLogTime).TotalSeconds >= QUEUE_LOG_INTERVAL_SECONDS)
                     {
                         int queueCount = _queue.Count;
                         var videoReorderStats = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
+                        
+                        // ✅ 关键修复：如果队列持续积压，主动清理旧包
+                        const int CLEANUP_THRESHOLD = 120;
+                        if (queueCount > CLEANUP_THRESHOLD)
+                        {
+                            int dropCount = queueCount - CLEANUP_THRESHOLD;
+                            int dropped = 0;
+                            while (_queue.TryDequeue(out var _) && dropped < dropCount)
+                            {
+                                dropped++;
+                            }
+                            if (dropped > 0)
+                            {
+                                _logger.LogWarning("🧹 队列持续积压，主动清理 {Dropped} 个旧包（队列大小: {Before} -> {After}）", 
+                                    dropped, queueCount, _queue.Count);
+                            }
+                        }
                         
                         // 根据队列大小选择日志级别
                         if (queueCount > 200)
@@ -750,22 +802,38 @@ namespace RemotePlay.Services.Streaming.AV
                 // 记录到最近窗口
                 _recentFrames.Enqueue((timestamp, status));
                 
-                // 清理过期记录
+                // ✅ 关键修复：更积极地清理过期记录，避免内存积累
                 var cutoff = timestamp.AddSeconds(-RECENT_WINDOW_SECONDS);
+                int cleaned = 0;
                 while (_recentFrames.Count > 0 && _recentFrames.Peek().timestamp < cutoff)
                 {
                     _recentFrames.Dequeue();
+                    cleaned++;
                 }
                 
-                // 计算帧间隔
+                // ✅ 如果队列仍然很大（超过窗口大小的2倍），强制清理更多
+                const int MAX_RECENT_FRAMES = RECENT_WINDOW_SECONDS * 120; // 假设最大120fps
+                while (_recentFrames.Count > MAX_RECENT_FRAMES)
+                {
+                    _recentFrames.Dequeue();
+                    cleaned++;
+                }
+                
+                if (cleaned > 0 && _logger.IsEnabled(LogLevel.Trace))
+                {
+                    _logger.LogTrace("清理了 {Cleaned} 个过期的帧记录，当前队列大小: {Count}", cleaned, _recentFrames.Count);
+                }
+                
+                // ✅ 计算帧间隔（优化：使用循环缓冲区避免频繁移除）
                 if (_lastFrameTimestamp != DateTime.MinValue)
                 {
                     var interval = (timestamp - _lastFrameTimestamp).TotalMilliseconds;
                     if (interval > 0 && interval < 1000) // 过滤异常值
                     {
                         _frameIntervals.Add(interval);
-                        // 只保留最近100个间隔
-                        if (_frameIntervals.Count > 100)
+                        // ✅ 关键修复：只保留最近50个间隔（减少内存占用）
+                        const int MAX_FRAME_INTERVALS = 50;
+                        if (_frameIntervals.Count > MAX_FRAME_INTERVALS)
                         {
                             _frameIntervals.RemoveAt(0);
                         }

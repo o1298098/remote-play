@@ -16,6 +16,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Threading.Channels;
 
 namespace RemotePlay.Services.Streaming.Core
 {
@@ -78,6 +79,11 @@ namespace RemotePlay.Services.Streaming.Core
         private UdpClient? _udpClient;
         private IPEndPoint? _remoteEndPoint;
         private Task? _receiveLoopTask;
+        private Task? _sendLoopTask; // ✅ 单线程发送循环任务
+        
+        // ✅ 发送队列（单线程发送循环架构，保证 key_pos 和 GMAC 严格顺序）
+        private readonly Channel<SendPacketItem> _sendQueue;
+        private readonly ChannelWriter<SendPacketItem> _sendQueueWriter;
         
         // ✅ 流断开检测
         private DateTime _lastPacketReceivedTime = DateTime.UtcNow;
@@ -109,7 +115,14 @@ namespace RemotePlay.Services.Streaming.Core
         // 去重跟踪
         private readonly HashSet<uint> _processedTsns = new();
         private readonly Queue<uint> _processedTsnsQueue = new();
-        private readonly object _sendLock = new();
+        
+        // ✅ 发送包数据结构（用于队列）
+        private struct SendPacketItem
+        {
+            public byte[] Packet { get; set; }
+            public int? AdvanceBy { get; set; }
+            public bool IsCongestionControl { get; set; } // 是否为拥塞控制包（需要特殊处理）
+        }
 
         // 回调
         private Action? _ackCallback;
@@ -189,6 +202,16 @@ namespace RemotePlay.Services.Streaming.Core
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _port = port;
             _cancellationToken = cancellationToken;
+            
+            // ✅ 初始化发送队列（单线程发送循环架构，保证 key_pos 和 GMAC 严格顺序）
+            var channelOptions = new BoundedChannelOptions(1000)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,  // 单线程读取（发送循环）
+                SingleWriter = false  // 多线程写入（所有 SendXXXAsync 方法）
+            };
+            _sendQueue = Channel.CreateBounded<SendPacketItem>(channelOptions);
+            _sendQueueWriter = _sendQueue.Writer;
 
             // 初始化 AVHandler2
             _avHandler = new AV.AVHandler(
@@ -211,7 +234,14 @@ namespace RemotePlay.Services.Streaming.Core
                         start = end;
                         end = tmp;
                     }
-                    SendCorrupt(start, end);
+                    // 使用 fire-and-forget 模式调用异步方法
+                    _ = SendCorruptAsync(start, end).ContinueWith(t =>
+                    {
+                        if (t.IsFaulted)
+                        {
+                            _logger.LogError(t.Exception, "Failed to send corrupt frame notification");
+                        }
+                    }, TaskContinuationOptions.OnlyOnFaulted);
                 });
             _avHandler.SetStreamHealthCallback(OnStreamHealthEvent);
             
@@ -259,10 +289,13 @@ namespace RemotePlay.Services.Streaming.Core
 
             // 启动接收循环
             _receiveLoopTask = Task.Run(ReceiveLoopAsync, _cancellationToken);
+            
+            // ✅ 启动单线程发送循环（保证 key_pos 和 GMAC 严格顺序）
+            _sendLoopTask = Task.Run(SendLoopAsync, _cancellationToken);
 
             // 设置状态并发送 INIT
             _state = STATE_INIT;
-            SendInit();
+            await SendInitAsync();
 
             _logger.LogInformation("RPStream started, state={State}, tsn={Tsn}, tagLocal={TagLocal}",
                 _state, _tsn, _tagLocal);
@@ -308,7 +341,7 @@ namespace RemotePlay.Services.Streaming.Core
                 if (_cipher != null)
                 {
                     var disconnectData = ProtoHandler.DisconnectPayload();
-                    SendData(disconnectData, channel: 1, flag: 1, proto: true);
+                    await SendDataAsync(disconnectData, channel: 1, flag: 1, proto: true);
                 }
             }
             catch (Exception ex)
@@ -316,8 +349,13 @@ namespace RemotePlay.Services.Streaming.Core
                 _logger.LogWarning(ex, "Error during disconnect");
             }
 
+            // ✅ 关闭发送队列，停止接收新的发送请求
+            _sendQueueWriter.Complete();
+            
             // ✅ 等待所有任务退出（最多等待 2 秒，避免阻塞太久）
             var tasksToWait = new List<Task>();
+            if (_sendLoopTask != null && !_sendLoopTask.IsCompleted)
+                tasksToWait.Add(_sendLoopTask);
             if (_receiveLoopTask != null && !_receiveLoopTask.IsCompleted)
                 tasksToWait.Add(_receiveLoopTask);
             if (_heartbeatLoopTask != null && !_heartbeatLoopTask.IsCompleted)
@@ -396,7 +434,14 @@ namespace RemotePlay.Services.Streaming.Core
                 // 当切换receiver时，PlayStation可能认为控制器断开，需要重新发送连接消息
                 if (_isReady && _cipher != null)
                 {
-                    SendControllerConnection();
+                    // 使用 fire-and-forget 模式调用异步方法
+                    _ = SendControllerConnectionAsync().ContinueWith(t =>
+                    {
+                        if (t.IsFaulted)
+                        {
+                            _logger.LogError(t.Exception, "Failed to send controller connection");
+                        }
+                    }, TaskContinuationOptions.OnlyOnFaulted);
                 }
             }
             else
@@ -429,11 +474,11 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 发送损坏帧通知
         /// </summary>
-        public void SendCorrupt(int start, int end)
+        public async Task SendCorruptAsync(int start, int end)
         {
             var data = ProtoHandler.CorruptFrame(start, end);
 			// CORRUPTFRAME 使用 flag=1, channel=2
-			SendData(data, channel: 2, flag: 1, proto: true);
+			await SendDataAsync(data, channel: 2, flag: 1, proto: true);
         }
 
         /// <summary>
@@ -442,7 +487,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// 反馈包格式：type(1) + sequence(2) + padding(1) + key_pos(4) + gmac(4) + payload
         /// 应该直接通过 UDP 发送，不做任何修改
         /// </summary>
-        public void SendFeedback(int feedbackType, int sequence, byte[]? data = null, Controller.ControllerState? state = null)
+        public async Task SendFeedbackAsync(int feedbackType, int sequence, byte[]? data = null, Controller.ControllerState? state = null)
         {
             // 如果正在停止，直接返回
             if (_isStopping)
@@ -484,17 +529,14 @@ namespace RemotePlay.Services.Streaming.Core
 
             // ✅ 直接通过 UDP 发送反馈包，不经过 SendPacket 的通用处理
             // Python 中的 send() 只是简单地通过 UDP socket 发送，不做任何修改
-            lock (_sendLock)
+            try
             {
-                try
-                {
-                    _udpClient.Send(feedbackPacket, feedbackPacket.Length, _remoteEndPoint);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to send feedback packet: type={Type}, sequence={Sequence}", 
-                        feedbackType, sequence);
-                }
+                await _udpClient.SendAsync(feedbackPacket, _remoteEndPoint);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send feedback packet: type={Type}, sequence={Sequence}", 
+                    feedbackType, sequence);
             }
         }
 
@@ -534,7 +576,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 发送拥塞控制包
         /// </summary>
-        public void SendCongestion(int received, int lost)
+        public async Task SendCongestionAsync(int received, int lost)
         {
             // 如果正在停止，直接返回
             if (_isStopping)
@@ -553,7 +595,7 @@ namespace RemotePlay.Services.Streaming.Core
 
             var congestionData = ProtoHandler.Congestion(received, lost);
             var congestionPacket = FeedbackPacket.CreateCongestion(0, congestionData, _cipher);
-            SendRaw(congestionPacket);
+            await SendRawAsync(congestionPacket);
         }
 
         #endregion
@@ -574,20 +616,20 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 发送 INIT 包
         /// </summary>
-        private void SendInit()
+        private async Task SendInitAsync()
         {
             var initPacket = Packet.CreateInit(_tagLocal, _tsn);
-            SendRaw(initPacket);
+            await SendRawAsync(initPacket);
             _logger.LogInformation("INIT sent: tagLocal={TagLocal}, tsn={Tsn}", _tagLocal, _tsn);
         }
 
         /// <summary>
         /// 发送 COOKIE 包
         /// </summary>
-        private void SendCookie(byte[] cookieData)
+        private async Task SendCookieAsync(byte[] cookieData)
         {
             var cookiePacket = Packet.CreateCookie(_tagLocal, _tagRemote, cookieData);
-            SendRaw(cookiePacket);
+            await SendRawAsync(cookiePacket);
             _logger.LogInformation("COOKIE sent: tagLocal={TagLocal}, tagRemote={TagRemote}, len={Len}",
                 _tagLocal, _tagRemote, cookieData.Length);
         }
@@ -595,7 +637,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 发送 BIG 负载
         /// </summary>
-        private void SendBig()
+        private async Task SendBigAsync()
         {
             int version = _session.HostType.Equals("PS5", StringComparison.OrdinalIgnoreCase) ? 12 : 9;
 
@@ -635,7 +677,7 @@ namespace RemotePlay.Services.Streaming.Core
                 return;
             }
             
-            SendData(bigPayload, channel: 1, flag: 1);
+            await SendDataAsync(bigPayload, channel: 1, flag: 1);
             
             // 启动重试循环
             StartBigRetryLoop();
@@ -672,7 +714,7 @@ namespace RemotePlay.Services.Streaming.Core
                     
                     if (_lastBigPayload != null)
                     {
-                        SendData(_lastBigPayload, channel: 1, flag: 1);
+                        await SendDataAsync(_lastBigPayload, channel: 1, flag: 1);
                     }
                 }
                 
@@ -858,14 +900,20 @@ namespace RemotePlay.Services.Streaming.Core
                 return;
             }
 
-            // 处理控制包
-            HandleControlPacket(data);
+            // 处理控制包（使用 fire-and-forget 模式）
+            _ = HandleControlPacketAsync(data).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    _logger.LogError(t.Exception, "Error handling control packet");
+                }
+            }, TaskContinuationOptions.OnlyOnFaulted);
         }
 
         /// <summary>
         /// 处理控制包
         /// </summary>
-        private void HandleControlPacket(byte[] data)
+        private async Task HandleControlPacketAsync(byte[] data)
         {
             var packet = Packet.Parse(data);
             if (packet == null)
@@ -926,11 +974,11 @@ namespace RemotePlay.Services.Streaming.Core
             switch (packet.ChunkType)
             {
                 case ChunkType.INIT_ACK:
-                    HandleInitAck(packet);
+                    await HandleInitAckAsync(packet);
                     break;
 
                 case ChunkType.COOKIE_ACK:
-                    HandleCookieAck();
+                    await HandleCookieAckAsync();
                     break;
 
                 case ChunkType.DATA_ACK:
@@ -938,7 +986,7 @@ namespace RemotePlay.Services.Streaming.Core
                     break;
 
                 case ChunkType.DATA:
-                    HandleData(packet, data);
+                    await HandleDataAsync(packet, data);
                     break;
 
                 default:
@@ -953,7 +1001,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 处理 INIT_ACK
         /// </summary>
-        private void HandleInitAck(Packet packet)
+        private async Task HandleInitAckAsync(Packet packet)
         {
             _tagRemote = packet.Params.Tag;
             var cookieData = packet.Params.Data ?? Array.Empty<byte>();
@@ -962,18 +1010,18 @@ namespace RemotePlay.Services.Streaming.Core
                 _tagRemote, cookieData.Length);
 
             // 发送 COOKIE
-            SendCookie(cookieData);
+            await SendCookieAsync(cookieData);
         }
 
         /// <summary>
         /// 处理 COOKIE_ACK
         /// </summary>
-        private void HandleCookieAck()
+        private async Task HandleCookieAckAsync()
         {
             _logger.LogInformation("COOKIE_ACK received");
 
             // 发送 BIG
-            SendBig();
+            await SendBigAsync();
         }
 
         /// <summary>
@@ -995,7 +1043,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 处理 DATA 包
         /// </summary>
-        private void HandleData(Packet packet, byte[] originalData)
+        private async Task HandleDataAsync(Packet packet, byte[] originalData)
         {
             // 注意：DATA 包的 TSN 和 Data 存储在 packet.Tsn 和 packet.Data，不是 packet.Params
             var tsn = packet.Tsn;
@@ -1009,7 +1057,7 @@ namespace RemotePlay.Services.Streaming.Core
             MarkTsnAsProcessed(tsn);
 
             // 发送 DATA_ACK
-            SendDataAck(tsn);
+            await SendDataAckAsync(tsn);
 
 			// 处理 Takion 消息
 			if (packet.Data == null || packet.Data.Length == 0)
@@ -1021,13 +1069,13 @@ namespace RemotePlay.Services.Streaming.Core
 				return;
 			}
 
-			DispatchTakionData(packet);
+			await DispatchTakionDataAsync(packet);
         }
 
 		/// <summary>
 		/// 根据数据类型分发 Takion DATA 消息。
 		/// </summary>
-		private void DispatchTakionData(Packet packet)
+		private async Task DispatchTakionDataAsync(Packet packet)
 		{
 			var payload = packet.Data ?? Array.Empty<byte>();
 			if (payload.Length == 0)
@@ -1043,7 +1091,7 @@ namespace RemotePlay.Services.Streaming.Core
 			switch (dataType)
 			{
 				case TakionDataType.Protobuf:
-					ProcessTakionMessage(payload);
+					await ProcessTakionMessageAsync(payload);
 					break;
 				case TakionDataType.Rumble:
 					HandleRumble(payload);
@@ -1066,7 +1114,7 @@ namespace RemotePlay.Services.Streaming.Core
 		/// <summary>
 		/// 处理 Takion 消息
 		/// </summary>
-		private void ProcessTakionMessage(byte[] data)
+		private async Task ProcessTakionMessageAsync(byte[] data)
         {
             if (!ProtoCodec.TryParse(data, out var message))
             {
@@ -1081,7 +1129,7 @@ namespace RemotePlay.Services.Streaming.Core
                     break;
 
                 case Protos.TakionMessage.Types.PayloadType.Streaminfo:
-                    HandleStreamInfo(message);
+                    await HandleStreamInfoAsync(message);
                     break;
 
                 case Protos.TakionMessage.Types.PayloadType.Streaminfoack:
@@ -1095,7 +1143,7 @@ namespace RemotePlay.Services.Streaming.Core
                         try
                         {
                             var heartbeatReply = ProtoCodec.BuildHeartbeat();
-                            SendData(heartbeatReply, channel: 1, flag: 1, proto: true);
+                            await SendDataAsync(heartbeatReply, channel: 1, flag: 1, proto: true);
                         }
                         catch (Exception ex)
                         {
@@ -1564,8 +1612,8 @@ namespace RemotePlay.Services.Streaming.Core
                 }
                 
                 // ✅ 发送 IDRREQUEST（使用 GMAC 但不加密 payload）
-                // 使用 SendData 方法，flag=1, channel=1, proto=false
-                SendData(idr, flag: 1, channel: 1, proto: false);
+                // 使用 SendDataAsync 方法，flag=1, channel=1, proto=false
+                await SendDataAsync(idr, flag: 1, channel: 1, proto: false);
                 RecordIdrRequest();
                 
                 _logger.LogDebug("📤 IDR 请求已发送到 PS5");
@@ -1667,12 +1715,10 @@ namespace RemotePlay.Services.Streaming.Core
             // 如果正在停止，直接返回
             if (_isStopping || _cipher == null)
             {
-                await Task.CompletedTask;
                 return;
             }
             
-            SendFeedback(type, sequence, data);
-            await Task.CompletedTask;
+            await SendFeedbackAsync(type, sequence, data);
         }
         
         /// <summary>
@@ -1692,15 +1738,13 @@ namespace RemotePlay.Services.Streaming.Core
             if (packet.Length == 15 && packet.Length > 0 && (packet[0] & 0x0F) == 0x05)
             {
                 // 拥塞控制包需要特殊处理
-                SendCongestionControlPacket(packet);
+                await SendCongestionControlPacketAsync(packet);
             }
             else
             {
                 // 其他包使用标准处理
-                SendRaw(packet);
+                await SendRawAsync(packet);
             }
-            
-            await Task.CompletedTask;
         }
         
         /// <summary>
@@ -1900,7 +1944,7 @@ namespace RemotePlay.Services.Streaming.Core
 
             // ✅ 发送 corrupt 报告和请求关键帧（恢复机制，不是主动降档）
             if (evt.FrameIndex > 0)
-                SendCorrupt(evt.FrameIndex, evt.FrameIndex);
+                await SendCorruptAsync(evt.FrameIndex, evt.FrameIndex);
 
             if (DateTime.UtcNow - _lastKeyframeRequest > _keyframeRequestCooldown)
             {
@@ -1933,7 +1977,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 处理 STREAMINFO 消息
         /// </summary>
-        private void HandleStreamInfo(Protos.TakionMessage message)
+        private async Task HandleStreamInfoAsync(Protos.TakionMessage message)
         {
             _logger.LogInformation("STREAMINFO received");
 
@@ -2046,13 +2090,13 @@ namespace RemotePlay.Services.Streaming.Core
             }
 
             // 立即发送 STREAMINFOACK
-            // ✅ 修复：不要在这里调用 AdvanceSequence()，SendData 内部会根据 cipher 状态自动处理
+            // ✅ 修复：不要在这里调用 AdvanceSequence()，SendDataAsync 内部会根据 cipher 状态自动处理
             var streamInfoAck = ProtoCodec.BuildStreamInfoAck();
-            SendData(streamInfoAck, channel: 9, flag: 1, proto: true);
+            await SendDataAsync(streamInfoAck, channel: 9, flag: 1, proto: true);
             
             // ✅ 发送 CONTROLLER_CONNECTION
             // 旧版 RPStream 中存在该逻辑，某些固件可能仍依赖
-            SendControllerConnection();
+            await SendControllerConnectionAsync();
             
             // ✅ 设置就绪状态
             SetReady();
@@ -2198,7 +2242,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 发送 CONTROLLER_CONNECTION
         /// </summary>
-        private void SendControllerConnection()
+        private async Task SendControllerConnectionAsync()
         {
             if (_cipher == null)
             {
@@ -2209,7 +2253,7 @@ namespace RemotePlay.Services.Streaming.Core
             {
                 bool isPs5 = _session.HostType.Equals("PS5", StringComparison.OrdinalIgnoreCase);
                 var controllerConn = ProtoCodec.BuildControllerConnection(controllerId: 0, isPs5: isPs5);
-                SendData(controllerConn, channel: 1, flag: 1, proto: true);
+                await SendDataAsync(controllerConn, channel: 1, flag: 1, proto: true);
             }
             catch (Exception ex)
             {
@@ -2272,7 +2316,7 @@ namespace RemotePlay.Services.Streaming.Core
                         try
                         {
                             var heartbeat = ProtoCodec.BuildHeartbeat();
-                            SendData(heartbeat, channel: 1, flag: 1, proto: true);
+                            await SendDataAsync(heartbeat, channel: 1, flag: 1, proto: true);
                             
                             consecutiveFailures = 0;
                             heartbeatCount++;
@@ -2344,7 +2388,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 发送数据包
         /// </summary>
-        private void SendData(byte[] data, int flag, int channel, bool proto = false)
+        private async Task SendDataAsync(byte[] data, int flag, int channel, bool proto = false)
         {
             int advanceBy = 0;
             if (_cipher != null)
@@ -2357,22 +2401,23 @@ namespace RemotePlay.Services.Streaming.Core
             }
 
             var packet = Packet.CreateData(_tsn, (ushort)channel, flag, data);
-            SendPacket(packet, advanceBy);
+            await SendPacketAsync(packet, advanceBy);
         }
 
         /// <summary>
         /// 发送 DATA_ACK
         /// </summary>
-        private void SendDataAck(uint ackTsn)
+        private async Task SendDataAckAsync(uint ackTsn)
         {
             var packet = Packet.CreateDataAck(ackTsn);
-            SendPacket(packet, advanceBy: PacketConstants.DATA_ACK_LENGTH);
+            await SendPacketAsync(packet, advanceBy: PacketConstants.DATA_ACK_LENGTH);
         }
 
         /// <summary>
-        /// 发送包
+        /// 发送包（异步入队，实际发送在单线程循环中顺序执行）
+        /// ✅ 关键：此方法只负责入队，不直接发送，保证 key_pos 和 GMAC 的严格顺序
         /// </summary>
-        private void SendPacket(byte[] packet, int? advanceBy = null)
+        private async Task SendPacketAsync(byte[] packet, int? advanceBy = null)
         {
             // 如果正在停止，直接返回，不记录警告
             if (_isStopping)
@@ -2390,84 +2435,87 @@ namespace RemotePlay.Services.Streaming.Core
                 return;
             }
 
-            lock (_sendLock)
+            // ✅ 创建包的副本（因为可能被修改）
+            var packetCopy = new byte[packet.Length];
+            System.Buffer.BlockCopy(packet, 0, packetCopy, 0, packet.Length);
+
+            // ✅ 入队，由单线程发送循环顺序处理
+            var item = new SendPacketItem
             {
-                try
-                {
-                    // 如果有 cipher，需要计算 GMAC 和 key_pos
-                    if (_cipher != null)
-                    {
-                        var keyPos = (uint)_cipher.KeyPos;
-                        var tmp = new byte[packet.Length];
-                        System.Buffer.BlockCopy(packet, 0, tmp, 0, packet.Length);
+                Packet = packetCopy,
+                AdvanceBy = advanceBy
+            };
 
-                        // 写入 tag_remote 和 key_pos
-                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tmp.AsSpan(1, 4), _tagRemote);
-                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tmp.AsSpan(9, 4), keyPos);
-
-                        // 清零 GMAC 和 key_pos 用于计算
-                        if (tmp.Length >= 13)
-                        {
-                            Array.Clear(tmp, 5, 4);  // GMAC
-                            Array.Clear(tmp, 9, 4);  // key_pos
-                        }
-
-                        // 计算 GMAC
-                        var gmac = _cipher.GetGmacAtKeyPos(tmp, (int)keyPos);
-                        var gmacValue = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(gmac);
-
-                        // 写入 GMAC 和 key_pos
-                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(1, 4), _tagRemote);
-                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(5, 4), gmacValue);
-                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(9, 4), keyPos);
-
-                        // 推进 key_pos
-                        var advance = advanceBy ?? (packet.Length - PacketConst.HeaderLength - 4);
-                        if (advance > 0)
-                        {
-                            _cipher.AdvanceKeyPos(advance);
-                        }
-                    }
-                    else if (_tagRemote != 0)
-                    {
-                        // 没有 cipher 但有 tag_remote，只写入 tag_remote
-                        // 注意：此时 GMAC 和 key_pos 应该保持为 0
-                        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(1, 4), _tagRemote);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Sending packet without tag_remote: tsn={Tsn}", _tsn);
-                    }
-
-                    _udpClient.Send(packet, packet.Length, _remoteEndPoint);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to send packet");
-                }
+            try
+            {
+                await _sendQueueWriter.WriteAsync(item, _cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // 取消操作是正常的（停止时）
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enqueue packet");
             }
         }
 
         /// <summary>
-        /// 发送拥塞控制包（类型 0x05，15 字节）
-        /// 根据 chiaki 的实现，需要先推进 key_pos，然后计算 GMAC
+        /// ✅ 单线程发送循环（保证 key_pos 和 GMAC 严格顺序）
+        /// 此方法运行在独立的发送线程中，顺序处理队列中的包
         /// </summary>
-        private void SendCongestionControlPacket(byte[] packet)
+        private async Task SendLoopAsync()
         {
-            if (_udpClient == null || _remoteEndPoint == null || _cipher == null)
-            {
-                if (!_isStopping)
-                {
-                    _logger.LogWarning("Cannot send congestion control packet: UDP client, remote endpoint or cipher is null");
-                }
-                return;
-            }
+            _logger.LogDebug("Send loop started");
 
-            lock (_sendLock)
+            try
             {
-                try
+                await foreach (var item in _sendQueue.Reader.ReadAllAsync(_cancellationToken))
                 {
-                    // 拥塞控制包大小固定为 15 字节
+                    // 如果正在停止，不再处理新包
+                    if (_isStopping)
+                    {
+                        break;
+                    }
+
+                    try
+                    {
+                        // ✅ 在单线程中顺序执行发送，保证 key_pos 和 GMAC 的顺序性
+                        await SendPacketInternalAsync(item.Packet, item.AdvanceBy, item.IsCongestionControl);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error in send loop processing packet");
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // 正常的取消操作
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Send loop error");
+            }
+            finally
+            {
+                _logger.LogDebug("Send loop ended");
+            }
+        }
+
+        /// <summary>
+        /// ✅ 内部发送方法（在单线程发送循环中调用，保证顺序性）
+        /// 此方法负责计算 GMAC、更新 key_pos 和执行实际的 UDP 发送
+        /// </summary>
+        private async Task SendPacketInternalAsync(byte[] packet, int? advanceBy, bool isCongestionControl = false)
+        {
+            // 注意：此方法运行在单线程发送循环中，不需要锁
+
+            try
+            {
+                // ✅ 处理拥塞控制包（特殊格式，需要先推进 key_pos 再计算 GMAC）
+                if (isCongestionControl && _cipher != null)
+                {
                     const int CONGESTION_PACKET_SIZE = 15;
                     if (packet.Length != CONGESTION_PACKET_SIZE)
                     {
@@ -2477,7 +2525,6 @@ namespace RemotePlay.Services.Streaming.Core
                     }
 
                     // 1. 先推进 key_pos（15 字节），获取新的 key_pos
-                    // 根据 chiaki: chiaki_takion_crypt_advance_key_pos(takion, CHIAKI_TAKION_CONGESTION_PACKET_SIZE, &key_pos)
                     _cipher.AdvanceKeyPos(CONGESTION_PACKET_SIZE);
                     var keyPos = (uint)_cipher.KeyPos;
 
@@ -2490,36 +2537,121 @@ namespace RemotePlay.Services.Streaming.Core
                     System.Buffer.BlockCopy(packet, 0, tmp, 0, packet.Length);
 
                     // 4. 清零 GMAC（偏移 0x07-0x0a）和 key_pos（偏移 0x0b-0x0e）用于计算
-                    // 根据 chiaki: 在计算 GMAC 时需要临时清零 key_pos
                     Array.Clear(tmp, 0x07, 4);  // GMAC
                     Array.Clear(tmp, 0x0b, 4);  // key_pos
 
                     // 5. 计算 GMAC（使用新的 key_pos）
-                    // 根据 chiaki: chiaki_takion_packet_mac 会处理拥塞控制包的特殊逻辑
                     var gmac = _cipher.GetGmacAtKeyPos(tmp, (int)keyPos);
                     var gmacValue = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(gmac);
 
                     // 6. 写入 GMAC（偏移 0x07-0x0a）
                     System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(
                         packet.AsSpan(0x07, 4), gmacValue);
-
-                    // 7. 发送包
-                    _udpClient.Send(packet, packet.Length, _remoteEndPoint);
                 }
-                catch (Exception ex)
+                // 处理普通包
+                else if (_cipher != null)
                 {
-                    _logger.LogWarning(ex, "Failed to send congestion control packet");
+                    var keyPos = (uint)_cipher.KeyPos;
+                    var tmp = new byte[packet.Length];
+                    System.Buffer.BlockCopy(packet, 0, tmp, 0, packet.Length);
+
+                    // 写入 tag_remote 和 key_pos
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tmp.AsSpan(1, 4), _tagRemote);
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(tmp.AsSpan(9, 4), keyPos);
+
+                    // 清零 GMAC 和 key_pos 用于计算
+                    if (tmp.Length >= 13)
+                    {
+                        Array.Clear(tmp, 5, 4);  // GMAC
+                        Array.Clear(tmp, 9, 4);  // key_pos
+                    }
+
+                    // 计算 GMAC
+                    var gmac = _cipher.GetGmacAtKeyPos(tmp, (int)keyPos);
+                    var gmacValue = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(gmac);
+
+                    // 写入 GMAC 和 key_pos
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(1, 4), _tagRemote);
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(5, 4), gmacValue);
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(9, 4), keyPos);
+
+                    // ✅ 推进 key_pos（在单线程中顺序执行，保证严格递增）
+                    var advance = advanceBy ?? (packet.Length - PacketConst.HeaderLength - 4);
+                    if (advance > 0)
+                    {
+                        _cipher.AdvanceKeyPos(advance);
+                    }
                 }
+                else if (_tagRemote != 0)
+                {
+                    // 没有 cipher 但有 tag_remote，只写入 tag_remote
+                    // 注意：此时 GMAC 和 key_pos 应该保持为 0
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(1, 4), _tagRemote);
+                }
+                else
+                {
+                    _logger.LogWarning("Sending packet without tag_remote: tsn={Tsn}", _tsn);
+                }
+
+                // ✅ 执行 UDP 发送（在单线程中顺序执行，虽然 SendAsync 本身是异步的，但调用顺序是保证的）
+                if (_udpClient != null && _remoteEndPoint != null)
+                {
+                    await _udpClient.SendAsync(packet, _remoteEndPoint);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send packet internally");
+            }
+        }
+
+        /// <summary>
+        /// 发送拥塞控制包（类型 0x05，15 字节）
+        /// 根据 chiaki 的实现，需要先推进 key_pos，然后计算 GMAC
+        /// </summary>
+        private async Task SendCongestionControlPacketAsync(byte[] packet)
+        {
+            if (_udpClient == null || _remoteEndPoint == null || _cipher == null)
+            {
+                if (!_isStopping)
+                {
+                    _logger.LogWarning("Cannot send congestion control packet: UDP client, remote endpoint or cipher is null");
+                }
+                return;
+            }
+
+            // ✅ 拥塞控制包也通过发送队列，保证 key_pos 顺序
+            var packetCopy = new byte[packet.Length];
+            System.Buffer.BlockCopy(packet, 0, packetCopy, 0, packet.Length);
+
+            var item = new SendPacketItem
+            {
+                Packet = packetCopy,
+                AdvanceBy = null, // 拥塞控制包会在 SendPacketInternalAsync 中特殊处理
+                IsCongestionControl = true
+            };
+
+            try
+            {
+                await _sendQueueWriter.WriteAsync(item, _cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // 取消操作是正常的（停止时）
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to enqueue congestion control packet");
             }
         }
 
         /// <summary>
         /// 发送原始数据
         /// </summary>
-        private void SendRaw(byte[] data)
+        private async Task SendRawAsync(byte[] data)
         {
-            // SendPacket 内部已经检查 _isStopping，这里直接调用即可
-            SendPacket(data);
+            // SendPacketAsync 内部已经检查 _isStopping，这里直接调用即可
+            await SendPacketAsync(data);
         }
 
         /// <summary>

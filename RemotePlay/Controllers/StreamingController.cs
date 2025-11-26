@@ -119,12 +119,56 @@ namespace RemotePlay.Controllers
                 Status = snapshot.LastStatus.ToString(),
                 Message = snapshot.Message,
                 ConsecutiveFailures = snapshot.ConsecutiveFailures,
+                
+                // 帧统计
                 TotalRecoveredFrames = snapshot.TotalRecoveredFrames,
                 TotalFrozenFrames = snapshot.TotalFrozenFrames,
+                TotalDroppedFrames = snapshot.TotalDroppedFrames,
+                DeltaRecoveredFrames = snapshot.DeltaRecoveredFrames,
+                DeltaFrozenFrames = snapshot.DeltaFrozenFrames,
+                DeltaDroppedFrames = snapshot.DeltaDroppedFrames,
+                
+                // 最近窗口统计
+                RecentWindowSeconds = snapshot.RecentWindowSeconds,
+                RecentSuccessFrames = snapshot.RecentSuccessFrames,
+                RecentRecoveredFrames = snapshot.RecentRecoveredFrames,
+                RecentFrozenFrames = snapshot.RecentFrozenFrames,
+                RecentDroppedFrames = snapshot.RecentDroppedFrames,
+                RecentFps = snapshot.RecentFps,
+                AverageFrameIntervalMs = snapshot.AverageFrameIntervalMs,
+                LastFrameTimestampUtc = snapshot.LastFrameTimestampUtc,
+                
+                // 流统计和码率
+                TotalFrames = snapshot.TotalFrames,
+                TotalBytes = snapshot.TotalBytes,
+                MeasuredBitrateMbps = snapshot.MeasuredBitrateMbps,
+                FramesLost = snapshot.FramesLost,
+                FrameIndexPrev = snapshot.FrameIndexPrev,
+                
+                // 包统计
                 VideoReceived = stats.VideoReceived,
                 VideoLost = stats.VideoLost,
+                VideoTimeoutDropped = stats.VideoTimeoutDropped,
                 AudioReceived = stats.AudioReceived,
-                AudioLost = stats.AudioLost
+                AudioLost = stats.AudioLost,
+                AudioTimeoutDropped = stats.AudioTimeoutDropped,
+                PendingPackets = stats.PendingPackets,
+                
+                // IDR 请求统计
+                TotalIdrRequests = stats.TotalIdrRequests,
+                IdrRequestsRecent = stats.IdrRequestsRecent,
+                IdrRequestWindowSeconds = stats.IdrRequestWindowSeconds,
+                LastIdrRequestUtc = stats.LastIdrRequestUtc,
+                
+                // FEC 统计
+                FecAttempts = stats.FecAttempts,
+                FecSuccess = stats.FecSuccess,
+                FecFailures = stats.FecFailures,
+                FecSuccessRate = stats.FecSuccessRate,
+                
+                // 输出统计
+                FrameOutputFps = stats.FrameOutputFps,
+                FrameIntervalMs = stats.FrameIntervalMs
             };
 
             return Ok(new ApiSuccessResponse<StreamHealthDto>
@@ -282,12 +326,56 @@ namespace RemotePlay.Controllers
         public string Status { get; set; } = string.Empty;
         public string? Message { get; set; }
         public int ConsecutiveFailures { get; set; }
+        
+        // 帧统计
         public int TotalRecoveredFrames { get; set; }
         public int TotalFrozenFrames { get; set; }
+        public int TotalDroppedFrames { get; set; }
+        public int DeltaRecoveredFrames { get; set; }
+        public int DeltaFrozenFrames { get; set; }
+        public int DeltaDroppedFrames { get; set; }
+        
+        // 最近窗口统计
+        public int RecentWindowSeconds { get; set; }
+        public int RecentSuccessFrames { get; set; }
+        public int RecentRecoveredFrames { get; set; }
+        public int RecentFrozenFrames { get; set; }
+        public int RecentDroppedFrames { get; set; }
+        public double RecentFps { get; set; }
+        public double AverageFrameIntervalMs { get; set; }
+        public DateTime LastFrameTimestampUtc { get; set; }
+        
+        // 流统计和码率
+        public ulong TotalFrames { get; set; }
+        public ulong TotalBytes { get; set; }
+        public double MeasuredBitrateMbps { get; set; }
+        public int FramesLost { get; set; }
+        public int FrameIndexPrev { get; set; }
+        
+        // 包统计
         public int VideoReceived { get; set; }
         public int VideoLost { get; set; }
+        public int VideoTimeoutDropped { get; set; }
         public int AudioReceived { get; set; }
         public int AudioLost { get; set; }
+        public int AudioTimeoutDropped { get; set; }
+        public int PendingPackets { get; set; }
+        
+        // IDR 请求统计
+        public int TotalIdrRequests { get; set; }
+        public int IdrRequestsRecent { get; set; }
+        public int IdrRequestWindowSeconds { get; set; }
+        public DateTime? LastIdrRequestUtc { get; set; }
+        
+        // FEC 统计
+        public int FecAttempts { get; set; }
+        public int FecSuccess { get; set; }
+        public int FecFailures { get; set; }
+        public double FecSuccessRate { get; set; }
+        
+        // 输出统计
+        public double FrameOutputFps { get; set; }
+        public double FrameIntervalMs { get; set; }
     }
 }
 

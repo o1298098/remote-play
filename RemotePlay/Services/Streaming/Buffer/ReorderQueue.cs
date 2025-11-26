@@ -289,51 +289,104 @@ namespace RemotePlay.Services.Streaming.Buffer
 
             var now = DateTime.UtcNow;
             var toRemove = new List<uint>();
+            uint currentSeq = _begin;
+            int consecutiveTimeouts = 0;
+            const int MAX_CONSECUTIVE_TIMEOUTS = 20; // 最多连续跳过 20 个超时的 slot
 
-            if (_buffer.TryGetValue(_begin, out var entry))
+            // ✅ 关键修复：检查所有超时的 slot，而不仅仅是头部
+            // 当网络变差时，可能会有多个连续的 slot 超时，需要批量清理
+            for (int i = 0; i < _count && consecutiveTimeouts < MAX_CONSECUTIVE_TIMEOUTS; i++)
             {
+                if (!_buffer.TryGetValue(currentSeq, out var entry))
+                {
+                    // Slot 不存在，跳过
+                    currentSeq = MaskSeq(currentSeq + 1);
+                    continue;
+                }
+
+                bool isTimeout = false;
                 if (!entry.IsSet)
                 {
-                    _logger.LogWarning("Timeout: reserved slot seq={Seq} never received, skipping", _begin);
-                    toRemove.Add(_begin);
-                    _begin = MaskSeq(_begin + 1);
-                    _count--;
-                    _totalDropped++;
-                    _totalTimeoutDropped++;
-                    _timeoutCallback?.Invoke();
+                    // 未收到的 slot（ArrivalTime == DateTime.MinValue）
+                    // ✅ 对于未收到的 slot，直接认为超时，避免长时间等待
+                    // 这样可以更快地跳过丢失的包，减少延迟累积
+                    isTimeout = true;
                 }
                 else
                 {
+                    // 已收到的 slot，检查是否超时
                     var elapsed = (now - entry.ArrivalTime).TotalMilliseconds;
                     if (elapsed > _timeoutMs)
                     {
-                        _outputCallback(entry.Item!);
-                        toRemove.Add(_begin);
-                        _begin = MaskSeq(_begin + 1);
-                        _count--;
-                        _totalProcessed++;
-
-                        uint skipped = SequenceDistance(_begin - 1, _begin);
-                        if (skipped > 1)
-                        {
-                            _totalDropped += skipped - 1;
-                            _totalTimeoutDropped += skipped - 1;
-                            _logger.LogWarning("Timeout: output seq={Seq}, skipped={Skipped}, elapsed={Elapsed}ms",
-                                _begin - 1, skipped - 1, elapsed);
-                        }
-
-                        _timeoutCallback?.Invoke();
+                        isTimeout = true;
                     }
+                }
+
+                if (isTimeout)
+                {
+                    if (entry.IsSet)
+                    {
+                        // 已收到但超时，输出它
+                        _outputCallback(entry.Item!);
+                        _totalProcessed++;
+                    }
+                    else
+                    {
+                        // 未收到，记录丢失
+                        _totalDropped++;
+                        _totalTimeoutDropped++;
+                    }
+
+                    toRemove.Add(currentSeq);
+                    consecutiveTimeouts++;
+                    currentSeq = MaskSeq(currentSeq + 1);
+                }
+                else
+                {
+                    // 遇到未超时的 slot，停止批量清理
+                    break;
                 }
             }
 
-            foreach (var seq in toRemove)
-            {
-                _buffer.Remove(seq);
-            }
-
+            // 批量移除超时的 slot
             if (toRemove.Count > 0)
             {
+                // ✅ 在移除前记录日志（因为移除后无法再访问 entry）
+                bool hasUnreceived = false;
+                foreach (var seq in toRemove)
+                {
+                    if (_buffer.TryGetValue(seq, out var entry) && !entry.IsSet)
+                    {
+                        hasUnreceived = true;
+                        break;
+                    }
+                }
+                
+                // 记录批量超时（减少日志频率）
+                if (toRemove.Count > 5)
+                {
+                    _logger.LogWarning("Timeout: batch skipped {Count} slots (seq {From} to {To})",
+                        toRemove.Count, toRemove[0], toRemove[toRemove.Count - 1]);
+                }
+                else if (hasUnreceived)
+                {
+                    // 只记录第一个未收到的 slot，避免日志过多
+                    _logger.LogWarning("Timeout: reserved slot seq={Seq} never received, skipping", toRemove[0]);
+                }
+
+                // 移除超时的 slot
+                foreach (var seq in toRemove)
+                {
+                    _buffer.Remove(seq);
+                }
+
+                // 更新 _begin 和 _count
+                _begin = currentSeq;
+                _count -= toRemove.Count;
+
+                // 触发超时回调（只触发一次，避免重复）
+                _timeoutCallback?.Invoke();
+
                 Pull();
             }
         }
@@ -374,3 +427,4 @@ namespace RemotePlay.Services.Streaming.Buffer
         }
     }
 }
+
