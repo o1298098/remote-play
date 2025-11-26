@@ -166,10 +166,116 @@ namespace RemotePlay.Services.Streaming
         {
             if (_streams.TryRemove(sessionId, out var rp))
             {
-                try { await rp.StopAsync(); } catch { }
+                try 
+                { 
+                    // ✅ 添加超时机制，避免无限等待
+                    var stopTask = rp.StopAsync();
+                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                    var completedTask = await Task.WhenAny(stopTask, timeoutTask);
+                    
+                    if (completedTask == timeoutTask)
+                    {
+                        _logger.LogWarning("停止流 {SessionId} 超时（5秒），强制继续", sessionId);
+                    }
+                    else
+                    {
+                        await stopTask;
+                    }
+                } 
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("停止流 {SessionId} 被取消", sessionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "停止流 {SessionId} 时发生异常", sessionId);
+                }
                 return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// 停止所有活动的流（用于应用程序关闭时）
+        /// </summary>
+        public async Task StopAllStreamsAsync(TimeSpan timeout)
+        {
+            if (_streams.IsEmpty)
+            {
+                _logger.LogInformation("没有活动的流需要停止");
+                return;
+            }
+
+            var streamCount = _streams.Count;
+            _logger.LogInformation("开始停止所有 {Count} 个活动流...", streamCount);
+
+            // 获取所有流并清空字典
+            var streamsToStop = new List<(Guid SessionId, RPStreamV2 Stream)>();
+            foreach (var kvp in _streams)
+            {
+                streamsToStop.Add((kvp.Key, kvp.Value));
+            }
+            _streams.Clear();
+
+            // 并行停止所有流，但限制并发数
+            var semaphore = new SemaphoreSlim(5, 5); // 最多同时停止5个流
+            var cts = new CancellationTokenSource(timeout);
+            var stopTasks = streamsToStop.Select(async kvp =>
+            {
+                await semaphore.WaitAsync(cts.Token);
+                try
+                {
+                    _logger.LogDebug("正在停止流 {SessionId}...", kvp.SessionId);
+                    
+                    // 每个流使用共享的 CancellationToken，确保在总超时时间内完成
+                    var stopTask = kvp.Stream.StopAsync();
+                    var timeoutTask = Task.Delay(timeout, cts.Token);
+                    var completedTask = await Task.WhenAny(stopTask, timeoutTask);
+                    
+                    if (completedTask == timeoutTask || cts.Token.IsCancellationRequested)
+                    {
+                        _logger.LogWarning("停止流 {SessionId} 超时或被取消，强制继续", kvp.SessionId);
+                    }
+                    else
+                    {
+                        await stopTask;
+                        _logger.LogDebug("流 {SessionId} 已停止", kvp.SessionId);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("停止流 {SessionId} 被取消", kvp.SessionId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "停止流 {SessionId} 时发生异常", kvp.SessionId);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }).ToList();
+
+            // 等待所有停止任务完成，但不超过总超时时间
+            try
+            {
+                await Task.WhenAll(stopTasks).WaitAsync(timeout);
+                _logger.LogInformation("所有 {Count} 个流已停止", streamCount);
+            }
+            catch (TimeoutException)
+            {
+                cts.Cancel();
+                _logger.LogWarning("停止所有流超时（{Timeout}秒），强制继续关闭", timeout.TotalSeconds);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "停止流时发生异常");
+            }
+            finally
+            {
+                cts.Dispose();
+                semaphore.Dispose();
+            }
         }
 
         public Task<RPStreamV2?> GetStreamAsync(Guid sessionId)

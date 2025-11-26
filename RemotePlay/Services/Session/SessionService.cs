@@ -83,7 +83,7 @@ namespace RemotePlay.Services.Session
             _logger.LogInformation("RP-Nonce: {RPNonce}", rpNonceB64);
             _logger.LogInformation("INIT Response: {InitResponse}", initResponse.Headers);
             if (string.IsNullOrEmpty(rpNonceB64))
-                throw new InvalidOperationException("INIT 响应缺少 RP-Nonce 头");
+                throw new InvalidOperationException("当前主机已被远程连接占用");
             var rpNonce = Convert.FromBase64String(rpNonceB64);
             //var rpNonce = Convert.FromBase64String("T81oBINui9VnsCe3kNwDZA==");
             // 3) 会话密钥派生：根据 HOST 会话密钥与 RP-Key 计算 AES Key 与 rp_iv（rp_nonce）

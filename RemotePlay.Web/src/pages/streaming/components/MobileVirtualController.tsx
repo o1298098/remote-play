@@ -631,6 +631,8 @@ export function MobileVirtualController({
         const leftStickRaw = leftStickDataRef.current
         const rightStickRaw = rightStickDataRef.current
         
+        // 直接使用 ref 中的最新值（ref 在触摸移动时已更新）
+        // 不检查是否为0，因为触摸激活时值应该是实时的
         finalNormalized = {
           leftX: activeTouchIdRef.current.left !== null ? leftStickRaw.x : 0,
           leftY: activeTouchIdRef.current.left !== null ? leftStickRaw.y : 0,
@@ -716,23 +718,30 @@ export function MobileVirtualController({
         console.log(`[左摇杆]`, `x:${x.toFixed(4)} y:${y.toFixed(4)}`)
       }
       
+      // 触摸移动时立即发送，确保零延迟
+      // 必须在更新 ref 后立即发送，确保值一致
       if (sessionId) {
         const isTouchActive = activeTouchIdRef.current.left !== null || activeTouchIdRef.current.right !== null
         if (isTouchActive) {
+          // ref 已经更新，直接读取最新值
           const leftStickRaw = leftStickDataRef.current
           const rightStickRaw = rightStickDataRef.current
           
+          // 使用最新计算的值（对于当前摇杆），或 ref 中的值（对于另一个摇杆）
+          // 由于 ref 已经更新，这里读取的就是最新值
           let sendLeftX = stickType === 'left' ? x : leftStickRaw.x
           let sendLeftY = stickType === 'left' ? y : leftStickRaw.y
           let sendRightX = stickType === 'right' ? x : rightStickRaw.x
           let sendRightY = stickType === 'right' ? y : rightStickRaw.y
           
+          // 立即发送，不等待
           controllerService.sendSticks(sendLeftX, sendLeftY, sendRightX, sendRightY).catch((error) => {
             if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
               console.error('❌ 立即发送摇杆输入失败:', error)
             }
           })
           
+          // 立即更新 lastSentRef，确保循环读取到最新值
           const now = performance.now()
           lastSentRef.current = {
             leftX: sendLeftX,
@@ -742,6 +751,10 @@ export function MobileVirtualController({
             l2: 0,
             r2: 0,
             timestamp: now,
+          }
+          
+          if (stickType === 'left') {
+            console.log(`[左摇杆 立即发送]`, `x:${sendLeftX.toFixed(4)} y:${sendLeftY.toFixed(4)}`)
           }
         }
       }

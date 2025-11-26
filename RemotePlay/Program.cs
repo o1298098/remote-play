@@ -252,6 +252,13 @@ builder.Services.AddHostedService<RemotePlay.Services.Hls.HlsCleanupService>();
 
 // 注册设备状态更新后台服务
 builder.Services.AddHostedService<RemotePlay.Services.Device.DeviceStatusUpdateService>();
+
+// ✅ 配置应用程序关闭超时（默认30秒，可通过配置覆盖）
+var shutdownTimeoutSeconds = builder.Configuration.GetValue<int>("Application:ShutdownTimeoutSeconds", 30);
+builder.Host.ConfigureHostOptions(options =>
+{
+    options.ShutdownTimeout = TimeSpan.FromSeconds(shutdownTimeoutSeconds);
+});
 #endregion
 
 var app = builder.Build();
@@ -314,5 +321,40 @@ app.MapHub<DeviceStatusHub>("/hubs/device-status");
 
 // 映射SignalR Hub（用于流媒体控制）
 app.MapHub<StreamingHub>("/hubs/streaming");
+
+// ✅ 注册应用程序关闭钩子，确保所有流被正确停止
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+var logger = loggerFactory.CreateLogger<Program>();
+
+lifetime.ApplicationStopping.Register(() =>
+{
+    logger.LogInformation("应用程序正在关闭，开始清理所有活动流...");
+
+    try
+    {
+        var streamingService = app.Services.GetRequiredService<RemotePlay.Contracts.Services.IStreamingService>();
+        if (streamingService is RemotePlay.Services.Streaming.StreamingService service)
+        {
+            // 在关闭期间停止所有流，最多等待15秒
+            // 使用 GetAwaiter().GetResult() 来在同步上下文中等待异步操作
+            try
+            {
+                service.StopAllStreamsAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
+                logger.LogInformation("所有流已成功停止");
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "停止所有流时发生异常，继续关闭流程");
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "清理流时发生异常，继续关闭流程");
+    }
+
+    logger.LogInformation("流清理完成，继续关闭流程");
+});
 
 app.Run();

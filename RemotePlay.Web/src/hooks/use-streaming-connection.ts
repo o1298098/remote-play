@@ -18,7 +18,6 @@ import { GamepadButton, PS5_BUTTON_MAP, type GamepadInputEvent } from '@/service
 import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
 import { useStickInputState } from './use-streaming-connection/stick-input-state'
 import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
-import { isMobileDevice } from '@/utils/device-detection'
 
 type ToastFn = (props: { title?: string; description?: string; variant?: 'default' | 'destructive'; [key: string]: any }) => void
 
@@ -564,10 +563,6 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
         if (deviceStatus.includes('STANDBY')) {
           setConnectionState(t('streaming.connection.state.wakingUp'))
-          toast({
-            title: t('streaming.connection.toast.wakingTitle'),
-            description: t('streaming.connection.toast.wakingDescription'),
-          })
 
           const wakeResponse = await playStationService.wakeUpConsole(hostId)
           if (!wakeResponse.success || !wakeResponse.result) {
@@ -646,12 +641,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       console.error('设备准备失败:', error)
       const errorMessage = error instanceof Error ? error.message : t('streaming.connection.errors.unknown')
       const normalizedErrorMessage = errorMessage.toLowerCase()
+      // 更新连接状态，不再显示弹出提示
       if (normalizedErrorMessage.includes('timeout') || errorMessage.includes('超时')) {
-        toast({
-          title: t('streaming.connection.toast.prepareFailedTitle'),
-          description: errorMessage,
-          variant: 'destructive',
-        })
+        setConnectionState(t('streaming.connection.state.failed'))
+        console.warn('设备准备超时:', errorMessage)
       } else {
         console.warn('设备准备遇到错误，但继续等待:', errorMessage)
       }
@@ -747,11 +740,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         }
       } catch (error) {
         console.error('❌ 控制器连接失败:', error)
-        toast({
-          title: t('streaming.connection.toast.controllerFailedTitle'),
-          description: error instanceof Error ? error.message : t('streaming.connection.errors.unknown'),
-          variant: 'destructive',
-        })
+        // 控制器连接失败不影响串流，仅记录日志，不再显示弹出提示
         setupKeyboardControl()
       }
     },
@@ -1033,10 +1022,6 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       }
 
       setConnectionState(t('streaming.connection.state.creatingSession'))
-      toast({
-        title: t('streaming.connection.toast.connectingTitle'),
-        description: t('streaming.connection.toast.connectingDescription', { name: deviceName }),
-      })
 
       const sessionResponse = await streamingService.startSession(hostId)
       console.log('会话创建响应:', sessionResponse)
@@ -1485,13 +1470,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               setIsConnected(true)
               isConnectedRef.current = true
               setConnectionState(t('streaming.connection.state.connected'))
-              // 移动端默认不显示连接成功提示
-              if (!isMobileDevice()) {
-                toast({
-                  title: t('streaming.connection.toast.connectedTitle'),
-                  description: t('streaming.connection.toast.connectedDescription'),
-                })
-              }
+              // 连接成功，顶栏已显示状态，不再显示弹出提示
             })
 
             video.addEventListener('pause', () => {
@@ -2169,11 +2148,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       startStickProcessing()
     } catch (error) {
       console.error('连接失败:', error)
-      toast({
-        title: t('streaming.connection.toast.connectFailedTitle'),
-        description: error instanceof Error ? error.message : t('streaming.connection.errors.unknown'),
-        variant: 'destructive',
-      })
+      // 连接失败，更新状态显示在顶栏，不再显示弹出提示
       setConnectionState(t('streaming.connection.state.failed'))
       disconnect()
     } finally {
