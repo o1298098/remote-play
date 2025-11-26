@@ -17,6 +17,7 @@ import { createKeyboardHandler } from '@/utils/keyboard-mapping'
 import { GamepadButton, PS5_BUTTON_MAP, type GamepadInputEvent } from '@/service/gamepad.service'
 import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, SEND_INTERVAL_MS, TRIGGER_DEADZONE } from './use-streaming-connection/constants'
 import { useStickInputState } from './use-streaming-connection/stick-input-state'
+import { virtualJoystickActiveState } from './use-streaming-connection/virtual-joystick-state'
 import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
 
 type ToastFn = (props: { title?: string; description?: string; variant?: 'default' | 'destructive'; [key: string]: any }) => void
@@ -777,7 +778,16 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     const sendLatest = () => {
-      if (!isConnectedRef.current || !controllerService.isConnected() || !gamepadEnabledRef.current || !isGamepadEnabled) {
+      if (!isConnectedRef.current || !controllerService.isConnected()) {
+        return
+      }
+
+      // 检查是否有虚拟摇杆激活（即使没有实体手柄，虚拟摇杆也应该能工作）
+      // 使用全局虚拟摇杆状态
+      const hasVirtualJoystickActive = virtualJoystickActiveState.left || virtualJoystickActiveState.right
+      
+      // 如果没有实体手柄启用，且没有虚拟摇杆激活，则不发送
+      if ((!gamepadEnabledRef.current || !isGamepadEnabled) && !hasVirtualJoystickActive) {
         return
       }
 
@@ -793,7 +803,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         Math.abs(normalized.rightY - lastSent.rightY)
       const triggerDiff = Math.abs(normalized.l2 - lastSent.l2) + Math.abs(normalized.r2 - lastSent.r2)
       const shouldHeartbeat = now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS
-      const shouldSendSticks = stickDiff > AXIS_DEADZONE || shouldHeartbeat
+      // 虚拟摇杆激活时，应该持续发送，即使值变化很小（模拟真实摇杆的行为）
+      const shouldSendSticks = hasVirtualJoystickActive || stickDiff > AXIS_DEADZONE || shouldHeartbeat
       const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
       if (shouldSendSticks) {
@@ -820,7 +831,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
   const handleGamepadInput = useCallback(
     async (event: GamepadInputEvent) => {
-      if (!isConnectedRef.current || !controllerService.isConnected() || !gamepadEnabledRef.current || !isGamepadEnabled) {
+      // 只检查基本连接状态，不强制要求 controllerService.isConnected()
+      // 因为 sendButton 内部会处理连接状态检查和重连
+      if (!isConnectedRef.current || !gamepadEnabledRef.current || !isGamepadEnabled) {
         return
       }
 
@@ -839,13 +852,14 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
           if (psButtonName) {
             const action = isPressed ? 'press' : 'release'
-            console.log('🎮 手柄按钮输入:', {
-              buttonIndex,
-              psButtonName,
-              action,
-              value: buttonState.value,
+            // 不等待 sendButton 完成，避免阻塞其他按键处理
+            // sendButton 内部会处理连接状态检查和重连
+            controllerService.sendButton(psButtonName, action).catch((error) => {
+              // 只记录非连接相关的错误
+              if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
+                console.error('❌ 发送手柄按键失败:', error)
+              }
             })
-            await controllerService.sendButton(psButtonName, action)
           } else if (buttonIndex >= 12 && buttonIndex <= 15) {
             const dpadMap: Record<number, string> = {
               12: 'up',
@@ -856,7 +870,13 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             const dpadButton = dpadMap[buttonIndex]
             if (dpadButton) {
               const action = isPressed ? 'press' : 'release'
-              await controllerService.sendButton(dpadButton, action)
+              // 不等待 sendButton 完成，避免阻塞其他按键处理
+              controllerService.sendButton(dpadButton, action).catch((error) => {
+                // 只记录非连接相关的错误
+                if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
+                  console.error('❌ 发送手柄按键失败:', error)
+                }
+              })
             }
           }
         }
@@ -2203,7 +2223,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
   }, [isGamepadEnabled])
 
-  useGamepadInput(handleGamepadInput, isConnected && gamepadEnabledRef.current && isGamepadEnabled)
+  // 始终启用 useGamepadInput，在 handleGamepadInput 内部进行检查
+  // 这样可以确保即使 gamepadEnabledRef 变化，事件监听器也会更新
+  useGamepadInput(handleGamepadInput, true)
 
   useEffect(() => {
     webrtcSessionIdRef.current = webrtcSessionId
@@ -2381,6 +2403,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     setStatsMonitoring,
     refreshStream,
     webrtcSessionId,
+    stopStickProcessing,
+    startStickProcessing,
   }
 }
 

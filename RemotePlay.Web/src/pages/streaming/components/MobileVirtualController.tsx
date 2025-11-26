@@ -4,8 +4,8 @@ import { useDevice } from '@/hooks/use-device'
 import { controllerService } from '@/service/controller.service'
 import { getStreamingButtonName } from '@/types/controller-mapping'
 import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown } from 'lucide-react'
-import { AXIS_DEADZONE, MAX_HEARTBEAT_INTERVAL_MS, TRIGGER_DEADZONE, SEND_INTERVAL_MS } from '@/hooks/use-streaming-connection/constants'
 import { useStickInputState } from '@/hooks/use-streaming-connection/stick-input-state'
+import { setVirtualStick, setVirtualStickActive } from '@/hooks/use-streaming-connection/virtual-joystick-state'
 import { createKeyboardHandler } from '@/utils/keyboard-mapping'
 import plainL2Png from '@/assets/plain-L2.png'
 import plainL1Png from '@/assets/plain-L1.png'
@@ -41,11 +41,11 @@ interface ButtonConfig {
 
 const STICK_CONFIG = {
   radius: 60,
-  // 增大移动范围，使摇杆更灵活（真实摇杆通常有更大的物理移动范围）
-  // 80像素约等于20-25mm，接近真实摇杆的物理移动范围
-  maxDistance: 80, // 从15增加到80，允许更大的移动范围，提供更精确的控制
-  // 增大视觉反馈范围，让用户看到更大的移动范围
-  displayMaxDistance: 60, // 从50增加到60，提供更好的视觉反馈
+  // 减小 maxDistance，使摇杆更灵敏，减少死区感
+  // 较小的 maxDistance 意味着更小的移动距离就能达到最大值
+  maxDistance: 50, // 减小到50，使摇杆更灵敏，减少死区感
+  // 视觉反馈范围
+  displayMaxDistance: 60, // 保持60，提供良好的视觉反馈
   responseCurve: 0.95,
 } as const
 
@@ -477,8 +477,6 @@ export function MobileVirtualController({
   
   // 使用与PC端相同的摇杆输入状态管理
   const {
-    getNormalizedState,
-    handleGamepadAxis,
     setKeyboardLeftStick,
     reset: resetStickInput,
   } = useStickInputState()
@@ -492,6 +490,8 @@ export function MobileVirtualController({
   
   const [activeButton, setActiveButton] = useState<string | null>(null)
   const [isBottomBarVisible, setIsBottomBarVisible] = useState(false)
+  const [hasPhysicalGamepad, setHasPhysicalGamepad] = useState(false)
+  const [showVirtualController, setShowVirtualController] = useState(true)
 
   // 使用 ref 存储摇杆数据，touchmove 时只更新 ref，不触发 React 重渲染
   const leftStickDataRef = useRef<{ x: number; y: number; displayX: number; displayY: number }>({
@@ -508,6 +508,10 @@ export function MobileVirtualController({
   })
 
   const activeTouchIdRef = useRef<{ left: number | null; right: number | null }>({
+    left: null,
+    right: null,
+  })
+  const latestTouchPosRef = useRef<{ left: { x: number; y: number } | null; right: { x: number; y: number } | null }>({
     left: null,
     right: null,
   })
@@ -557,18 +561,6 @@ export function MobileVirtualController({
     []
   )
 
-  // 使用与PC端相同的发送逻辑
-  const lastSentRef = useRef<{ leftX: number; leftY: number; rightX: number; rightY: number; l2: number; r2: number; timestamp: number }>({
-    leftX: 0,
-    leftY: 0,
-    rightX: 0,
-    rightY: 0,
-    l2: 0,
-    r2: 0,
-    timestamp: 0,
-  })
-  const stickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null) // 使用 setInterval，与PC端对齐
-
   // 设置键盘左摇杆输入（与PC端对齐）
   useEffect(() => {
     if (!sessionId) {
@@ -610,90 +602,107 @@ export function MobileVirtualController({
 
   useEffect(() => {
     if (!sessionId) {
-      if (stickIntervalRef.current !== null) {
-        clearInterval(stickIntervalRef.current)
-        stickIntervalRef.current = null
-      }
       resetStickInput()
-      lastSentRef.current = { leftX: 0, leftY: 0, rightX: 0, rightY: 0, l2: 0, r2: 0, timestamp: 0 }
+      return
+    }
+  }, [sessionId, resetStickInput])
+
+  // 检测真实手柄连接状态和按键输入
+  useEffect(() => {
+    if (!isMobile) {
       return
     }
 
-    const sendLatest = () => {
-      const now = performance.now()
-      const lastSent = lastSentRef.current
-      
-      const isTouchActive = activeTouchIdRef.current.left !== null || activeTouchIdRef.current.right !== null
-      
-      let finalNormalized
-      if (isTouchActive) {
-        // 触摸激活时，直接使用原始值，跳过 getNormalizedState() 以减少延迟
-        const leftStickRaw = leftStickDataRef.current
-        const rightStickRaw = rightStickDataRef.current
-        
-        // 直接使用 ref 中的最新值（ref 在触摸移动时已更新）
-        // 不检查是否为0，因为触摸激活时值应该是实时的
-        finalNormalized = {
-          leftX: activeTouchIdRef.current.left !== null ? leftStickRaw.x : 0,
-          leftY: activeTouchIdRef.current.left !== null ? leftStickRaw.y : 0,
-          rightX: activeTouchIdRef.current.right !== null ? rightStickRaw.x : 0,
-          rightY: activeTouchIdRef.current.right !== null ? rightStickRaw.y : 0,
-          l2: 0,
-          r2: 0,
+    const checkGamepads = () => {
+      try {
+        const gamepads = navigator.getGamepads?.()
+        if (!gamepads) {
+          setHasPhysicalGamepad(false)
+          return
         }
-      } else {
-        // 触摸未激活时，使用归一化状态（用于键盘输入等）
-        const normalized = getNormalizedState()
-        finalNormalized = normalized
-      }
-      
-      const stickDiff =
-        Math.abs(finalNormalized.leftX - lastSent.leftX) +
-        Math.abs(finalNormalized.leftY - lastSent.leftY) +
-        Math.abs(finalNormalized.rightX - lastSent.rightX) +
-        Math.abs(finalNormalized.rightY - lastSent.rightY)
-      const triggerDiff = Math.abs(finalNormalized.l2 - lastSent.l2) + Math.abs(finalNormalized.r2 - lastSent.r2)
-      const shouldHeartbeat = now - lastSent.timestamp >= MAX_HEARTBEAT_INTERVAL_MS
-      
-      // 触摸激活时，每次循环都发送，不检查变化量，确保持续发送
-      // 否则只在有变化或心跳时发送
-      const shouldSendSticks = isTouchActive || stickDiff > AXIS_DEADZONE || shouldHeartbeat
-      const shouldSendTriggers = triggerDiff > TRIGGER_DEADZONE || shouldHeartbeat
 
-      if (shouldSendSticks) {
-        if (activeTouchIdRef.current.left !== null) {
-          console.log(`[左摇杆 发送]`, `x:${finalNormalized.leftX.toFixed(4)} y:${finalNormalized.leftY.toFixed(4)}`)
+        // 检查是否有已连接的手柄
+        let hasGamepad = false
+        let hasButtonInput = false
+        
+        for (let i = 0; i < gamepads.length; i++) {
+          const gamepad = gamepads[i]
+          if (gamepad) {
+            hasGamepad = true
+            
+            // 检查是否有按钮被按下
+            if (gamepad.buttons) {
+              for (let j = 0; j < gamepad.buttons.length; j++) {
+                const button = gamepad.buttons[j]
+                if (button && button.pressed) {
+                  hasButtonInput = true
+                  break
+                }
+              }
+            }
+            
+            // 检查摇杆是否有输入（排除死区）
+            if (gamepad.axes) {
+              for (let j = 0; j < gamepad.axes.length; j++) {
+                const axis = gamepad.axes[j]
+                if (axis && Math.abs(axis) > 0.1) {
+                  hasButtonInput = true
+                  break
+                }
+              }
+            }
+            
+            if (hasButtonInput) {
+              break
+            }
+          }
         }
         
-        controllerService.sendSticks(finalNormalized.leftX, finalNormalized.leftY, finalNormalized.rightX, finalNormalized.rightY).catch((error) => {
-          if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
-            console.error('❌ 发送摇杆输入失败:', error)
-          }
-        })
+        setHasPhysicalGamepad(hasGamepad)
         
-        lastSentRef.current = { ...finalNormalized, timestamp: now }
-      }
-
-      if (shouldSendTriggers) {
-        const triggerState = isTouchActive ? { l2: 0, r2: 0 } : getNormalizedState()
-        controllerService.sendTriggers(triggerState.l2, triggerState.r2).catch((error) => {
-          if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
-            console.error('❌ 发送扳机压力失败:', error)
-          }
-        })
+        // 如果检测到按键输入，隐藏虚拟控制器
+        if (hasButtonInput && hasGamepad) {
+          setShowVirtualController(false)
+        }
+      } catch (error) {
+        setHasPhysicalGamepad(false)
       }
     }
 
-    sendLatest()
-    stickIntervalRef.current = window.setInterval(sendLatest, SEND_INTERVAL_MS)
+    // 初始检查
+    checkGamepads()
+
+    // 监听手柄连接/断开事件
+    const handleGamepadConnected = () => {
+      setHasPhysicalGamepad(true)
+      setShowVirtualController(false)
+    }
+
+    const handleGamepadDisconnected = () => {
+      checkGamepads()
+      // 断开时保持当前显示状态，不强制显示
+    }
+
+    window.addEventListener('gamepadconnected', handleGamepadConnected)
+    window.addEventListener('gamepaddisconnected', handleGamepadDisconnected)
+
+    // 定期检查（因为某些浏览器可能不会触发事件）
+    // 更频繁地检查按键输入（每100ms），以便及时响应
+    const checkInterval = setInterval(checkGamepads, 100)
 
     return () => {
-      if (stickIntervalRef.current !== null) {
-        clearInterval(stickIntervalRef.current)
-        stickIntervalRef.current = null
-      }
+      window.removeEventListener('gamepadconnected', handleGamepadConnected)
+      window.removeEventListener('gamepaddisconnected', handleGamepadDisconnected)
+      clearInterval(checkInterval)
     }
-  }, [sessionId, getNormalizedState, resetStickInput])
+  }, [isMobile])
+
+  // 当检测到真实手柄时，自动隐藏虚拟控制器
+  useEffect(() => {
+    if (hasPhysicalGamepad) {
+      setShowVirtualController(false)
+    }
+  }, [hasPhysicalGamepad])
 
   const performStickUpdate = useCallback(
     (stickType: 'left' | 'right', touch: Touch, initialX: number, initialY: number) => {
@@ -707,59 +716,17 @@ export function MobileVirtualController({
       const stickDataRef = stickType === 'left' ? leftStickDataRef : rightStickDataRef
       stickDataRef.current = { x, y, displayX, displayY }
       
+      // 更新虚拟摇杆状态（统一由实体手柄的发送循环处理发送）
+      setVirtualStick(stickType, x, y)
+      
       const innerRef = stickType === 'left' ? leftStickInnerRef : rightStickInnerRef
       if (innerRef.current) {
         const clampedDisplayX = Math.max(-STICK_CONFIG.displayMaxDistance, Math.min(STICK_CONFIG.displayMaxDistance, displayX))
         const clampedDisplayY = Math.max(-STICK_CONFIG.displayMaxDistance, Math.min(STICK_CONFIG.displayMaxDistance, displayY))
         innerRef.current.style.transform = `translate(${clampedDisplayX}px, ${clampedDisplayY}px)`
       }
-      
-      if (stickType === 'left') {
-        console.log(`[左摇杆]`, `x:${x.toFixed(4)} y:${y.toFixed(4)}`)
-      }
-      
-      // 触摸移动时立即发送，确保零延迟
-      // 必须在更新 ref 后立即发送，确保值一致
-      if (sessionId) {
-        const isTouchActive = activeTouchIdRef.current.left !== null || activeTouchIdRef.current.right !== null
-        if (isTouchActive) {
-          // ref 已经更新，直接读取最新值
-          const leftStickRaw = leftStickDataRef.current
-          const rightStickRaw = rightStickDataRef.current
-          
-          // 使用最新计算的值（对于当前摇杆），或 ref 中的值（对于另一个摇杆）
-          // 由于 ref 已经更新，这里读取的就是最新值
-          let sendLeftX = stickType === 'left' ? x : leftStickRaw.x
-          let sendLeftY = stickType === 'left' ? y : leftStickRaw.y
-          let sendRightX = stickType === 'right' ? x : rightStickRaw.x
-          let sendRightY = stickType === 'right' ? y : rightStickRaw.y
-          
-          // 立即发送，不等待
-          controllerService.sendSticks(sendLeftX, sendLeftY, sendRightX, sendRightY).catch((error) => {
-            if (error?.message && !error.message.includes('connection') && !error.message.includes('closed')) {
-              console.error('❌ 立即发送摇杆输入失败:', error)
-            }
-          })
-          
-          // 立即更新 lastSentRef，确保循环读取到最新值
-          const now = performance.now()
-          lastSentRef.current = {
-            leftX: sendLeftX,
-            leftY: sendLeftY,
-            rightX: sendRightX,
-            rightY: sendRightY,
-            l2: 0,
-            r2: 0,
-            timestamp: now,
-          }
-          
-          if (stickType === 'left') {
-            console.log(`[左摇杆 立即发送]`, `x:${sendLeftX.toFixed(4)} y:${sendLeftY.toFixed(4)}`)
-          }
-        }
-      }
     },
-    [calculateStickValue, sessionId]
+    [calculateStickValue, setVirtualStick]
   )
 
   const updateStick = useCallback(
@@ -777,6 +744,12 @@ export function MobileVirtualController({
   const handleGlobalTouchStart = useCallback(
     (e: TouchEvent) => {
       if (!isMobile || !sessionId) return
+
+      // 如果虚拟控制器被隐藏（因为有真实手柄），点击屏幕时显示虚拟控制器
+      if (!showVirtualController && hasPhysicalGamepad) {
+        setShowVirtualController(true)
+        return // 显示虚拟控制器后，不处理摇杆逻辑
+      }
 
       for (const touch of Array.from(e.touches)) {
         const touchX = touch.clientX
@@ -818,9 +791,10 @@ export function MobileVirtualController({
           activeTouchIdRef.current.left = touch.identifier
           const initialPos = { x: touchX, y: touchY }
           stickInitialPosRef.current.left = initialPos
-          // 初始化左摇杆状态（使用与PC端相同的处理）
-          handleGamepadAxis(0, 0) // LeftStickX
-          handleGamepadAxis(1, 0) // LeftStickY
+          latestTouchPosRef.current.left = { x: touchX, y: touchY }
+          // 激活虚拟左摇杆
+          setVirtualStickActive('left', true)
+          setVirtualStick('left', 0, 0)
           // 只在 touchstart 时更新 state（控制显示）
           leftStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
           setLeftStickActive(true)
@@ -834,9 +808,10 @@ export function MobileVirtualController({
           activeTouchIdRef.current.right = touch.identifier
           const initialPos = { x: touchX, y: touchY }
           stickInitialPosRef.current.right = initialPos
-          // 初始化右摇杆状态（使用与PC端相同的处理）
-          handleGamepadAxis(2, 0) // RightStickX
-          handleGamepadAxis(3, 0) // RightStickY
+          latestTouchPosRef.current.right = { x: touchX, y: touchY }
+          // 激活虚拟右摇杆
+          setVirtualStickActive('right', true)
+          setVirtualStick('right', 0, 0)
           // 只在 touchstart 时更新 state（控制显示）
           rightStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
           setRightStickActive(true)
@@ -849,7 +824,7 @@ export function MobileVirtualController({
         }
       }
     },
-    [isMobile, sessionId, handleGamepadAxis]
+    [isMobile, sessionId, setVirtualStick, setVirtualStickActive, showVirtualController, hasPhysicalGamepad]
   )
 
   const handleGlobalTouchMove = useCallback(
@@ -860,9 +835,11 @@ export function MobileVirtualController({
       if (activeTouchIdRef.current.left !== null && stickInitialPosRef.current.left) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.left)
         if (touch) {
+          latestTouchPosRef.current.left = { x: touch.clientX, y: touch.clientY }
           const initialPos = stickInitialPosRef.current.left
           updateStick('left', touch, initialPos.x, initialPos.y)
         } else {
+          latestTouchPosRef.current.left = null
           // 触摸丢失时，保持最后的值，不要立即归零
           // 真实摇杆在物理上不会突然跳到0，应该平滑过渡
           // 这里不处理，让循环继续发送最后的值，直到touchend
@@ -872,9 +849,11 @@ export function MobileVirtualController({
       if (activeTouchIdRef.current.right !== null && stickInitialPosRef.current.right) {
         const touch = Array.from(e.touches).find((t) => t.identifier === activeTouchIdRef.current.right)
         if (touch) {
+          latestTouchPosRef.current.right = { x: touch.clientX, y: touch.clientY }
           const initialPos = stickInitialPosRef.current.right
           updateStick('right', touch, initialPos.x, initialPos.y)
         } else {
+          latestTouchPosRef.current.right = null
           // 触摸丢失时，保持最后的值，不要立即归零
         }
       }
@@ -892,10 +871,11 @@ export function MobileVirtualController({
         )
         if (!touchStillActive) {
           activeTouchIdRef.current.left = null
+          latestTouchPosRef.current.left = null
           stickInitialPosRef.current.left = null
-          // 重置左摇杆到中心位置（使用与PC端相同的处理）
-          handleGamepadAxis(0, 0) // LeftStickX
-          handleGamepadAxis(1, 0) // LeftStickY
+          // 停用虚拟左摇杆并重置到中心位置
+          setVirtualStickActive('left', false)
+          setVirtualStick('left', 0, 0)
           leftStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
           // 只在 touchend 时更新 state（控制隐藏）
           setLeftStickActive(false)
@@ -912,10 +892,11 @@ export function MobileVirtualController({
         )
         if (!touchStillActive) {
           activeTouchIdRef.current.right = null
+          latestTouchPosRef.current.right = null
           stickInitialPosRef.current.right = null
-          // 重置右摇杆到中心位置（使用与PC端相同的处理）
-          handleGamepadAxis(2, 0) // RightStickX
-          handleGamepadAxis(3, 0) // RightStickY
+          // 停用虚拟右摇杆并重置到中心位置
+          setVirtualStickActive('right', false)
+          setVirtualStick('right', 0, 0)
           rightStickDataRef.current = { x: 0, y: 0, displayX: 0, displayY: 0 }
           // 只在 touchend 时更新 state（控制隐藏）
           setRightStickActive(false)
@@ -926,7 +907,7 @@ export function MobileVirtualController({
         }
       }
     },
-    [isMobile, handleGamepadAxis]
+    [isMobile, setVirtualStick, setVirtualStickActive]
   )
 
   useEffect(() => {
@@ -1021,6 +1002,123 @@ export function MobileVirtualController({
 
   if (!isMobile || !isVisible) {
     return null
+  }
+
+  // 如果虚拟控制器被隐藏，不渲染虚拟控制器UI
+  if (!showVirtualController && hasPhysicalGamepad) {
+    return (
+      <div className="fixed inset-0 pointer-events-none z-[100]" style={{ touchAction: 'none' }}>
+        {/* 只显示底部栏，不显示虚拟按键 */}
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            handleBottomBarToggle()
+          }}
+          className="fixed z-[100] w-8 h-8 rounded-full bg-black/80 backdrop-blur-md border border-white/40 flex items-center justify-center text-white shadow-lg active:scale-90 transition-all pointer-events-auto"
+          style={{
+            touchAction: 'manipulation',
+            right: '12px',
+            bottom: isBottomBarVisible ? '48px' : '12px',
+            WebkitTapHighlightColor: 'transparent',
+          }}
+          aria-label={isBottomBarVisible ? t('streaming.menu.hide', '隐藏菜单') : t('streaming.menu.show', '显示菜单')}
+        >
+          {isBottomBarVisible ? (
+            <ChevronDown className="h-4 w-4" strokeWidth={2} />
+          ) : (
+            <ChevronUp className="h-4 w-4" strokeWidth={2} />
+          )}
+        </button>
+
+        <div
+          className={`fixed bottom-0 left-0 right-0 z-[100] pointer-events-auto transition-transform duration-300 ease-out ${
+            isBottomBarVisible ? 'translate-y-0' : 'translate-y-full'
+          }`}
+          onTouchStart={handleBottomBarInteraction}
+          onClick={handleBottomBarInteraction}
+        >
+          <div className="bg-black/30 backdrop-blur-sm border-t border-white/20 px-4 py-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {onBack && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onBack()
+                    }}
+                    className="flex items-center justify-center text-white/80 active:text-white active:scale-95 transition-all"
+                    style={{
+                      touchAction: 'manipulation',
+                      width: '32px',
+                      height: '32px',
+                    }}
+                    aria-label={t('streaming.menu.back', '返回')}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </button>
+                )}
+
+                {onRefresh && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRefresh()
+                    }}
+                    className="flex items-center justify-center text-white/80 active:text-white active:scale-95 transition-all"
+                    style={{
+                      touchAction: 'manipulation',
+                      width: '32px',
+                      height: '32px',
+                    }}
+                    aria-label={t('streaming.refresh.label', '刷新串流')}
+                  >
+                    <RotateCw className="h-4 w-4" />
+                  </button>
+                )}
+
+                {onStatsToggle && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onStatsToggle(!isStatsEnabled)
+                    }}
+                    className={`flex items-center justify-center active:scale-95 transition-all ${
+                      isStatsEnabled ? 'text-white' : 'text-white/80 active:text-white'
+                    }`}
+                    style={{
+                      touchAction: 'manipulation',
+                      width: '32px',
+                      height: '32px',
+                    }}
+                    aria-label={
+                      isStatsEnabled
+                        ? t('streaming.monitor.disable', '关闭统计')
+                        : t('streaming.monitor.enable', '显示统计')
+                    }
+                  >
+                    <Activity className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-6">
+                {BOTTOM_BUTTONS.map((config) => (
+                  <VirtualButton
+                    key={config.name}
+                    config={config}
+                    isActive={activeButton === config.name}
+                    onClick={handleButtonClick}
+                  />
+                ))}
+              </div>
+
+              <div className="flex items-center gap-3" style={{ width: '120px' }}></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

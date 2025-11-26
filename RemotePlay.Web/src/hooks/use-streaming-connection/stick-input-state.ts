@@ -11,6 +11,14 @@ import {
   clamp01,
   getTimestamp,
 } from './constants'
+import {
+  virtualStickState,
+  virtualJoystickActiveState,
+  resetVirtualJoystick,
+} from './virtual-joystick-state'
+
+// 导出 resetVirtualJoystick 供外部使用
+export { resetVirtualJoystick }
 
 interface StickVector {
   x: number
@@ -75,6 +83,9 @@ export const useStickInputState = () => {
     leftStick: { x: 0, y: 0 },
     rightStick: { x: 0, y: 0 },
   })
+
+  // 虚拟摇杆当前值（由移动端虚拟摇杆组件更新）
+  // 虚拟摇杆状态现在使用全局模块，不再使用本地 ref
   const keyboardLeftStickRef = useRef<StickVector>({ x: 0, y: 0 })
   const stickHoldRef = useRef<StickHoldState>(createStickHoldState())
   const triggerStateRef = useRef<TriggerState>({
@@ -172,15 +183,25 @@ export const useStickInputState = () => {
     const now = getTimestamp()
 
     const hasKeyboardLeftInput = keyboardLeftStick.x !== 0 || keyboardLeftStick.y !== 0
-    const leftSource = hasKeyboardLeftInput ? keyboardLeftStick : leftStick
+
+    // 选择左摇杆输入源：键盘 > 虚拟摇杆 > 真实手柄
+    const useVirtualLeft = virtualJoystickActiveState.left
+    const leftBase = useVirtualLeft ? virtualStickState.leftStick : leftStick
+    const leftSource = hasKeyboardLeftInput ? keyboardLeftStick : leftBase
+
     const leftRaw = {
       x: clamp(leftSource.x),
       y: clamp(leftSource.y),
     }
+
+    // 选择右摇杆输入源：虚拟摇杆 > 真实手柄(+鼠标)
+    const useVirtualRight = virtualJoystickActiveState.right
+    const rightGamepadRawBase = useVirtualRight ? virtualStickState.rightStick : rightStick
     const rightGamepadRaw = {
-      x: clamp(rightStick.x),
-      y: clamp(rightStick.y),
+      x: clamp(rightGamepadRawBase.x),
+      y: clamp(rightGamepadRawBase.y),
     }
+
     const hasMouseInput = mouseState.isPointerLocked || mouseState.velocityX !== 0 || mouseState.velocityY !== 0
     const rightRaw = hasMouseInput
       ? {
@@ -256,6 +277,8 @@ export const useStickInputState = () => {
   }, [])
 
   const isPointerLocked = useCallback(() => mouseStateRef.current.isPointerLocked, [])
+
+  // setVirtualStick 和 setVirtualStickActive 现在使用全局模块，不再需要本地实现
 
   const reset = useCallback(() => {
     stickStateRef.current.leftStick.x = 0
