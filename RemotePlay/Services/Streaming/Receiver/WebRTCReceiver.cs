@@ -81,6 +81,17 @@ namespace RemotePlay.Services.Streaming.Receiver
         private bool _useOpusDirect = true; // 默认尝试直接发送 Opus
         private bool _opusCodecDetected = false; // 是否检测到 Opus 被选中
         
+        // ✅ 音频重置后同步机制
+        private bool _audioResetting = false; // 是否正在重置音频
+        private int _audioFramesToSkip = 0; // 重置后需要跳过的帧数
+        private const int AUDIO_RESYNC_FRAMES = 2; // 重置后跳过2帧以重新同步（减少音频中断）
+        
+        // ✅ 视频关键帧优先队列：IDR帧优先发送，避免冻结
+        private readonly System.Collections.Generic.Queue<byte[]> _videoFrameQueue = new(); // 普通帧队列
+        private readonly System.Collections.Generic.Queue<byte[]> _videoIdrQueue = new(); // IDR关键帧优先队列
+        private readonly object _videoQueueLock = new();
+        private const int MAX_VIDEO_QUEUE_SIZE = 10; // 最大队列大小，避免延迟累积
+        
         // RTP 常量
         private const int RTP_MTU = 1200; // RTP MTU（通常比 UDP MTU 小）
         private const uint VIDEO_CLOCK_RATE = 90000; // H.264 视频时钟频率

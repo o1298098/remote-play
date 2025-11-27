@@ -281,7 +281,17 @@ namespace RemotePlay.Services.Streaming.AV
                         Array.Copy(frame, 0, packetData, 1, frame.Length);
                         try
                         {
-                            _receiver.OnVideoPacket(packetData);
+                            // ✅ 检测是否为IDR关键帧，优先发送
+                            bool isIdrFrame = IsIdrFrame(frame);
+                            if (isIdrFrame && _receiver is WebRTCReceiver webrtcReceiver)
+                            {
+                                // IDR帧优先发送
+                                webrtcReceiver.OnVideoPacketPriority(packetData);
+                            }
+                            else
+                            {
+                                _receiver.OnVideoPacket(packetData);
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -972,6 +982,64 @@ namespace RemotePlay.Services.Streaming.AV
             }
         }
 
+        #endregion
+
+        #region IDR Detection
+        
+        /// <summary>
+        /// ✅ 检测是否为IDR关键帧
+        /// </summary>
+        private bool IsIdrFrame(byte[] frameData)
+        {
+            if (frameData == null || frameData.Length < 10)
+                return false;
+            
+            // 跳过header（如果有），查找NAL startcode
+            int searchStart = 0;
+            if (frameData.Length > 64)
+            {
+                // 可能有64字节的padding header
+                searchStart = 64;
+            }
+            
+            for (int i = searchStart; i < frameData.Length - 4; i++)
+            {
+                if (frameData[i] == 0x00 && frameData[i + 1] == 0x00)
+                {
+                    int nalStart = -1;
+                    if (i + 3 < frameData.Length && frameData[i + 2] == 0x00 && frameData[i + 3] == 0x01)
+                    {
+                        nalStart = i + 4;
+                    }
+                    else if (i + 2 < frameData.Length && frameData[i + 2] == 0x01)
+                    {
+                        nalStart = i + 3;
+                    }
+                    
+                    if (nalStart >= 0 && nalStart < frameData.Length)
+                    {
+                        byte nalHeader = frameData[nalStart];
+                        
+                        // H.264: NAL type 5 = IDR
+                        byte h264Type = (byte)(nalHeader & 0x1F);
+                        if (h264Type == 5)
+                        {
+                            return true;
+                        }
+                        
+                        // H.265: NAL type 19/20 = IDR
+                        byte hevcType = (byte)((nalHeader >> 1) & 0x3F);
+                        if (hevcType == 19 || hevcType == 20)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            
+            return false;
+        }
+        
         #endregion
     }
 }

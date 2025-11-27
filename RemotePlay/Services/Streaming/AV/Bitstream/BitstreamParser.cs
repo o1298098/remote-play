@@ -265,6 +265,9 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
                 return false;
             }
 
+            // ✅ 检测IDR帧：H.264中nalUnitType == 5 表示IDR
+            slice.IsIdr = (nalUnitType == 5);
+
             var rbsp = new RbspParser(vlc, 0xFFFFFFFF, null);
             rbsp.ReadUE(); // first_mb_in_slice
 
@@ -351,6 +354,9 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
                 _logger?.LogWarning("parse_slice_h265: Unexpected NAL unit type {NalType}", nalUnitType);
                 return false;
             }
+
+            // ✅ 检测IDR帧：H.265中nalUnitType == 20 表示IDR
+            slice.IsIdr = (nalUnitType == 20);
 
             var rbsp = new RbspParser(vlc, 0xFFFFFFFF, null);
             uint firstSliceSegmentInPicFlag = rbsp.ReadU(1);

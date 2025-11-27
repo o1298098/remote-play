@@ -40,6 +40,52 @@ namespace RemotePlay.Services.Streaming.Receiver
             return true; // 成功
         }
         
+        /// <summary>
+        /// ✅ 优先发送IDR关键帧（用于关键帧优先处理）
+        /// </summary>
+        public void OnVideoPacketPriority(byte[] packet)
+        {
+            try
+            {
+                if (_disposed || packet == null || packet.Length <= 1)
+                {
+                    return;
+                }
+
+                _currentVideoFrameIndex++;
+                _latencyStats?.RecordPacketArrival(_sessionId, "video", _currentVideoFrameIndex);
+
+                if (_peerConnection == null)
+                {
+                    return;
+                }
+
+                var videoData = new byte[packet.Length - 1];
+                packet.AsSpan(1).CopyTo(videoData);
+
+                // ✅ B. 当IDR到来时立刻强制丢弃所有待处理的非IDR帧（避免过期帧导致跳帧/抖动）
+                lock (_videoQueueLock)
+                {
+                    int droppedCount = _videoFrameQueue.Count;
+                    _videoFrameQueue.Clear();
+                    if (droppedCount > 0)
+                    {
+                        _logger.LogInformation("🗑️ IDR帧到达：丢弃 {Dropped} 个待处理的非IDR帧，避免过期帧导致跳帧", droppedCount);
+                    }
+                    
+                    // 将IDR帧加入优先队列
+                    _videoIdrQueue.Enqueue(videoData);
+                }
+                
+                // ✅ 修复Bug 1: 在锁外调用ProcessVideoQueue，避免死锁
+                ProcessVideoQueue();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 优先发送视频包失败");
+            }
+        }
+        
         public void OnVideoPacket(byte[] packet)
         {
             try
@@ -81,59 +127,28 @@ namespace RemotePlay.Services.Streaming.Receiver
                 var videoData = new byte[packet.Length - 1];
                 packet.AsSpan(1).CopyTo(videoData);
 
-                // ✅ 添加诊断日志（每100个包记录一次）
-                if (_videoPacketCount % 100 == 0 && _logger.IsEnabled(LogLevel.Debug))
+                // ✅ 普通帧进入队列，由ProcessVideoQueue处理
+                lock (_videoQueueLock)
                 {
-                    _logger.LogDebug("📹 OnVideoPacket: packetLen={Len}, videoDataLen={DataLen}, counter={Count}, connection={State}, ICE={Ice}, signaling={Signaling}", 
-                        packet.Length, videoData.Length, _videoPacketCount, connectionState, iceState, signalingState);
-                }
-
-                if (TrySendVideoDirect(videoData))
-                {
-                    _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                    _videoPacketCount++;
-                    return;
-                }
-
-                // ✅ 对齐帧时间戳策略：在每帧开始时只更新一次时间戳
-                // ✅ 修复：确保时间戳始终递增，避免时间戳回退或停滞导致浏览器认为视频流异常
-                {
-                    var now = DateTime.UtcNow;
-                    if (_videoPacketCount > 0)
+                    int totalQueueSize = _videoFrameQueue.Count + _videoIdrQueue.Count;
+                    if (totalQueueSize >= MAX_VIDEO_QUEUE_SIZE)
                     {
-                        var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                        if (elapsed > 0 && elapsed < 1.0) // 限制最大增量，避免异常大的时间戳跳跃
+                        // 队列已满，丢弃最旧的普通帧
+                        if (_videoFrameQueue.Count > 0)
                         {
-                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                        }
-                        else if (elapsed <= 0)
-                        {
-                            // ✅ 修复：如果时间没有前进（系统时间异常），使用固定增量
-                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                        }
-                        else
-                        {
-                            // ✅ 修复：如果时间跳跃过大（可能是系统时间调整），使用合理的增量
-                            _videoTimestamp += (uint)(1.0 * VIDEO_CLOCK_RATE); // 最多 1 秒的增量
+                            _videoFrameQueue.Dequeue();
                             if (_videoPacketCount % 100 == 0)
                             {
-                                _logger.LogWarning("⚠️ 视频时间戳异常跳跃: {Elapsed}秒，已限制增量", elapsed);
+                                _logger.LogWarning("⚠️ 视频队列已满，丢弃旧帧（队列大小: {Size}）", totalQueueSize);
                             }
                         }
                     }
-                    else
-                    {
-                        // 第一个包，初始化时间戳
-                        _videoTimestamp = 0;
-                    }
-                    _lastVideoPacketTime = now;
+                    _videoFrameQueue.Enqueue(videoData);
                 }
-
-                SendVideoRTP(videoData);
-
-                _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-
-                _videoPacketCount++;
+                
+                // ✅ 修复Bug 1: 在锁外调用ProcessVideoQueue，避免死锁
+                // ✅ 修复Bug 2: 移除无条件return，保留队列处理逻辑
+                ProcessVideoQueue();
             }
             catch (Exception ex)
             {
@@ -191,9 +206,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                             _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
                             return true;
                         }
-                        // 如果发送失败，返回 false 继续尝试其他方式
-
-                        return true;
+                        // ✅ 修复Bug 3: 如果发送失败，返回 false 继续尝试其他方式
+                        return false;
                     }
                     catch (Exception ex)
                     {
@@ -1056,6 +1070,89 @@ namespace RemotePlay.Services.Streaming.Receiver
             return null;
         }
 
+        /// <summary>
+        /// ✅ 处理视频队列：优先发送IDR帧，然后发送普通帧
+        /// </summary>
+        private void ProcessVideoQueue()
+        {
+            lock (_videoQueueLock)
+            {
+                // ✅ 优先处理IDR队列
+                while (_videoIdrQueue.Count > 0)
+                {
+                    var idrFrame = _videoIdrQueue.Dequeue();
+                    
+                    // ✅ 更新时间戳
+                    var now = DateTime.UtcNow;
+                    if (_videoPacketCount > 0)
+                    {
+                        var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
+                        if (elapsed > 0 && elapsed < 1.0)
+                        {
+                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
+                        }
+                        else
+                        {
+                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
+                        }
+                    }
+                    _lastVideoPacketTime = now;
+                    
+                    if (TrySendVideoDirect(idrFrame))
+                    {
+                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
+                        _videoPacketCount++;
+                    }
+                    else
+                    {
+                        // 发送失败，尝试RTP方式
+                        SendVideoRTP(idrFrame);
+                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
+                        _videoPacketCount++;
+                    }
+                }
+                
+                // ✅ 然后处理普通帧队列（限制每次处理的帧数，避免阻塞）
+                int processed = 0;
+                const int MAX_FRAMES_PER_BATCH = 3; // 每批最多处理3帧
+                while (_videoFrameQueue.Count > 0 && processed < MAX_FRAMES_PER_BATCH)
+                {
+                    var frame = _videoFrameQueue.Dequeue();
+                    
+                    // ✅ 更新时间戳
+                    var now = DateTime.UtcNow;
+                    if (_videoPacketCount > 0)
+                    {
+                        var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
+                        if (elapsed > 0 && elapsed < 1.0)
+                        {
+                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
+                        }
+                        else
+                        {
+                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
+                        }
+                    }
+                    _lastVideoPacketTime = now;
+                    
+                    if (TrySendVideoDirect(frame))
+                    {
+                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
+                        _videoPacketCount++;
+                        processed++;
+                    }
+                    else
+                    {
+                        // 发送失败，尝试RTP方式
+                        SendVideoRTP(frame);
+                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
+                        _videoPacketCount++;
+                        processed++;
+                    }
+                }
+            }
+        }
+        
         private bool IsIdrFrame(byte[] buf, int hintOffset)
         {
             if (buf == null || buf.Length < 6) return false;

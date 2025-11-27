@@ -47,7 +47,31 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     _opusDecoder?.Dispose();
                     _opusDecoder = null;
-                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失）");
+                    
+                    // ✅ 重置 RTP 时间戳，使其从当前时间重新开始，避免时间戳不连续导致浏览器端音频播放异常
+                    // 使用当前时间作为新的时间戳基准，确保时间戳连续性
+                    var now = DateTime.UtcNow;
+                    var timeSinceStart = (now - _epochStart).TotalSeconds;
+                    var newTimestamp = (uint)(timeSinceStart * AUDIO_CLOCK_RATE);
+                    
+                    // ✅ 确保时间戳不会向后跳跃（如果新时间戳小于当前时间戳，说明发生了时钟回退，保持当前时间戳）
+                    if (newTimestamp > _audioTimestamp || _audioTimestamp == 0)
+                    {
+                        _audioTimestamp = newTimestamp;
+                    }
+                    else
+                    {
+                        // 如果新时间戳小于当前时间戳，增加一个合理的增量（避免时间戳向后跳跃）
+                        _audioTimestamp += (uint)(_audioFrameSize > 0 ? _audioFrameSize : 480);
+                        _logger.LogDebug("⚠️ 检测到时间戳可能回退，使用增量方式更新时间戳");
+                    }
+                    
+                    // ✅ 重置后需要跳过几帧以重新同步音频流，避免爆音和无声
+                    _audioResetting = true;
+                    _audioFramesToSkip = AUDIO_RESYNC_FRAMES;
+                    
+                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失），RTP时间戳已重置为 {Timestamp}，将跳过 {SkipFrames} 帧以重新同步",
+                        _audioTimestamp, _audioFramesToSkip);
                 }
                 catch (Exception ex)
                 {
@@ -71,6 +95,25 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     _logger.LogWarning("⚠️ 非音频包传入 OnAudioPacket，已忽略");
                     return;
+                }
+
+                // ✅ 如果正在重置音频，跳过几帧以重新同步，避免爆音
+                if (_audioResetting)
+                {
+                    if (_audioFramesToSkip > 0)
+                    {
+                        _audioFramesToSkip--;
+                        if (_audioFramesToSkip == 0)
+                        {
+                            _audioResetting = false;
+                            _logger.LogInformation("✅ 音频重新同步完成，恢复正常发送");
+                        }
+                        else
+                        {
+                            _logger.LogDebug("⏭️ 跳过音频帧以重新同步，剩余 {Remaining} 帧", _audioFramesToSkip);
+                        }
+                        return; // 跳过此帧
+                    }
                 }
 
                 var opusFrame = packet.AsSpan(1).ToArray();

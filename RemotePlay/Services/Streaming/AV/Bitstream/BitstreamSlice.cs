@@ -17,6 +17,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
     {
         public SliceType SliceType { get; set; }
         public uint ReferenceFrame { get; set; } = 0xFF; // 0xFF 表示未找到或无效
+        public bool IsIdr { get; set; } = false; // ✅ 是否为IDR关键帧
     }
 }
 

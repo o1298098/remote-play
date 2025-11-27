@@ -30,6 +30,10 @@ namespace RemotePlay.Services.Streaming.AV
         private Action<int, int>? _corruptFrameCallback;
         private Action? _requestKeyframeCallback;
 
+        // ✅ 参考链断裂检测：当P帧缺少参考帧时，标记为断裂并丢弃后续P/B帧直到下一个IDR
+        private bool _referenceChainBroken = false; // 参考链是否断裂
+        private int _lastValidFrameIndex = -1; // 最后一个有效帧的索引
+
         private readonly object _lock = new();
 
         public VideoReceiver(ILogger<VideoReceiver>? logger = null)
@@ -303,7 +307,8 @@ namespace RemotePlay.Services.Streaming.AV
             bool success = flushResult != FlushResult.FecFailed;
             bool recovered = flushResult == FlushResult.FecSuccess;
 
-            // 检查 P 帧的参考帧
+            // ✅ 检查参考链是否断裂：如果之前标记为断裂，且当前帧不是IDR，则丢弃
+            bool isIdrFrame = false;
             BitstreamSlice? slice = null;
             if (frame != null && frameSize > 0 && _bitstreamParser != null)
             {
@@ -311,11 +316,37 @@ namespace RemotePlay.Services.Streaming.AV
                 if (_bitstreamParser.ParseSlice(frame, out parsedSlice))
                 {
                     slice = parsedSlice;
+                    
+                    // ✅ 检测是否为IDR帧（使用IsIdr属性）
+                    isIdrFrame = parsedSlice.IsIdr;
+                    
+                    // ✅ 如果参考链已断裂，且当前帧不是IDR，则丢弃
+                    if (_referenceChainBroken && !isIdrFrame)
+                    {
+                        _logger?.LogWarning("🚫 参考链断裂：丢弃P/B帧 {Frame}（等待IDR恢复）", _frameIndexCur);
+                        success = false;
+                        _framesLost++;
+                        return; // 直接返回，不处理此帧
+                    }
+                    
                     if (parsedSlice.SliceType == SliceType.P)
                     {
                         int refFrameIndex = _frameIndexCur - (int)parsedSlice.ReferenceFrame - 1;
                         if (parsedSlice.ReferenceFrame != 0xFF && !_referenceFrameManager.HasReferenceFrame(refFrameIndex))
                         {
+                            // ✅ 检测到P帧缺少参考帧，标记参考链断裂
+                            _referenceChainBroken = true;
+                            _logger?.LogWarning("⚠️ 参考链断裂：P帧 {Frame} 缺少参考帧 {RefFrame}，将丢弃后续P/B帧直到下一个IDR",
+                                _frameIndexCur, refFrameIndex);
+                            
+                            // ✅ A. 当参考链断裂时清除解码器状态（防止硬件解码器卡住）
+                            _referenceFrameManager.Reset();
+                            _frameProcessor.Reset();
+                            _logger?.LogWarning("🔄 已清除解码器状态（参考链断裂）");
+                            
+                            // 立即请求关键帧
+                            _requestKeyframeCallback?.Invoke();
+                            
                             // 尝试查找替代参考帧
                             int alternativeRefFrame = _referenceFrameManager.FindAvailableReferenceFrame(_frameIndexCur, parsedSlice.ReferenceFrame);
                             if (alternativeRefFrame >= 0)
@@ -325,8 +356,9 @@ namespace RemotePlay.Services.Streaming.AV
                                 {
                                     frame = modified;
                                     recovered = true;
-                                    _logger?.LogWarning("Missing reference frame {RefFrame} for decoding frame {Frame} -> changed to {AltRefFrame}",
-                                        refFrameIndex, _frameIndexCur, _frameIndexCur - alternativeRefFrame - 1);
+                                    _referenceChainBroken = false; // 恢复成功，清除断裂标记
+                                    _logger?.LogWarning("✅ 参考链恢复：P帧 {Frame} 使用替代参考帧 {AltRefFrame}",
+                                        _frameIndexCur, _frameIndexCur - alternativeRefFrame - 1);
                                 }
                                 else
                                 {
@@ -344,6 +376,20 @@ namespace RemotePlay.Services.Streaming.AV
                         }
                     }
                 }
+            }
+            
+            // ✅ 如果收到IDR帧，清除参考链断裂标记并重置参考帧管理器
+            if (isIdrFrame)
+            {
+                if (_referenceChainBroken)
+                {
+                    _referenceChainBroken = false;
+                    _lastValidFrameIndex = _frameIndexCur;
+                    _logger?.LogInformation("✅ 参考链恢复：收到IDR帧 {Frame}，恢复正常解码", _frameIndexCur);
+                }
+                
+                // ✅ IDR帧到来时，重置参考帧管理器（开始新的GOP）
+                _referenceFrameManager.Reset();
             }
 
             if (success && onFrameReady != null && frame != null)
@@ -368,6 +414,13 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     _framesLost = 0;
                     _referenceFrameManager.AddReferenceFrame(_frameIndexCur);
+                    _lastValidFrameIndex = _frameIndexCur;
+                    
+                    // ✅ 如果成功处理了IDR帧，确保清除参考链断裂标记
+                    if (isIdrFrame)
+                    {
+                        _referenceChainBroken = false;
+                    }
                 }
                 else
                 {
