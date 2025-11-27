@@ -395,13 +395,15 @@
         "upload": "上行速率",
         "videoBitrate": "视频码率",
         "resolution": "分辨率",
-        "latency": "延迟"
+        "latency": "延迟",
+        "fps": "帧率"
       },
       "units": {
         "mbps": "{{value}} Mbps",
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} 毫秒",
-        "resolution": "{{width}} × {{height}}"
+        "resolution": "{{width}} × {{height}}",
+        "fps": "{{value}} fps"
       }
     },
     "loading": {

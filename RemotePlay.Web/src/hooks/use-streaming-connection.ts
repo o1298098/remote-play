@@ -28,6 +28,7 @@ interface UseStreamingConnectionParams {
   isLikelyLan: boolean
   videoRef: React.RefObject<HTMLVideoElement>
   toast: ToastFn
+  onConnectionError?: (reason: string) => void
 }
 
 export interface StreamingMonitorStats {
@@ -36,9 +37,10 @@ export interface StreamingMonitorStats {
   videoBitrateKbps: number | null
   resolution: { width: number; height: number } | null
   latencyMs: number | null
+  fps: number | null
 }
 
-export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoRef, toast }: UseStreamingConnectionParams) {
+export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoRef, toast, onConnectionError }: UseStreamingConnectionParams) {
   const { t } = useTranslation()
   const [isConnected, setIsConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
@@ -47,6 +49,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const [remotePlaySessionId, setRemotePlaySessionId] = useState<string | null>(null)
   const [connectionStats, setConnectionStats] = useState<StreamingMonitorStats | null>(null)
   const [isStatsEnabled, setIsStatsEnabled] = useState(false)
+  const [isStalling, setIsStalling] = useState(false)
 
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const videoOptimizeCleanupRef = useRef<(() => void) | null>(null)
@@ -55,6 +58,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const isConnectedRef = useRef<boolean>(false)
   const hasAttemptedInitialConnectRef = useRef<boolean>(false)
   const rumbleSettingsRef = useRef<RumbleSettings>(getRumbleSettings())
+  const hasTriggeredErrorCallbackRef = useRef<boolean>(false)
   
   // ✅ ICE Restart 相关状态
   const iceRestartTimeoutRef = useRef<number | null>(null)
@@ -106,6 +110,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     bytesReceived: number
     bytesSent: number
     videoBytesReceived: number
+    framesDecoded: number | null
   } | null>(null)
   const webrtcSessionIdRef = useRef<string | null>(null)
   const isStreamBoundRef = useRef<boolean>(false)
@@ -212,24 +217,34 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   // 向外暴露的手动刷新方法（请求关键帧）
   const refreshStream = useCallback(() => {
     const ok = requestKeyframe('manual-refresh')
+    // 在已连接状态下，减少提示干扰，只在失败时显示简短提示
     if (!ok) {
       try {
+        // 只在失败时显示简短提示，使用较短的显示时间
         toast({
           title: t('streaming.refresh.unavailableTitle', '无法刷新'),
           description: t('streaming.refresh.unavailableDesc', '当前会话不可用或仍在冷却中'),
           variant: 'destructive',
+          duration: 2000, // 2秒后自动消失
         })
       } catch {
         // ignore toast failure in environments without i18n/toast
       }
     } else {
+      // 成功时，如果已连接则不显示提示（避免干扰游戏），只在控制台记录
+      if (isConnectedRef.current) {
+        console.log('✅ 刷新请求已发送')
+      } else {
+        // 未连接时显示提示
       try {
         toast({
           title: t('streaming.refresh.sentTitle', '已发送刷新请求'),
           description: t('streaming.refresh.sentDesc', '请稍候，尝试恢复画面'),
+            duration: 2000, // 2秒后自动消失
         })
       } catch {
         // ignore
+        }
       }
     }
     return ok
@@ -428,6 +443,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       let frameWidth: number | null = null
       let frameHeight: number | null = null
       let latencyMs: number | null = null
+      let framesDecoded: number | null = null
 
       statsReport.forEach((report) => {
         const anyReport = report as any
@@ -444,6 +460,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             if (typeof anyReport.frameHeight === 'number') {
               frameHeight = anyReport.frameHeight
             }
+            // 获取解码的帧数（用于计算帧率）
+            if (typeof anyReport.framesDecoded === 'number') {
+              framesDecoded = anyReport.framesDecoded
+            }
           }
         }
 
@@ -459,8 +479,22 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         }
       })
 
+      // 从 WebRTC 统计信息计算帧率
+      let fps: number | null = null
       const now = performance.now()
       const previous = previousStatsRef.current
+      
+      if (framesDecoded !== null && previous !== null && previous.framesDecoded !== null) {
+        const elapsedSeconds = (now - previous.timestamp) / 1000
+        if (elapsedSeconds > 0) {
+          const framesDiff = Math.max(0, framesDecoded - previous.framesDecoded)
+          fps = framesDiff / elapsedSeconds
+          // 确保帧率是有效数字
+          if (!Number.isFinite(fps) || fps < 0) {
+            fps = null
+          }
+        }
+      }
 
       if (!previous) {
         previousStatsRef.current = {
@@ -468,6 +502,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           bytesReceived: totalInboundBytes,
           bytesSent: totalOutboundBytes,
           videoBytesReceived: videoInboundBytes,
+          framesDecoded: framesDecoded ?? null,
         }
 
         setConnectionStats((prev) => ({
@@ -479,6 +514,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               ? { width: frameWidth, height: frameHeight }
               : prev?.resolution ?? null,
           latencyMs: latencyMs ?? prev?.latencyMs ?? null,
+          fps: fps ?? prev?.fps ?? null,
         }))
 
         return
@@ -502,6 +538,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         bytesReceived: totalInboundBytes,
         bytesSent: totalOutboundBytes,
         videoBytesReceived: videoInboundBytes,
+        framesDecoded: framesDecoded ?? previous.framesDecoded ?? 0,
       }
 
       setConnectionStats((prev) => ({
@@ -513,6 +550,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             ? { width: frameWidth, height: frameHeight }
             : prev?.resolution ?? null,
         latencyMs: latencyMs ?? prev?.latencyMs ?? null,
+        fps: fps ?? prev?.fps ?? null,
       }))
     } catch (error) {
       console.warn('获取 WebRTC 统计信息失败:', error)
@@ -1012,6 +1050,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     isConnectedRef.current = false
     setIsConnecting(false)
     setConnectionState(t('streaming.connection.state.disconnected'))
+    // 断开连接时，重置错误回调标志和卡顿状态
+    hasTriggeredErrorCallbackRef.current = false
+    setIsStalling(false)
   }, [remotePlaySessionId, stopStickProcessing, t, videoRef, webrtcSessionId])
 
   const connect = useCallback(async () => {
@@ -1499,6 +1540,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
             video.addEventListener('waiting', () => {
               console.warn('⚠️ 视频等待缓冲')
+              setIsStalling(true)
               if (video.paused) {
                 console.log('🔄 视频暂停中，尝试恢复播放')
                 video.play().catch((err) => {
@@ -1510,6 +1552,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
             video.addEventListener('stalled', () => {
               console.warn('⚠️ 视频加载停滞')
+              setIsStalling(true)
               if (video.paused) {
                 console.log('🔄 视频停滞，尝试恢复播放')
                 video.play().catch((err) => {
@@ -1517,6 +1560,11 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
                 })
               }
               requestKeyframe('video-stalled')
+            })
+
+            video.addEventListener('playing', () => {
+              // 视频开始播放时，清除卡顿状态
+              setIsStalling(false)
             })
 
             video.addEventListener('progress', () => {
@@ -1662,6 +1710,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           setIsConnecting(false)
           setIsConnected(true)
           isConnectedRef.current = true
+          // 连接成功，重置错误回调标志
+          hasTriggeredErrorCallbackRef.current = false
 
           const playCheckInterval = setInterval(() => {
             if (videoRef.current && videoRef.current.paused && videoRef.current.srcObject) {
@@ -1740,12 +1790,25 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           })
           
           // 分析断开原因
+          let disconnectReason = ''
           if (iceState === 'failed') {
+            disconnectReason = t('streaming.connection.errors.iceFailed', 'ICE 连接失败，可能是网络不可达或 TURN 服务器问题')
             console.error('❌ 断开原因：ICE 连接失败，可能是网络不可达或 TURN 服务器问题')
           } else if (iceState === 'disconnected') {
+            disconnectReason = t('streaming.connection.errors.iceDisconnected', 'ICE 连接断开，可能是网络波动或 NAT 映射过期')
             console.warn('⚠️ 断开原因：ICE 连接断开，可能是网络波动或 NAT 映射过期')
           } else if (state === 'failed') {
+            disconnectReason = t('streaming.connection.errors.webrtcFailed', 'WebRTC 连接失败')
             console.error('❌ 断开原因：WebRTC 连接失败')
+          } else if (state === 'closed') {
+            disconnectReason = t('streaming.connection.errors.connectionClosed', '连接已关闭')
+            console.warn('⚠️ 断开原因：连接已关闭')
+          }
+          
+          // 如果之前已连接，现在断开，则触发错误回调（只触发一次）
+          if (isConnectedRef.current && disconnectReason && onConnectionError && !hasTriggeredErrorCallbackRef.current) {
+            hasTriggeredErrorCallbackRef.current = true
+            onConnectionError(disconnectReason)
           }
           
           setIsConnected(false)
@@ -1861,18 +1924,26 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           console.log('✅ ICE 连接已建立:', state)
           reinforceLatencyHints(peerConnection)
           
-          // ✅ 连接恢复，清除断开计时器
+          // ✅ 连接恢复，清除断开计时器和错误回调标志
           if (iceRestartTimeoutRef.current !== null) {
             window.clearTimeout(iceRestartTimeoutRef.current)
             iceRestartTimeoutRef.current = null
           }
           iceDisconnectedTimeRef.current = null
+          hasTriggeredErrorCallbackRef.current = false
         } else if (state === 'failed') {
           console.error('❌ ICE 连接失败', {
             connectionState,
             signalingState,
             iceGatheringState,
           })
+          
+          // 如果之前已连接，现在失败，则触发错误回调（只触发一次）
+          if (isConnectedRef.current && onConnectionError && !hasTriggeredErrorCallbackRef.current) {
+            hasTriggeredErrorCallbackRef.current = true
+            const reason = t('streaming.connection.errors.iceFailed', 'ICE 连接失败，可能是网络不可达或 TURN 服务器问题')
+            onConnectionError(reason)
+          }
           
           // ✅ 延迟后尝试 ICE Restart（避免短暂抖动）
           if (iceRestartTimeoutRef.current !== null) {
@@ -1901,6 +1972,17 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           // ✅ 如果连接刚建立就断开，可能是网络不稳定或 TURN 服务器问题
           if (connectionState === 'connected' || connectionState === 'connecting') {
             console.warn('⚠️ ICE 断开时连接仍处于活跃状态，可能是网络波动或 TURN 服务器不稳定')
+          }
+          
+          // 如果之前已连接，现在断开，且持续超过一定时间，则触发错误回调（只触发一次）
+          if (isConnectedRef.current && onConnectionError && !hasTriggeredErrorCallbackRef.current) {
+            const disconnectedDuration = iceDisconnectedTimeRef.current ? Date.now() - iceDisconnectedTimeRef.current : 0
+            // 如果断开超过 15 秒，认为连接异常
+            if (disconnectedDuration >= 15000) {
+              hasTriggeredErrorCallbackRef.current = true
+              const reason = t('streaming.connection.errors.iceDisconnected', 'ICE 连接断开，可能是网络波动或 NAT 映射过期')
+              onConnectionError(reason)
+            }
           }
           
           // ✅ 延迟后尝试 ICE Restart（避免短暂抖动，disconnected 持续 > 10秒才触发）
@@ -2163,6 +2245,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       isConnectedRef.current = true
       setIsConnecting(false)
       setConnectionState(t('streaming.connection.state.connected'))
+      // 连接成功，重置错误回调标志
+      hasTriggeredErrorCallbackRef.current = false
       console.log('✅ 连接状态已设置为已连接')
 
       startStickProcessing()
@@ -2170,6 +2254,30 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       console.error('连接失败:', error)
       // 连接失败，更新状态显示在顶栏，不再显示弹出提示
       setConnectionState(t('streaming.connection.state.failed'))
+      
+      // 生成错误原因
+      let errorReason = t('streaming.connection.errors.connectionFailed', '连接失败')
+      if (error instanceof Error) {
+        const errorMessage = error.message.toLowerCase()
+        if (errorMessage.includes('timeout') || errorMessage.includes('超时')) {
+          errorReason = t('streaming.connection.errors.connectionTimeout', '连接超时')
+        } else if (errorMessage.includes('device') || errorMessage.includes('设备')) {
+          errorReason = error.message
+        } else if (errorMessage.includes('session') || errorMessage.includes('会话')) {
+          errorReason = t('streaming.connection.errors.sessionFailed', '会话创建失败')
+        } else if (errorMessage.includes('offer') || errorMessage.includes('offer')) {
+          errorReason = t('streaming.connection.errors.offerFailed', 'Offer 创建失败')
+        } else {
+          errorReason = error.message || errorReason
+        }
+      }
+      
+      // 触发错误回调（只触发一次）
+      if (onConnectionError && !hasTriggeredErrorCallbackRef.current) {
+        hasTriggeredErrorCallbackRef.current = true
+        onConnectionError(errorReason)
+      }
+      
       disconnect()
     } finally {
       setIsConnecting(false)
@@ -2285,6 +2393,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     const checkStall = () => {
       const video = videoRef.current
       if (!video || !isConnectedRef.current) {
+        setIsStalling(false)
         return
       }
 
@@ -2293,6 +2402,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         lastVideoActivityRef.current = now
         lastDecodedFrameCountRef.current = null
         lastPlaybackPositionRef.current = null
+        setIsStalling(false)
         return
       }
 
@@ -2301,6 +2411,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         if (lastDecodedFrameCountRef.current === null || decodedFrames > lastDecodedFrameCountRef.current) {
           lastDecodedFrameCountRef.current = decodedFrames
           lastVideoActivityRef.current = now
+          setIsStalling(false)
           return
         }
       } else {
@@ -2311,15 +2422,19 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         ) {
           lastPlaybackPositionRef.current = currentPosition
           lastVideoActivityRef.current = now
+          setIsStalling(false)
           return
         }
       }
 
       const inactivity = now - lastVideoActivityRef.current
       if (inactivity < STALL_THRESHOLD_MS) {
+        setIsStalling(false)
         return
       }
 
+      // 检测到卡顿
+      setIsStalling(true)
       void handleStreamHealthCheck('monitor-stall', { forceNeutral: true })
     }
 
@@ -2405,6 +2520,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     webrtcSessionId,
     stopStickProcessing,
     startStickProcessing,
+    isStalling,
   }
 }
 

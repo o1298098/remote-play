@@ -91,7 +91,7 @@ const LEFT_BUTTONS: ButtonConfig[] = [
     alt: 'L2',
     style: {
       top: '23%',
-      left: '50%',
+      left: '30%',
       width: '100px',
       height: '100px',
     },
@@ -102,7 +102,7 @@ const LEFT_BUTTONS: ButtonConfig[] = [
     alt: 'L1',
     style: {
       top: '45%',
-      left: '130%',
+      left: '110%',
       width: '100px',
       height: '100px',
     },
@@ -116,9 +116,9 @@ const DPAD_BUTTONS: ButtonConfig[] = [
     alt: 'Up',
     style: {
       top: '130%',
-      left: '140%',
+      left: '120%',
       transform: 'translateX(-50%)',
-      width: `${(55 * 17) / 20}px`,
+      width: `${(55 * 17) / 23}px`,
       height: '55px',
     },
   },
@@ -127,11 +127,11 @@ const DPAD_BUTTONS: ButtonConfig[] = [
     icon: directionLeftPng,
     alt: 'Left',
     style: {
-      left: '60%',
+      left: '40%',
       top: '200%',
       transform: 'translateY(-50%)',
       width: '55px',
-      height: `${(55 * 17) / 20}px`,
+      height: `${(55 * 17) / 23}px`,
     },
   },
   {
@@ -139,11 +139,11 @@ const DPAD_BUTTONS: ButtonConfig[] = [
     icon: directionRightPng,
     alt: 'Right',
     style: {
-      left: '160%',
+      left: '140%',
       top: '200%',
       transform: 'translateY(-50%)',
       width: '55px',
-      height: `${(55 * 17) / 20}px`,
+      height: `${(55 * 17) / 23}px`,
     },
   },
   {
@@ -152,9 +152,9 @@ const DPAD_BUTTONS: ButtonConfig[] = [
     alt: 'Down',
     style: {
       top: '210%',
-      left: '140%',
+      left: '120%',
       transform: 'translateX(-50%)',
-      width: `${(55 * 17) / 20}px`,
+      width: `${(55 * 17) / 23}px`,
       height: '55px',
     },
   },

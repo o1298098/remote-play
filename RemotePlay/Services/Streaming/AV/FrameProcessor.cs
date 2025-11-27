@@ -28,8 +28,7 @@ namespace RemotePlay.Services.Streaming.AV
         private readonly object _lock = new();
         
         // Packet stats for congestion control (类似chiaki的packet_stats)
-        private ulong _packetStatsReceived = 0;
-        private ulong _packetStatsLost = 0;
+        private Congestion.PacketStats? _packetStats;
 
         private const int UNIT_SLOTS_MAX = 512;
         private const int VIDEO_BUFFER_PADDING_SIZE = 64;
@@ -61,8 +60,6 @@ namespace RemotePlay.Services.Streaming.AV
                 _unitSlotsSize = 0;
                 _flushed = true;
                 _streamStats.Reset();
-                _packetStatsReceived = 0;
-                _packetStatsLost = 0;
             }
         }
 
@@ -362,6 +359,14 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
+        /// 设置包统计（用于拥塞控制）
+        /// </summary>
+        public void SetPacketStats(Congestion.PacketStats? packetStats)
+        {
+            _packetStats = packetStats;
+        }
+
+        /// <summary>
         /// 报告 packet stats（用于拥塞控制）
         /// 类似chiaki的chiaki_frame_processor_report_packet_stats
         /// 应该在检测到新帧时调用（在AllocFrame之前）
@@ -377,25 +382,34 @@ namespace RemotePlay.Services.Streaming.AV
                     ulong expected = (ulong)(_unitsSourceExpected + _unitsFecExpected);
                     ulong lost = expected > received ? expected - received : 0;
                     
-                    _packetStatsReceived += received;
-                    _packetStatsLost += lost;
+                    // 记录详细的统计信息（用于调试固定丢失率问题）
+                    if (expected > 0)
+                    {
+                        double lossRate = expected > 0 ? (double)lost / expected : 0;
+                        _logger?.LogDebug(
+                            "FrameProcessor stats: source_expected={SourceExpected}, source_received={SourceReceived}, " +
+                            "fec_expected={FecExpected}, fec_received={FecReceived}, " +
+                            "total_expected={TotalExpected}, total_received={TotalReceived}, lost={Lost}, loss_rate={LossRate:P2}",
+                            _unitsSourceExpected, _unitsSourceReceived,
+                            _unitsFecExpected, _unitsFecReceived,
+                            expected, received, lost, lossRate);
+                    }
+                    
+                    // ✅ 推送 Generation 统计（类似 chiaki_packet_stats_push_generation）
+                    _packetStats?.PushGeneration(received, lost);
                 }
             }
         }
 
         /// <summary>
         /// 获取并重置 packet stats（用于拥塞控制）
-        /// 返回 (received, lost) 的累积值并重置
+        /// 注意：现在统计由 PacketStats 统一管理，这个方法保留用于兼容性
         /// </summary>
+        [Obsolete("统计现在由 PacketStats 统一管理，请使用 PacketStats.GetAndReset")]
         public (ulong received, ulong lost) GetAndResetPacketStats()
         {
-            lock (_lock)
-            {
-                var result = (_packetStatsReceived, _packetStatsLost);
-                _packetStatsReceived = 0;
-                _packetStatsLost = 0;
-                return result;
-            }
+            // 返回空值，因为统计现在由 PacketStats 统一管理
+            return (0, 0);
         }
     }
 

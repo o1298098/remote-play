@@ -138,6 +138,7 @@ namespace RemotePlay.Services.Streaming.Core
         // ✅ Feedback 和 Congestion 服务
         private FeedbackSenderService? _feedbackSender;
         private CongestionControlService? _congestionControl;
+        private Congestion.PacketStats? _packetStats;  // 包统计（类似 chiaki 的 ChiakiPacketStats）
         
         // ✅ 自适应流管理器
         private AdaptiveStreamManager? _adaptiveStreamManager;
@@ -245,11 +246,21 @@ namespace RemotePlay.Services.Streaming.Core
                 });
             _avHandler.SetStreamHealthCallback(OnStreamHealthEvent);
             
+            // ✅ 设置 PacketStats 到 AVHandler 和 VideoReceiver
+            if (_packetStats != null)
+            {
+                _avHandler.SetPacketStats(_packetStats);
+                // VideoReceiver 的 PacketStats 通过 AVHandler 内部设置
+            }
+            
             // ✅ 初始化 FeedbackSender 服务
             _feedbackSender = new FeedbackSenderService(
                 _loggerFactory.CreateLogger<FeedbackSenderService>(),
                 SendFeedbackPacketAsync  // 发送回调
             );
+            
+            // ✅ 初始化 PacketStats（类似 chiaki 的 ChiakiPacketStats）
+            _packetStats = new Congestion.PacketStats();
             
             // ✅ 初始化 CongestionControl 服务
             _congestionControl = new CongestionControlService(
@@ -1757,23 +1768,21 @@ namespace RemotePlay.Services.Streaming.Core
         
         /// <summary>
         /// 获取包统计（用于 CongestionControl）
+        /// 类似 chiaki 的 chiaki_packet_stats_get，合并 generation 和 sequence 统计
         /// </summary>
         private (ushort, ushort) GetPacketStats()
         {
-            if (_avHandler == null)
-            return (0, 0);
+            if (_packetStats == null)
+                return (0, 0);
 
-            var stats = _avHandler.GetAndResetStats();
-            _lastPipelineStats = stats;
+            // 获取并重置统计（合并 generation 和 sequence 统计）
+            var (received, lost) = _packetStats.GetAndReset(reset: true);
 
-            int totalReceived = stats.VideoReceived + stats.AudioReceived;
-            int totalLost = stats.VideoLost + stats.AudioLost;
+            // 限制在 ushort 范围内
+            if (received > ushort.MaxValue) received = ushort.MaxValue;
+            if (lost > ushort.MaxValue) lost = ushort.MaxValue;
 
-            if (totalReceived < 0) totalReceived = 0;
-            if (totalLost < 0) totalLost = 0;
-            if (totalReceived > ushort.MaxValue) totalReceived = ushort.MaxValue;
-            if (totalLost > ushort.MaxValue) totalLost = ushort.MaxValue;
-            return ((ushort)totalReceived, (ushort)totalLost);
+            return ((ushort)received, (ushort)lost);
         }
 
         public (StreamHealthSnapshot Snapshot, StreamPipelineStats PipelineStats) GetStreamHealth()

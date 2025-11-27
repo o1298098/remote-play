@@ -395,13 +395,15 @@
         "upload": "Upload rate",
         "videoBitrate": "Video bitrate",
         "resolution": "Resolution",
-        "latency": "Latency"
+        "latency": "Latency",
+        "fps": "Frame rate"
       },
       "units": {
         "mbps": "{{value}} Mbps",
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} ms",
-        "resolution": "{{width}} × {{height}}"
+        "resolution": "{{width}} × {{height}}",
+        "fps": "{{value}} fps"
       }
     },
     "loading": {

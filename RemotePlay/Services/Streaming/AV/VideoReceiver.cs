@@ -63,6 +63,14 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
+        /// 设置包统计（用于拥塞控制）
+        /// </summary>
+        public void SetPacketStats(Congestion.PacketStats? packetStats)
+        {
+            _frameProcessor?.SetPacketStats(packetStats);
+        }
+
+        /// <summary>
         /// 设置视频 profiles
         /// </summary>
         public void SetStreamInfo(VideoProfile[] profiles)
@@ -220,14 +228,12 @@ namespace RemotePlay.Services.Streaming.AV
                 // 检测新帧
                 if (_frameIndexCur < 0 || (!IsSeq16Older(packet.FrameIndex, _frameIndexCur) && packet.FrameIndex != _frameIndexCur))
                 {
-                    // 报告上一帧的统计信息（类似chiaki的videoreceiver.c:119）
-                    // 在检测到新帧时，报告上一帧的packet stats
-                    _frameProcessor.ReportPacketStats();
-
-                    // 如果上一帧还没有刷新，先刷新它
+                    // 如果上一帧还没有刷新，先刷新它（在刷新后报告统计，确保统计准确）
                     if (_frameIndexCur >= 0 && _frameIndexPrev != _frameIndexCur)
                     {
                         FlushFrame(onFrameReady);
+                        // 在刷新后报告上一帧的统计信息（确保统计完整准确）
+                        _frameProcessor.ReportPacketStats();
                     }
 
                     // 检测帧丢失
@@ -266,6 +272,8 @@ namespace RemotePlay.Services.Streaming.AV
                     if (_frameProcessor.FlushPossible() || packet.UnitIndex == packet.UnitsTotal - 1)
                     {
                         FlushFrame(onFrameReady);
+                        // 在刷新后报告帧的统计信息（确保统计完整准确）
+                        _frameProcessor.ReportPacketStats();
                     }
                 }
             }
@@ -414,9 +422,15 @@ namespace RemotePlay.Services.Streaming.AV
         /// <summary>
         /// 获取并重置 packet stats（用于拥塞控制）
         /// </summary>
+        /// <summary>
+        /// 获取并重置 packet stats（已过时）
+        /// 注意：统计现在由 PacketStats 统一管理，请使用 PacketStats.GetAndReset
+        /// </summary>
+        [Obsolete("统计现在由 PacketStats 统一管理，请使用 PacketStats.GetAndReset")]
         public (ulong received, ulong lost) GetAndResetPacketStats()
         {
-            return _frameProcessor.GetAndResetPacketStats();
+            // 返回空值，因为统计现在由 PacketStats 统一管理
+            return (0, 0);
         }
 
         public (int frameIndexPrev, int framesLost) ConsumeAndResetFrameIndexStats()

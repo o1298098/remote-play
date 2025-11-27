@@ -42,6 +42,7 @@ namespace RemotePlay.Services.Streaming.AV
         private AdaptiveStreamManager? _adaptiveStreamManager;
         private Action<VideoProfile, VideoProfile?>? _profileSwitchCallback;
         private Func<Task>? _requestKeyframeCallback;
+        private Congestion.PacketStats? _packetStats;  // 包统计（用于拥塞控制）
 
         public AVHandler(
             ILogger<AVHandler> logger,
@@ -221,6 +222,10 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void ProcessSinglePacket(AVPacket packet)
         {
+            // ✅ 推送序列号统计（类似 chiaki 的 chiaki_packet_stats_push_seq）
+            // 使用 FrameIndex 作为序列号（音频和视频都使用）
+            _packetStats?.PushSeq(packet.FrameIndex);
+            
             // 检测并处理 adaptive_stream_index 切换
             if (packet.Type == HeaderType.VIDEO && _adaptiveStreamManager != null)
             {
@@ -345,6 +350,16 @@ namespace RemotePlay.Services.Streaming.AV
         {
             _adaptiveStreamManager = manager;
             _profileSwitchCallback = onProfileSwitch;
+        }
+
+        /// <summary>
+        /// 设置包统计（用于拥塞控制）
+        /// </summary>
+        public void SetPacketStats(Congestion.PacketStats? packetStats)
+        {
+            _packetStats = packetStats;
+            // 同时设置到 VideoReceiver
+            _videoReceiver?.SetPacketStats(packetStats);
         }
 
         public void SetRequestKeyframeCallback(Func<Task>? callback)
@@ -734,29 +749,16 @@ namespace RemotePlay.Services.Streaming.AV
 
         public StreamPipelineStats GetAndResetStats()
         {
-            // 获取视频 packet stats（用于拥塞控制）
-            ulong videoReceived = 0;
-            ulong videoLost = 0;
-            
-            if (_videoReceiver != null)
-            {
-                var (received, lost) = _videoReceiver.GetAndResetPacketStats();
-                videoReceived = received;
-                videoLost = lost;
-            }
-            
-            // 音频统计：目前音频没有详细的packet stats，使用0
-            // 注意：拥塞控制主要关注视频包的丢失率
-            ulong audioReceived = 0;
-            ulong audioLost = 0;
+            // 注意：packet stats 现在由 PacketStats 统一管理（类似 chiaki）
+            // 这里只返回其他统计信息，packet stats 通过 PacketStats.GetAndReset 获取
             
             return new StreamPipelineStats
             {
-                VideoReceived = (int)Math.Min(videoReceived, int.MaxValue),
-                VideoLost = (int)Math.Min(videoLost, int.MaxValue),
+                VideoReceived = 0,  // 现在由 PacketStats 统一管理
+                VideoLost = 0,      // 现在由 PacketStats 统一管理
                 VideoTimeoutDropped = 0, // TODO: 如果需要，可以从ReorderQueue获取
-                AudioReceived = (int)Math.Min(audioReceived, int.MaxValue),
-                AudioLost = (int)Math.Min(audioLost, int.MaxValue),
+                AudioReceived = 0,  // 现在由 PacketStats 统一管理
+                AudioLost = 0,      // 现在由 PacketStats 统一管理
                 AudioTimeoutDropped = 0,
                 PendingPackets = _queue.Count,
                 FecAttempts = 0, // TODO: 如果需要，可以从FrameProcessor获取

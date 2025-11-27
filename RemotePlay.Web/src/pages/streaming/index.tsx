@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '@/hooks/use-toast'
+import { Wifi, AlertTriangle } from 'lucide-react'
 import { StreamingHeader } from './components/StreamingHeader'
 import { StreamingVideoPlayer } from './components/StreamingVideoPlayer'
 import { StreamingLoading } from './components/StreamingLoading'
 import { StreamingTopBar } from './components/StreamingTopBar'
 import { StreamingStatsOverlay } from './components/StreamingStatsOverlay'
 import { MobileVirtualController } from './components/MobileVirtualController'
+import { MobileStatsBar } from './components/MobileStatsBar'
 import { useStreamingConnection } from '../../hooks/use-streaming-connection'
 import { useDevice } from '@/hooks/use-device'
 
@@ -76,12 +78,27 @@ export default function Streaming() {
     setStatsMonitoring,
     refreshStream,
     webrtcSessionId,
+    isStalling,
   } = useStreamingConnection({
     hostId,
     deviceName,
     isLikelyLan,
     videoRef,
     toast,
+    onConnectionError: (reason: string) => {
+      // 显示断开原因，使用较短的显示时间，避免长时间遮挡
+      toast({
+        title: '连接已断开',
+        description: reason,
+        variant: 'destructive',
+        duration: 3000, // 3秒后自动消失
+      })
+      // 延迟导航，让用户看到提示但不会太久
+      setTimeout(() => {
+        disconnect()
+        navigate('/devices')
+      }, 3000)
+    },
   })
 
   // 在移动端开始连接时自动进入页面全屏并锁定横屏
@@ -292,6 +309,7 @@ export default function Streaming() {
         title: '参数错误',
         description: '缺少设备信息，正在返回设备列表...',
         variant: 'destructive',
+        duration: 2000, // 2秒后自动消失
       })
       const timer = setTimeout(() => {
         disconnect()
@@ -349,14 +367,47 @@ export default function Streaming() {
         />
       )}
 
+      {/* 移动端顶部统计栏 - 只在开启统计时显示 */}
+      {isMobile && isStatsMonitoringEnabled && isConnected && (
+        <MobileStatsBar stats={connectionStats} />
+      )}
+
       {(isConnecting || isConnected) && (
         <div className="fixed inset-0 bg-black" style={{ zIndex: isConnected ? 10 : 0 }}>
           <StreamingVideoPlayer ref={videoRef} isConnected={isConnected} isConnecting={isConnecting} onConnect={connect} />
         </div>
       )}
 
-      {isStatsMonitoringEnabled && isConnected && (
+      {/* 桌面端显示统计覆盖层，移动端使用顶部统计栏 */}
+      {!isMobile && isStatsMonitoringEnabled && isConnected && (
         <StreamingStatsOverlay stats={connectionStats} />
+      )}
+
+      {/* 卡顿提示图标 - 右上角闪烁 */}
+      {isConnected && isStalling && (
+        <div 
+          className="fixed z-[100] pointer-events-none"
+          style={{
+            // 移动端：如果有统计栏显示，则在其下方，否则在顶部
+            top: isMobile 
+              ? (isStatsMonitoringEnabled ? '36px' : '12px')
+              : '16px',
+            right: isMobile ? '12px' : '16px',
+          }}
+        >
+          <div className="relative w-6 h-6 animate-pulse">
+            {/* 闪烁背景 */}
+            <div className="absolute inset-0 bg-yellow-500/30 rounded-full animate-ping" />
+            {/* 网络图标 */}
+            <div className="relative bg-black/60 backdrop-blur-sm rounded-full p-1 shadow-lg border border-yellow-500/50">
+              <Wifi className="w-4 h-4 text-white" strokeWidth={2} />
+              {/* 黄色三角叹号叠加 */}
+              <div className="absolute -top-0.5 -right-0.5">
+                <AlertTriangle className="w-3 h-3 text-yellow-500 fill-yellow-500" strokeWidth={2} />
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {isConnecting && !isConnected && (

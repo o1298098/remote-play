@@ -57,6 +57,8 @@ export interface StreamHealth {
   videoLost: number
   audioReceived: number
   audioLost: number
+  frameOutputFps?: number
+  recentFps?: number
 }
 
 // WebRTC 配置（包含 TURN 服务器配置）
