@@ -140,6 +140,7 @@ namespace RemotePlay.Services.Streaming.Buffer
                 }
 
                 end = MaskSeq(_begin + (uint)_count);
+                var nowForReserve = DateTime.UtcNow;
                 while (Lt(end, newEnd))
                 {
                     if (!_buffer.ContainsKey(end))
@@ -147,7 +148,8 @@ namespace RemotePlay.Services.Streaming.Buffer
                         _buffer[end] = new QueueEntry
                         {
                             Item = null,
-                            ArrivalTime = DateTime.MinValue
+                            ArrivalTime = DateTime.MinValue,
+                            ReservedTime = nowForReserve // 记录保留 slot 的时间，用于超时判断
                         };
                     }
                     _count++;
@@ -291,10 +293,11 @@ namespace RemotePlay.Services.Streaming.Buffer
             var toRemove = new List<uint>();
             uint currentSeq = _begin;
             int consecutiveTimeouts = 0;
-            const int MAX_CONSECUTIVE_TIMEOUTS = 20; // 最多连续跳过 20 个超时的 slot
+            const int MAX_CONSECUTIVE_TIMEOUTS = 10; // 最多连续跳过 10 个超时的 slot（减少一次性丢失）
 
             // ✅ 关键修复：检查所有超时的 slot，而不仅仅是头部
             // 当网络变差时，可能会有多个连续的 slot 超时，需要批量清理
+            // ✅ 优化：减少批量跳过数量，避免一次性丢失太多数据
             for (int i = 0; i < _count && consecutiveTimeouts < MAX_CONSECUTIVE_TIMEOUTS; i++)
             {
                 if (!_buffer.TryGetValue(currentSeq, out var entry))
@@ -308,9 +311,22 @@ namespace RemotePlay.Services.Streaming.Buffer
                 if (!entry.IsSet)
                 {
                     // 未收到的 slot（ArrivalTime == DateTime.MinValue）
-                    // ✅ 对于未收到的 slot，直接认为超时，避免长时间等待
-                    // 这样可以更快地跳过丢失的包，减少延迟累积
-                    isTimeout = true;
+                    // ✅ 优化：对于未收到的 slot，使用更长的超时时间（2倍），避免在网络延迟时过早跳过
+                    // 这样可以给网络延迟的包更多时间到达，减少不必要的丢失
+                    var reservedTime = entry.ReservedTime;
+                    if (reservedTime != DateTime.MinValue)
+                    {
+                        var elapsed = (now - reservedTime).TotalMilliseconds;
+                        if (elapsed > _timeoutMs * 2) // 未收到的包使用 2 倍超时时间
+                        {
+                            isTimeout = true;
+                        }
+                    }
+                    else
+                    {
+                        // 如果没有保留时间，使用默认超时
+                        isTimeout = true;
+                    }
                 }
                 else
                 {
@@ -423,6 +439,7 @@ namespace RemotePlay.Services.Streaming.Buffer
         {
             public T? Item { get; set; }
             public DateTime ArrivalTime { get; set; }
+            public DateTime ReservedTime { get; set; } // 保留 slot 的时间（用于未收到的包的超时判断）
             public bool IsSet => Item != null;
         }
     }

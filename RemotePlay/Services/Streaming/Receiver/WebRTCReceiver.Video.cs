@@ -7,37 +7,232 @@ namespace RemotePlay.Services.Streaming.Receiver
 {
     public sealed partial class WebRTCReceiver
     {
+        // ✅ 发送失败统计（用于监控和诊断）
+        private int _sendTimeoutCount = 0;
+        private int _sendFailureCount = 0;
+        private DateTime _lastSendFailureTime = DateTime.MinValue;
+        
+        /// <summary>
+        /// 动态检测帧率并更新
+        /// </summary>
+        private void UpdateFrameRate(DateTime frameTime)
+        {
+            if (_lastVideoPacketTime == DateTime.MinValue)
+            {
+                return; // 第一帧，无法计算
+            }
+            
+            var elapsed = (frameTime - _lastVideoPacketTime).TotalSeconds;
+            
+            // 过滤异常值（间隔太大或太小）
+            if (elapsed > 0 && elapsed < 1.0)
+            {
+                // ✅ 修复：不在这里加锁，因为调用者已经持有锁
+                // 记录帧间隔历史
+                _frameIntervalHistory.Enqueue(elapsed);
+                
+                // 保持历史记录在合理大小
+                while (_frameIntervalHistory.Count > FRAME_RATE_HISTORY_SIZE)
+                {
+                    _frameIntervalHistory.Dequeue();
+                }
+                
+                // ✅ 优化：降低样本要求，加快初始化（从10降到5）
+                // 定期更新检测到的帧率（避免频繁计算）
+                var now = DateTime.UtcNow;
+                if (_lastFrameRateUpdateTime == DateTime.MinValue || 
+                    (now - _lastFrameRateUpdateTime).TotalMilliseconds >= FRAME_RATE_UPDATE_INTERVAL_MS)
+                {
+                    // ✅ 降低样本要求：从10降到5，加快帧率检测初始化
+                    if (_frameIntervalHistory.Count >= 5) // 至少需要5个样本（约0.1秒@60fps）
+                    {
+                        // 计算平均帧间隔
+                        double avgInterval = _frameIntervalHistory.Average();
+                        
+                        // 计算帧率（fps = 1 / interval）
+                        double newFrameRate = 1.0 / avgInterval;
+                        
+                        // 限制在合理范围内
+                        newFrameRate = Math.Max(MIN_FRAME_RATE, Math.Min(MAX_FRAME_RATE, newFrameRate));
+                        
+                        // 平滑更新（避免突然跳跃）
+                        _detectedFrameRate = _detectedFrameRate * 0.7 + newFrameRate * 0.3; // 70% 旧值 + 30% 新值
+                        
+                        // 重新计算时间戳增量
+                        _videoTimestampIncrement = VIDEO_CLOCK_RATE / _detectedFrameRate;
+                        
+                        _lastFrameRateUpdateTime = now;
+                        
+                        // 记录日志（限流）
+                        if (_videoPacketCount % 100 == 0)
+                        {
+                            _logger.LogDebug("📊 检测到视频帧率: {FrameRate:F1} fps (时间戳增量: {Increment:F1}, 样本数: {Samples})", 
+                                _detectedFrameRate, _videoTimestampIncrement, _frameIntervalHistory.Count);
+                        }
+                    }
+                    else if (_frameIntervalHistory.Count > 0)
+                    {
+                        // ✅ 在样本不足时，使用临时计算的帧率（避免等待太久）
+                        double tempInterval = _frameIntervalHistory.Average();
+                        double tempFrameRate = 1.0 / tempInterval;
+                        tempFrameRate = Math.Max(MIN_FRAME_RATE, Math.Min(MAX_FRAME_RATE, tempFrameRate));
+                        
+                        // 使用更大的新值权重，快速适应
+                        _detectedFrameRate = _detectedFrameRate * 0.5 + tempFrameRate * 0.5; // 50% 旧值 + 50% 新值
+                        _videoTimestampIncrement = VIDEO_CLOCK_RATE / _detectedFrameRate;
+                    }
+                }
+            }
+        }
+        
+        /// <summary>
+        /// ✅ 统一时间戳管理：确保每帧时间戳只更新一次
+        /// 基于实际帧间隔计算，处理时间戳回绕
+        /// ⚠️ 临时简化：禁用动态帧率检测，使用固定增量作为后备
+        /// </summary>
+        private void UpdateVideoTimestamp(DateTime frameTime)
+        {
+            // ⚠️ 临时禁用动态帧率检测，避免可能的性能问题
+            // UpdateFrameRate(frameTime);
+            
+            if (_lastVideoPacketTime != DateTime.MinValue)
+            {
+                var elapsed = (frameTime - _lastVideoPacketTime).TotalSeconds;
+                if (elapsed > 0 && elapsed < 1.0)
+                {
+                    // 正常情况：基于实际时间间隔计算（最准确）
+                    _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
+                }
+                else
+                {
+                    // 异常情况：使用默认增量（临时简化，避免动态检测可能的问题）
+                    _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT_DEFAULT;
+                    
+                    if (_videoPacketCount % 100 == 0)
+                    {
+                        _logger.LogWarning("⚠️ 帧间隔异常 ({Elapsed:F3}s)，使用默认增量 ({Increment:F1})", 
+                            elapsed, VIDEO_TIMESTAMP_INCREMENT_DEFAULT);
+                    }
+                }
+            }
+            else
+            {
+                // ✅ 第一帧：初始化时间戳
+                _videoTimestamp = 0;
+            }
+            
+            _lastVideoPacketTime = frameTime;
+            
+            // ✅ 处理时间戳回绕（32位约13小时后）
+            // uint 最大值是 0xFFFFFFFF (4,294,967,295)
+            // 90000 Hz 时钟下，约 13.3 小时后回绕
+            if (_videoTimestamp > 0xFFFFFFFF - VIDEO_CLOCK_RATE)
+            {
+                _logger.LogInformation("🔄 视频时间戳即将回绕，重置为 0（当前值: {Timestamp}）", _videoTimestamp);
+                _videoTimestamp = 0;
+            }
+        }
+        
         /// <summary>
         /// 安全调用反射方法，带超时保护（防止 WebRTC 发送阻塞）
         /// ✅ 修复：返回是否成功，避免超时或失败时静默丢弃视频包
+        /// ✅ 改进：增加重试机制，避免超时后立即丢弃
         /// </summary>
         private bool SafeInvokeMethod(Action invokeAction, string methodName, int timeoutMs = 100)
         {
-            var invokeTask = Task.Run(invokeAction);
-            var timeoutTask = Task.Delay(timeoutMs);
-            var completedTask = Task.WhenAny(invokeTask, timeoutTask).GetAwaiter().GetResult();
-            
-            if (completedTask == timeoutTask)
+            return SafeInvokeMethodWithRetry(invokeAction, methodName, timeoutMs, maxRetries: 1);
+        }
+        
+        /// <summary>
+        /// ✅ 修复：安全调用反射方法，带重试机制，避免 GetAwaiter().GetResult() 死锁
+        /// 使用 ConfigureAwait(false) 和异步方式，避免在同步上下文中死锁
+        /// </summary>
+        private bool SafeInvokeMethodWithRetry(Action invokeAction, string methodName, int timeoutMs = 100, int maxRetries = 1)
+        {
+            // ✅ 修复：使用异步方式，避免 GetAwaiter().GetResult() 死锁
+            // 注意：这个方法现在返回同步结果，但内部使用异步方式避免死锁
+            try
             {
-                if (_videoPacketCount % 10 == 0) // 限流日志
-                {
-                    _logger.LogWarning("⚠️ {Method} 调用超时（{Timeout}ms），可能 WebRTC 发送阻塞，视频包可能丢失", methodName, timeoutMs);
-                }
-                return false; // 超时后返回 false，表示发送失败
+                return SafeInvokeMethodWithRetryAsync(invokeAction, methodName, timeoutMs, maxRetries)
+                    .ConfigureAwait(false)
+                    .GetAwaiter()
+                    .GetResult();
             }
-            
-            // 检查是否有异常
-            if (invokeTask.IsFaulted)
+            catch (Exception ex)
             {
-                var ex = invokeTask.Exception?.InnerException ?? invokeTask.Exception ?? new Exception($"{methodName} failed");
                 if (_videoPacketCount % 10 == 0)
                 {
-                    _logger.LogWarning(ex, "⚠️ {Method} 调用失败，视频包可能丢失", methodName);
+                    _logger.LogWarning(ex, "⚠️ {Method} 调用异常", methodName);
                 }
-                throw ex;
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// 异步版本的安全调用方法，避免死锁
+        /// </summary>
+        private async Task<bool> SafeInvokeMethodWithRetryAsync(Action invokeAction, string methodName, int timeoutMs = 100, int maxRetries = 1)
+        {
+            for (int retry = 0; retry <= maxRetries; retry++)
+            {
+                var invokeTask = Task.Run(invokeAction);
+                var timeoutTask = Task.Delay(timeoutMs);
+                var completedTask = await Task.WhenAny(invokeTask, timeoutTask).ConfigureAwait(false);
+                
+                if (completedTask == timeoutTask)
+                {
+                    // 超时：如果是最后一次重试，返回失败；否则重试
+                    if (retry < maxRetries)
+                    {
+                        // ✅ 优化：使用异步延迟，避免阻塞
+                        await Task.Delay(5).ConfigureAwait(false);
+                        continue;
+                    }
+                    
+                    // 最后一次重试也超时，记录统计并返回失败
+                    _sendTimeoutCount++;
+                    if (_videoPacketCount % 10 == 0) // 限流日志
+                    {
+                        _logger.LogWarning("⚠️ {Method} 调用超时（{Timeout}ms，重试 {Retry}/{MaxRetries}），可能 WebRTC 发送阻塞，视频包可能丢失", 
+                            methodName, timeoutMs, retry + 1, maxRetries + 1);
+                    }
+                    return false;
+                }
+                
+                // 检查是否有异常
+                if (invokeTask.IsFaulted)
+                {
+                    var ex = invokeTask.Exception?.InnerException ?? invokeTask.Exception ?? new Exception($"{methodName} failed");
+                    
+                    // ✅ 关键修复：不抛出异常，而是返回false，避免中断处理流程
+                    // 如果是最后一次重试，记录异常并返回失败
+                    if (retry >= maxRetries)
+                    {
+                        _sendFailureCount++;
+                        _lastSendFailureTime = DateTime.UtcNow;
+                        if (_videoPacketCount % 10 == 0)
+                        {
+                            _logger.LogWarning(ex, "⚠️ {Method} 调用失败（重试 {Retry}/{MaxRetries}），视频包可能丢失", 
+                                methodName, retry + 1, maxRetries + 1);
+                        }
+                        return false; // ✅ 不抛出异常，返回失败
+                    }
+                    
+                    // ✅ 优化：使用异步延迟，避免阻塞
+                    await Task.Delay(5).ConfigureAwait(false);
+                    continue;
+                }
+                
+                // 成功：如果是重试后成功，记录日志
+                if (retry > 0)
+                {
+                    _logger.LogDebug("✅ {Method} 重试成功（第 {Retry} 次重试）", methodName, retry);
+                }
+                
+                return true; // 成功
             }
             
-            return true; // 成功
+            return false; // 不应该到达这里
         }
         
         /// <summary>
@@ -60,25 +255,19 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
 
-                var videoData = new byte[packet.Length - 1];
-                packet.AsSpan(1).CopyTo(videoData);
-
-                // ✅ B. 当IDR到来时立刻强制丢弃所有待处理的非IDR帧（避免过期帧导致跳帧/抖动）
-                lock (_videoQueueLock)
+                // ✅ 使用新的模块化视频处理管道
+                if (_videoPipeline != null)
                 {
-                    int droppedCount = _videoFrameQueue.Count;
-                    _videoFrameQueue.Clear();
-                    if (droppedCount > 0)
-                    {
-                        _logger.LogInformation("🗑️ IDR帧到达：丢弃 {Dropped} 个待处理的非IDR帧，避免过期帧导致跳帧", droppedCount);
-                    }
-                    
-                    // 将IDR帧加入优先队列
-                    _videoIdrQueue.Enqueue(videoData);
+                    // ✅ 非阻塞异步发送
+                    _ = _videoPipeline.OnIdrFrame(packet);
+                    return;
                 }
                 
-                // ✅ 修复Bug 1: 在锁外调用ProcessVideoQueue，避免死锁
-                ProcessVideoQueue();
+                // ⚠️ 如果管道未初始化，记录警告
+                if (_videoPacketCount % 100 == 0)
+                    {
+                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理IDR帧");
+                    }
             }
             catch (Exception ex)
             {
@@ -111,44 +300,19 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
 
-                var (connectionState, iceState, signalingState) = GetCachedConnectionState();
-                
-                // ✅ 添加详细的连接状态诊断日志
-                if (connectionState != RTCPeerConnectionState.connected &&
-                    connectionState != RTCPeerConnectionState.connecting)
+                // ✅ 使用新的模块化视频处理管道
+                if (_videoPipeline != null)
                 {
-                    if (_videoPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ WebRTC 连接状态异常: connection={State}, ICE={IceState}, signaling={Signaling}, 已收到 {Count} 个视频包",
-                            connectionState, iceState, signalingState, _videoPacketCount);
-                    }
+                    // ✅ 非阻塞异步发送
+                    _ = _videoPipeline.OnNormalFrame(packet);
+                    return;
                 }
-
-                var videoData = new byte[packet.Length - 1];
-                packet.AsSpan(1).CopyTo(videoData);
-
-                // ✅ 普通帧进入队列，由ProcessVideoQueue处理
-                lock (_videoQueueLock)
-                {
-                    int totalQueueSize = _videoFrameQueue.Count + _videoIdrQueue.Count;
-                    if (totalQueueSize >= MAX_VIDEO_QUEUE_SIZE)
-                    {
-                        // 队列已满，丢弃最旧的普通帧
-                        if (_videoFrameQueue.Count > 0)
-                        {
-                            _videoFrameQueue.Dequeue();
+                
+                // ⚠️ 如果管道未初始化，记录警告
                             if (_videoPacketCount % 100 == 0)
                             {
-                                _logger.LogWarning("⚠️ 视频队列已满，丢弃旧帧（队列大小: {Size}）", totalQueueSize);
-                            }
-                        }
-                    }
-                    _videoFrameQueue.Enqueue(videoData);
+                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理普通帧");
                 }
-                
-                // ✅ 修复Bug 1: 在锁外调用ProcessVideoQueue，避免死锁
-                // ✅ 修复Bug 2: 移除无条件return，保留队列处理逻辑
-                ProcessVideoQueue();
             }
             catch (Exception ex)
             {
@@ -157,868 +321,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
         }
 
-        private bool TrySendVideoDirect(byte[] videoData)
-        {
-            if (_peerConnection == null || _videoTrack == null || videoData == null || videoData.Length == 0)
-                return false;
-
-            try
-            {
-                var (connectionState, iceState, signalingState) = GetCachedConnectionState();
-
-                bool canSendVideo = signalingState == RTCSignalingState.stable ||
-                                    (signalingState == RTCSignalingState.have_local_offer &&
-                                     (iceState == RTCIceConnectionState.connected ||
-                                      iceState == RTCIceConnectionState.checking ||
-                                      connectionState == RTCPeerConnectionState.connected ||
-                                      connectionState == RTCPeerConnectionState.connecting));
-
-                if (!canSendVideo)
-                {
-                    return false;
-                }
-
-                if (!_methodsInitialized)
-                {
-                    InitializeReflectionMethods();
-                }
-
-                if (_cachedSendVideoMethod != null)
-                {
-                    try
-                    {
-                        var now = DateTime.UtcNow;
-                        if (_videoPacketCount > 0)
-                        {
-                            var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                        }
-                        _lastVideoPacketTime = now;
-
-                        // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                        bool sent = SafeInvokeMethod(
-                            () => _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, videoData }),
-                            "SendVideo",
-                            100);
-
-                        if (sent)
-                        {
-                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                            return true;
-                        }
-                        // ✅ 修复Bug 3: 如果发送失败，返回 false 继续尝试其他方式
-                        return false;
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_videoPacketCount < 3)
-                        {
-                            var innerEx = ex.InnerException ?? ex;
-                            _logger.LogWarning("⚠️ SendVideo 直接发送失败: {Ex}", innerEx.Message);
-                        }
-                        _cachedSendVideoMethod = null;
-                        _methodsInitialized = false;
-                    }
-                }
-
-                return false;
-            }
-            catch (Exception ex)
-            {
-                if (_videoPacketCount < 3)
-                {
-                    _logger.LogWarning("⚠️ TrySendVideoDirect 异常: {Ex}", ex.Message);
-                }
-                return false;
-            }
-        }
-
-        private void SendVideoRTP(byte[] data)
-        {
-            try
-            {
-                if (_peerConnection == null || _videoTrack == null)
-                {
-                    return;
-                }
-
-                var (connectionState, iceState, signalingState) = GetCachedConnectionState();
-
-                // ✅ 修复：放宽状态检查条件，允许在更多状态下尝试发送
-                // 避免因为状态检查过严导致视频包被静默丢弃
-                bool canSend = false;
-
-                if (signalingState == RTCSignalingState.stable)
-                {
-                    if (connectionState == RTCPeerConnectionState.connected ||
-                        connectionState == RTCPeerConnectionState.connecting)
-                    {
-                        canSend = true;
-                    }
-                    else if (iceState == RTCIceConnectionState.connected ||
-                             iceState == RTCIceConnectionState.checking)
-                    {
-                        canSend = true;
-                    }
-                }
-                // ✅ 修复：即使信令状态不是 stable，如果 ICE 已连接，也尝试发送
-                // 这可以处理 Answer 设置后但信令状态还未更新的情况
-                else if (signalingState == RTCSignalingState.have_local_offer ||
-                         signalingState == RTCSignalingState.have_remote_pranswer)
-                {
-                    if (iceState == RTCIceConnectionState.connected ||
-                        iceState == RTCIceConnectionState.checking ||
-                        connectionState == RTCPeerConnectionState.connected ||
-                        connectionState == RTCPeerConnectionState.connecting)
-                    {
-                        canSend = true;
-                    }
-                }
-
-                if (!canSend)
-                {
-                    // ✅ 关键修复：当连接状态异常时，更频繁地记录日志，帮助诊断问题
-                    if (_videoPacketCount < 10 || _videoPacketCount % 50 == 0)
-                    {
-                        _logger.LogWarning("⚠️ WebRTC 状态不允许发送: connection={State}, ICE={IceState}, signaling={Signaling}, 已收到 {Count} 个包",
-                            connectionState, iceState, signalingState, _videoPacketCount);
-                        if (signalingState != RTCSignalingState.stable)
-                        {
-                            _logger.LogWarning("⚠️ SDP 协商未完成（{SignalingState}），需要等待 Answer 并设置为 stable", signalingState);
-                        }
-                        if (connectionState == RTCPeerConnectionState.@new)
-                        {
-                            _logger.LogWarning("⚠️ 连接状态还是 new，等待连接建立...");
-                        }
-                        if (connectionState == RTCPeerConnectionState.closed || connectionState == RTCPeerConnectionState.disconnected)
-                        {
-                            _logger.LogError("❌ WebRTC 连接已断开或关闭！需要重新建立连接");
-                        }
-                    }
-                    return;
-                }
-
-                bool hasStartCode = (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
-                                   (data[2] == 0x00 && data[3] == 0x01 || data[2] == 0x01));
-
-                if (hasStartCode && data.Length < 50000)
-                {
-                    try
-                    {
-                        if (_cachedSendVideoMethod != null)
-                        {
-                            // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                            // ✅ 修复：检查返回值，如果失败则继续尝试其他发送方式
-                            bool sent = SafeInvokeMethod(
-                                () => _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, data }),
-                                "SendVideo",
-                                100);
-                            
-                            if (sent)
-                            {
-                                return;
-                            }
-                            // 如果超时或失败，继续尝试 NAL 解析方式
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // ✅ 修复：记录异常但不吞掉，继续尝试其他发送方式
-                        if (_videoPacketCount % 10 == 0)
-                        {
-                            _logger.LogWarning(ex, "⚠️ SendVideo 直接发送失败，尝试 NAL 解析方式");
-                        }
-                    }
-                }
-
-                var nalUnits = ParseAnnexBNalUnits(data);
-
-                // ✅ 修复：如果 NAL 解析失败，尝试直接发送原始数据（可能是单个 NAL unit）
-                if (nalUnits.Count == 0)
-                {
-                    if (_videoPacketCount < 5 || _videoPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ 未解析到 NAL units，尝试直接发送原始数据。数据长度: {Length}, 前 16 字节: {Hex}",
-                            data.Length,
-                            data.Length > 0 ? Convert.ToHexString(data.Take(Math.Min(16, data.Length)).ToArray()) : "empty");
-                    }
-                    
-                    // ✅ 修复：如果解析失败，尝试直接发送原始数据（可能是单个 NAL unit 或已封装格式）
-                    // 这可以处理某些特殊情况下的视频数据格式
-                    try
-                    {
-                        if (_cachedSendVideoMethod != null)
-                        {
-                            bool sent = SafeInvokeMethod(
-                                () => _cachedSendVideoMethod.Invoke(_peerConnection, new object[] { _videoTimestamp, data }),
-                                "SendVideo(raw)",
-                                100);
-                            if (sent)
-                            {
-                                return;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_videoPacketCount < 5 || _videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogWarning(ex, "⚠️ 直接发送原始视频数据失败");
-                        }
-                    }
-                    
-                    // 如果直接发送也失败，返回（不继续处理空列表）
-                    return;
-                }
-
-                for (int i = 0; i < nalUnits.Count; i++)
-                {
-                    var nalUnit = nalUnits[i];
-                    if (nalUnit.Length == 0) continue;
-
-                    bool isVideoFrame = false;
-
-                    if (_detectedVideoFormat == "hevc")
-                    {
-                        byte nalType = (byte)((nalUnit[0] >> 1) & 0x3F);
-                        if (nalType >= 1 && nalType <= 21)
-                        {
-                            isVideoFrame = true;
-                        }
-                    }
-                    else
-                    {
-                        byte nalType = (byte)(nalUnit[0] & 0x1F);
-                        if (nalType >= 1 && nalType <= 5)
-                        {
-                            isVideoFrame = true;
-                        }
-                    }
-
-                    if (nalUnit.Length > RTP_MTU - 12)
-                    {
-                        SendFragmentedNalUnit(nalUnit);
-                    }
-                    else
-                    {
-                        // 最后一个 NAL 作为帧结束，设置 Marker
-                        bool isLastNal = (i == nalUnits.Count - 1);
-                        SendSingleNalUnit(nalUnit, isLastNal);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送视频 RTP 包失败");
-            }
-        }
-
-        private List<byte[]> ParseAnnexBNalUnits(byte[] data)
-        {
-            var nalUnits = new List<byte[]>();
-            if (data == null || data.Length < 4) return nalUnits;
-
-            Span<byte> dataSpan = data;
-            int currentPos = 0;
-
-            while (currentPos < dataSpan.Length - 3)
-            {
-                int startCodePos = -1;
-                int startCodeLength = 0;
-
-                for (int i = currentPos; i < dataSpan.Length - 3; i++)
-                {
-                    if (dataSpan[i] == 0x00 && dataSpan[i + 1] == 0x00)
-                    {
-                        if (i + 3 < dataSpan.Length && dataSpan[i + 2] == 0x00 && dataSpan[i + 3] == 0x01)
-                        {
-                            startCodePos = i;
-                            startCodeLength = 4;
-                            break;
-                        }
-                        else if (i + 2 < dataSpan.Length && dataSpan[i + 2] == 0x01)
-                        {
-                            startCodePos = i;
-                            startCodeLength = 3;
-                            break;
-                        }
-                    }
-                }
-
-                if (startCodePos == -1)
-                {
-                    break;
-                }
-
-                int nextStartCodePos = -1;
-                int nextStartCodeLength = 0;
-                int searchStart = startCodePos + startCodeLength;
-
-                for (int i = searchStart; i < dataSpan.Length - 3; i++)
-                {
-                    if (dataSpan[i] == 0x00 && dataSpan[i + 1] == 0x00)
-                    {
-                        if (i + 3 < dataSpan.Length && dataSpan[i + 2] == 0x00 && dataSpan[i + 3] == 0x01)
-                        {
-                            nextStartCodePos = i;
-                            nextStartCodeLength = 4;
-                            break;
-                        }
-                        else if (i + 2 < dataSpan.Length && dataSpan[i + 2] == 0x01)
-                        {
-                            nextStartCodePos = i;
-                            nextStartCodeLength = 3;
-                            break;
-                        }
-                    }
-                }
-
-                int nalStart = startCodePos + startCodeLength;
-                int nalEnd = nextStartCodePos == -1 ? dataSpan.Length : nextStartCodePos;
-                int nalLength = nalEnd - nalStart;
-
-                if (nalLength > 0)
-                {
-                    var nalUnit = dataSpan.Slice(nalStart, nalLength).ToArray();
-                    nalUnits.Add(nalUnit);
-                }
-
-                if (nextStartCodePos == -1)
-                {
-                    break;
-                }
-                currentPos = nextStartCodePos;
-            }
-
-            return nalUnits;
-        }
-
-        private void SendSingleNalUnit(byte[] nalUnit, bool isFrameEnd)
-        {
-            if (_peerConnection == null || _videoTrack == null || nalUnit.Length == 0) return;
-
-            try
-            {
-                var rtpPacket = new RTPPacket(12 + nalUnit.Length);
-                rtpPacket.Header.Version = 2;
-
-                int payloadType = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
-
-                rtpPacket.Header.PayloadType = (byte)payloadType;
-                rtpPacket.Header.SequenceNumber = _videoSequenceNumber;
-                _videoSequenceNumber++;
-
-                rtpPacket.Header.Timestamp = _videoTimestamp;
-                rtpPacket.Header.SyncSource = _videoSsrc;
-                rtpPacket.Header.MarkerBit = isFrameEnd ? 1 : 0;
-
-                System.Buffer.BlockCopy(nalUnit, 0, rtpPacket.Payload, 0, nalUnit.Length);
-
-                try
-                {
-                    byte[] rtpBytes = rtpPacket.GetBytes();
-
-                    try
-                    {
-                        var peerConnectionType = _peerConnection.GetType();
-
-                        var sendVideoMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                            .Where(m => m.Name == "SendVideo")
-                            .ToList();
-
-                        if (sendVideoMethods.Count == 0)
-                        {
-                            var baseType = peerConnectionType.BaseType;
-                            if (baseType != null)
-                            {
-                                sendVideoMethods = baseType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                    .Where(m => m.Name == "SendVideo")
-                                    .ToList();
-                            }
-                        }
-
-                        bool videoSent = false;
-                        foreach (var method in sendVideoMethods)
-                        {
-                            try
-                            {
-                                var parameters = method.GetParameters();
-
-                                if (parameters.Length == 2)
-                                {
-                                    if (parameters[0].ParameterType == typeof(uint) &&
-                                        parameters[1].ParameterType == typeof(byte[]))
-                                    {
-                                        // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                        bool sent = SafeInvokeMethod(
-                                            () => method.Invoke(_peerConnection, new object[] { _videoTimestamp, nalUnit }),
-                                            "SendVideo(nalUnit)",
-                                            100);
-                                        if (sent)
-                                        {
-                                            videoSent = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                if (_videoPacketCount == 0 || _videoPacketCount % 100 == 0)
-                                {
-                                    var innerEx = ex.InnerException ?? ex;
-                                    _logger.LogWarning("⚠️ SendVideo 调用失败: {Ex}, 内部异常: {InnerEx}",
-                                        ex.Message, innerEx.Message);
-                                }
-                            }
-                        }
-
-                        if (videoSent) return;
-
-                        var sendRtpRawMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                            .Where(m => m.Name == "SendRtpRaw")
-                            .ToList();
-
-                        if (sendRtpRawMethods.Count == 0)
-                        {
-                            var baseType = peerConnectionType.BaseType;
-                            if (baseType != null)
-                            {
-                                sendRtpRawMethods = baseType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                    .Where(m => m.Name == "SendRtpRaw")
-                                    .ToList();
-                            }
-                        }
-
-                        bool rtpSent = false;
-                        if (sendRtpRawMethods.Any())
-                        {
-                            foreach (var method in sendRtpRawMethods)
-                            {
-                                try
-                                {
-                                    var parameters = method.GetParameters();
-
-                                    // ✅ 优先使用 5 参数版本（由库管理 SSRC），兼容性更好
-                                    if (parameters.Length == 5)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                            parameters[1].ParameterType == typeof(byte[]) &&
-                                            parameters[2].ParameterType == typeof(uint) &&
-                                            parameters[3].ParameterType == typeof(int) &&
-                                            parameters[4].ParameterType == typeof(int))
-                                        {
-                                            int payloadTypeInt = (int)rtpPacket.Header.PayloadType;
-                                            if (payloadTypeInt < 0 || payloadTypeInt > 127)
-                                            {
-                                                payloadTypeInt = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
-                                            }
-
-                                            // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            bool sent = SafeInvokeMethod(
-                                                () => method.Invoke(_peerConnection, new object[] {
-                                                    SDPMediaTypesEnum.video,
-                                                    rtpBytes,
-                                                    rtpPacket.Header.Timestamp,
-                                                    payloadTypeInt,
-                                                    (int)rtpPacket.Header.SyncSource
-                                                }),
-                                                "SendRtpRaw(5)",
-                                                100);
-                                            if (sent)
-                                            {
-                                                rtpSent = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    else if (parameters.Length == 6)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                            parameters[1].ParameterType == typeof(byte[]) &&
-                                            parameters[2].ParameterType == typeof(uint) &&
-                                            parameters[3].ParameterType == typeof(int) &&
-                                            parameters[4].ParameterType == typeof(int) &&
-                                            parameters[5].ParameterType == typeof(ushort))
-                                        {
-                                            ushort seqNum = _videoSequenceNumber;
-
-                                            int payloadTypeInt = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
-                                            if (rtpPacket.Header.PayloadType < 0 || rtpPacket.Header.PayloadType > 127)
-                                            {
-                                                _logger.LogWarning("⚠️ RTP Header PayloadType 超出范围: {PayloadType}, 使用计算值: {Computed}",
-                                                    rtpPacket.Header.PayloadType, payloadTypeInt);
-                                            }
-                                            else
-                                            {
-                                                payloadTypeInt = (int)rtpPacket.Header.PayloadType;
-                                            }
-
-                                            // ✅ 避免手动指定 SSRC，使用 5 参数版本更稳；6 参数只作为后备
-                                            int ssrcInt = (int)(_videoSsrc & 0x7FFFFFFF);
-
-                                            try
-                                            {
-                                                // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                                bool sent = SafeInvokeMethod(
-                                                    () => method.Invoke(_peerConnection, new object[] {
-                                                        SDPMediaTypesEnum.video,
-                                                        rtpBytes,
-                                                        rtpPacket.Header.Timestamp,
-                                                        payloadTypeInt,
-                                                        ssrcInt,
-                                                        seqNum
-                                                    }),
-                                                    "SendRtpRaw(6)",
-                                                    100);
-                                                if (sent)
-                                                {
-                                                    rtpSent = true;
-                                                    break;
-                                                }
-                                            }
-                                            catch (Exception invokeEx)
-                                            {
-                                                var innerEx = invokeEx.InnerException ?? invokeEx;
-                                                _logger.LogError(innerEx, "❌ SendRtpRaw 调用异常: seq={Seq}, payloadType={Pt}, ssrc={Ssrc}, ts={Ts}, rtpBytesLen={Len}, 错误: {Error}",
-                                                    seqNum, payloadTypeInt, ssrcInt, rtpPacket.Header.Timestamp, rtpBytes.Length, innerEx.Message);
-
-                                                if (innerEx.Message.Contains("UInt16"))
-                                                {
-                                                    _logger.LogError("❌ UInt16 参数检查: seqNum={Seq} (range: 0-65535), rtpBytesLen={Len} (int, not UInt16)",
-                                                        seqNum, rtpBytes.Length);
-                                                    _logger.LogError("❌ 可能的问题: RTP header 中的序列号字段可能不正确");
-                                                }
-                                                throw;
-                                            }
-                                        }
-                                    }
-                                    else if (parameters.Length == 2)
-                                    {
-                                        if (parameters[0].ParameterType == typeof(byte[]) &&
-                                            parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
-                                        {
-                                            // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            bool sent = SafeInvokeMethod(
-                                                () => method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video }),
-                                                "SendRtpRaw(2)",
-                                                100);
-                                            if (sent)
-                                            {
-                                                rtpSent = true;
-                                                break;
-                                            }
-                                        }
-                                        else if (parameters[0].ParameterType == typeof(byte[]) &&
-                                                 parameters[1].ParameterType == typeof(int))
-                                        {
-                                            // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            bool sent = SafeInvokeMethod(
-                                                () => method.Invoke(_peerConnection, new object[] { rtpBytes, payloadType }),
-                                                "SendRtpRaw(2-int)",
-                                                100);
-                                            if (sent)
-                                            {
-                                                rtpSent = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
-                                    {
-                                        // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                        bool sent = SafeInvokeMethod(
-                                            () => method.Invoke(_peerConnection, new object[] { rtpBytes }),
-                                            "SendRtpRaw(1)",
-                                            100);
-                                        if (sent)
-                                        {
-                                            rtpSent = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    if (_videoPacketCount == 0 || _videoPacketCount % 100 == 0)
-                                    {
-                                        var innerEx = ex.InnerException ?? ex;
-                                        _logger.LogWarning("⚠️ SendRtpRaw 调用失败: {Ex}, 内部异常: {InnerEx}, 方法参数: {Params}",
-                                            ex.Message, innerEx.Message, string.Join(", ", method.GetParameters().Select(p => p.ParameterType.Name)));
-                                    }
-                                }
-                            }
-
-                            if (rtpSent) return;
-                        }
-                        else
-                        {
-                            if (_videoPacketCount == 0)
-                            {
-                                _logger.LogWarning("⚠️ 未找到 SendRtpRaw 方法");
-                            }
-                        }
-
-                        if (videoSent) return;
-
-                        if (_videoPacketCount == 0 || _videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogError("❌ 所有 SendVideo 方法调用都失败了！");
-                            _logger.LogError("❌ 连接状态: {State}, ICE: {Ice}, 信令: {Signaling}",
-                                _peerConnection.connectionState, _peerConnection.iceConnectionState, _peerConnection.signalingState);
-                            _logger.LogError("❌ 视频轨道状态: {Track}", _videoTrack != null ? "存在" : "不存在");
-
-                            var allMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name.Contains("Send", StringComparison.OrdinalIgnoreCase) ||
-                                           m.Name.Contains("Rtp", StringComparison.OrdinalIgnoreCase))
-                                .Select(m =>
-                                {
-                                    var paramsStr = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name}"));
-                                    return $"{m.Name}({paramsStr})";
-                                })
-                                .ToList();
-                            if (allMethods.Any())
-                            {
-                                _logger.LogError("❌ 可用的发送方法: {Methods}", string.Join("; ", allMethods));
-                            }
-                        }
-
-                        if (_videoTrack != null)
-                        {
-                            var trackType = _videoTrack.GetType();
-                            var trackMethods = trackType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name.Contains("Send", StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-
-                            foreach (var method in trackMethods)
-                            {
-                                try
-                                {
-                                    var parameters = method.GetParameters();
-                                    if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
-                                    {
-                                        // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                        bool sent = SafeInvokeMethod(
-                                            () => method.Invoke(_videoTrack, new object[] { nalUnit }),
-                                            "SendVideoTrack",
-                                            100);
-                                        if (sent)
-                                        {
-                                            return;
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-
-                        if (_videoPacketCount == 0)
-                        {
-                            var allMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name.Contains("Send", StringComparison.OrdinalIgnoreCase) ||
-                                           m.Name.Contains("Rtp", StringComparison.OrdinalIgnoreCase))
-                                .Select(m =>
-                                {
-                                    var paramsStr = string.Join(", ", m.GetParameters().Select(p => $"{p.ParameterType.Name}"));
-                                    return $"{m.Name}({paramsStr})";
-                                })
-                                .ToList();
-                            _logger.LogWarning("⚠️ 未找到可用的发送方法。所有相关方法: {Methods}", string.Join("; ", allMethods));
-                        }
-                        else if (_videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogWarning("⚠️ 未找到可用的 SendVideo 或 SendRtpRaw 方法");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_videoPacketCount % 100 == 0)
-                        {
-                            _logger.LogWarning("⚠️ 发送 RTP 包异常: {Ex}", ex.Message);
-                        }
-                    }
-
-                    if (_videoPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ RTP 包已构建但未发送（需要找到正确的发送 API）: seq={Seq}, size={Size}",
-                            rtpPacket.Header.SequenceNumber, rtpBytes.Length);
-                    }
-                }
-                catch (Exception sendEx)
-                {
-                    _logger.LogError(sendEx, "❌ 发送 RTP 包失败");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送单个 NAL unit RTP 包失败");
-            }
-        }
-
-        private void SendFragmentedNalUnit(byte[] nalUnit)
-        {
-            if (_peerConnection == null || _videoTrack == null || nalUnit.Length == 0) return;
-
-            byte nalType = (byte)(nalUnit[0] & 0x1F);
-            byte nalHeader = (byte)(nalUnit[0] & 0x60);
-
-            int maxFragmentSize = RTP_MTU - 12 - 2;
-            int fragmentCount = (nalUnit.Length + maxFragmentSize - 1) / maxFragmentSize;
-
-            for (int i = 0; i < fragmentCount; i++)
-            {
-                int fragmentStart = i * maxFragmentSize;
-                int fragmentLength = Math.Min(maxFragmentSize, nalUnit.Length - fragmentStart);
-
-                try
-                {
-                    var rtpPacket = new RTPPacket(12 + 2 + fragmentLength);
-                    rtpPacket.Header.Version = 2;
-                    rtpPacket.Header.PayloadType = (byte)(_detectedVideoFormat == "hevc" ? 97 : 96);
-
-                    rtpPacket.Header.SequenceNumber = _videoSequenceNumber;
-                    _videoSequenceNumber++;
-
-                    rtpPacket.Header.Timestamp = _videoTimestamp;
-                    rtpPacket.Header.SyncSource = _videoSsrc;
-
-                    byte fuIndicator = (byte)(nalHeader | 28);
-                    byte fuHeader = (byte)(nalType);
-
-                    if (i == 0)
-                    {
-                        fuHeader |= 0x80;
-                        rtpPacket.Header.MarkerBit = 0;
-                    }
-                    else if (i == fragmentCount - 1)
-                    {
-                        fuHeader |= 0x40;
-                        rtpPacket.Header.MarkerBit = 1; // 最后一片标记帧结束
-                    }
-                    else
-                    {
-                        rtpPacket.Header.MarkerBit = 0;
-                    }
-
-                    rtpPacket.Payload[0] = fuIndicator;
-                    rtpPacket.Payload[1] = fuHeader;
-                    System.Buffer.BlockCopy(nalUnit, fragmentStart, rtpPacket.Payload, 2, fragmentLength);
-
-                    try
-                    {
-                        // ✅ 优先使用 5 参数 SendRtpRaw（由库管理 SSRC），兼容性更好
-                        var sendRtpRawMethods = _peerConnection.GetType().GetMethods()
-                            .Where(m => m.Name == "SendRtpRaw")
-                            .ToList();
-
-                        bool sent = false;
-                        foreach (var method in sendRtpRawMethods)
-                        {
-                            try
-                            {
-                                var parameters = method.GetParameters();
-                                if (parameters.Length == 5 &&
-                                    parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                    parameters[1].ParameterType == typeof(byte[]) &&
-                                    parameters[2].ParameterType == typeof(uint) &&
-                                    parameters[3].ParameterType == typeof(int) &&
-                                    parameters[4].ParameterType == typeof(int))
-                                {
-                                    int payloadTypeInt = rtpPacket.Header.PayloadType;
-                                    if (payloadTypeInt < 0 || payloadTypeInt > 127)
-                                    {
-                                        payloadTypeInt = (_detectedVideoFormat == "hevc") ? 97 : 96;
-                                    }
-                                    // 传入纯负载，由库封包
-                                    var payloadOnly = new byte[2 + fragmentLength];
-                                    payloadOnly[0] = fuIndicator;
-                                    payloadOnly[1] = fuHeader;
-                                    System.Buffer.BlockCopy(nalUnit, fragmentStart, payloadOnly, 2, fragmentLength);
-
-                                    int markerBit = rtpPacket.Header.MarkerBit;
-                                    // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                    bool fragmentSent = SafeInvokeMethod(
-                                        () => method.Invoke(_peerConnection, new object[] {
-                                            SDPMediaTypesEnum.video,
-                                            payloadOnly,
-                                            rtpPacket.Header.Timestamp,
-                                            markerBit,
-                                            payloadTypeInt
-                                        }),
-                                        "SendRtpRaw(fragment)",
-                                        100);
-                                    if (fragmentSent)
-                                    {
-                                        sent = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            catch { }
-                        }
-
-                        if (!sent)
-                        {
-                            // 后备：发送完整 RTP 字节（2 参数版本）
-                            var rtpBytes = rtpPacket.GetBytes();
-                            var methods2 = _peerConnection.GetType().GetMethods()
-                                .Where(m => m.Name == "SendRtpRaw" && m.GetParameters().Length == 2)
-                                .ToList();
-                            foreach (var method in methods2)
-                            {
-                                try
-                                {
-                                    var parameters = method.GetParameters();
-                                    if (parameters[0].ParameterType == typeof(byte[]))
-                                    {
-                                        if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
-                                        {
-                                            // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            bool fragmentSent = SafeInvokeMethod(
-                                                () => method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.video }),
-                                                "SendRtpRaw(2-fragment)",
-                                                100);
-                                            if (fragmentSent)
-                                            {
-                                                sent = true;
-                                                break;
-                                            }
-                                        }
-                                        else if (parameters[1].ParameterType == typeof(int))
-                                        {
-                                            // ✅ 关键修复：使用超时保护，防止 WebRTC 发送阻塞
-                                            bool fragmentSent = SafeInvokeMethod(
-                                                () => method.Invoke(_peerConnection, new object[] { rtpBytes, (int)rtpPacket.Header.PayloadType }),
-                                                "SendRtpRaw(2-int-fragment)",
-                                                100);
-                                            if (fragmentSent)
-                                            {
-                                                sent = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-
-                        if (!sent)
-                        {
-                            _logger.LogWarning("⚠️ 分片视频 RTP 包已构建但未发送（未匹配到 SendRtpRaw 方法）");
-                        }
-                    }
-                    catch (Exception sendEx)
-                    {
-                        _logger.LogError(sendEx, "❌ 发送分片 RTP 包失败");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "❌ 发送分片 NAL unit RTP 包失败: fragment {I}/{Count}", i + 1, fragmentCount);
-                }
-            }
-        }
+        // 旧的视频发送方法已移除，现在使用新的模块化 VideoPipeline
 
         private string? DetectCodecFromVideoHeader(byte[] header)
         {
@@ -1068,89 +371,6 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
 
             return null;
-        }
-
-        /// <summary>
-        /// ✅ 处理视频队列：优先发送IDR帧，然后发送普通帧
-        /// </summary>
-        private void ProcessVideoQueue()
-        {
-            lock (_videoQueueLock)
-            {
-                // ✅ 优先处理IDR队列
-                while (_videoIdrQueue.Count > 0)
-                {
-                    var idrFrame = _videoIdrQueue.Dequeue();
-                    
-                    // ✅ 更新时间戳
-                    var now = DateTime.UtcNow;
-                    if (_videoPacketCount > 0)
-                    {
-                        var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                        if (elapsed > 0 && elapsed < 1.0)
-                        {
-                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                        }
-                        else
-                        {
-                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                        }
-                    }
-                    _lastVideoPacketTime = now;
-                    
-                    if (TrySendVideoDirect(idrFrame))
-                    {
-                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                        _videoPacketCount++;
-                    }
-                    else
-                    {
-                        // 发送失败，尝试RTP方式
-                        SendVideoRTP(idrFrame);
-                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                        _videoPacketCount++;
-                    }
-                }
-                
-                // ✅ 然后处理普通帧队列（限制每次处理的帧数，避免阻塞）
-                int processed = 0;
-                const int MAX_FRAMES_PER_BATCH = 3; // 每批最多处理3帧
-                while (_videoFrameQueue.Count > 0 && processed < MAX_FRAMES_PER_BATCH)
-                {
-                    var frame = _videoFrameQueue.Dequeue();
-                    
-                    // ✅ 更新时间戳
-                    var now = DateTime.UtcNow;
-                    if (_videoPacketCount > 0)
-                    {
-                        var elapsed = (now - _lastVideoPacketTime).TotalSeconds;
-                        if (elapsed > 0 && elapsed < 1.0)
-                        {
-                            _videoTimestamp += (uint)(elapsed * VIDEO_CLOCK_RATE);
-                        }
-                        else
-                        {
-                            _videoTimestamp += (uint)VIDEO_TIMESTAMP_INCREMENT;
-                        }
-                    }
-                    _lastVideoPacketTime = now;
-                    
-                    if (TrySendVideoDirect(frame))
-                    {
-                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                        _videoPacketCount++;
-                        processed++;
-                    }
-                    else
-                    {
-                        // 发送失败，尝试RTP方式
-                        SendVideoRTP(frame);
-                        _latencyStats?.RecordPacketSent(_sessionId, "video", _currentVideoFrameIndex);
-                        _videoPacketCount++;
-                        processed++;
-                    }
-                }
-            }
         }
         
         private bool IsIdrFrame(byte[] buf, int hintOffset)

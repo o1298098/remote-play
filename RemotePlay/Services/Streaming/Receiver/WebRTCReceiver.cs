@@ -13,6 +13,7 @@ using Concentus;
 using Concentus.Enums;
 using Concentus.Structs;
 using RemotePlay.Services.Statistics;
+using RemotePlay.Services.Streaming.Receiver.Video;
 
 namespace RemotePlay.Services.Streaming.Receiver
 {
@@ -84,24 +85,33 @@ namespace RemotePlay.Services.Streaming.Receiver
         // ✅ 音频重置后同步机制
         private bool _audioResetting = false; // 是否正在重置音频
         private int _audioFramesToSkip = 0; // 重置后需要跳过的帧数
-        private const int AUDIO_RESYNC_FRAMES = 2; // 重置后跳过2帧以重新同步（减少音频中断）
+        private const int AUDIO_RESYNC_FRAMES = 1; // 重置后跳过1帧以重新同步（减少音频中断）
         
-        // ✅ 视频关键帧优先队列：IDR帧优先发送，避免冻结
-        private readonly System.Collections.Generic.Queue<byte[]> _videoFrameQueue = new(); // 普通帧队列
-        private readonly System.Collections.Generic.Queue<byte[]> _videoIdrQueue = new(); // IDR关键帧优先队列
-        private readonly object _videoQueueLock = new();
-        private const int MAX_VIDEO_QUEUE_SIZE = 10; // 最大队列大小，避免延迟累积
+        // ✅ 旧的视频队列已移除，现在使用新的模块化 VideoPipeline
         
         // RTP 常量
         private const int RTP_MTU = 1200; // RTP MTU（通常比 UDP MTU 小）
         private const uint VIDEO_CLOCK_RATE = 90000; // H.264 视频时钟频率
         private const uint AUDIO_CLOCK_RATE = 48000; // OPUS 音频时钟频率
-        private const int VIDEO_FRAME_RATE = 60; // 假设 60fps（用于初始计算）
-        private const double VIDEO_TIMESTAMP_INCREMENT = VIDEO_CLOCK_RATE / (double)VIDEO_FRAME_RATE; // 每帧时间戳增量
+        private const int VIDEO_FRAME_RATE_DEFAULT = 60; // 默认 60fps（用于初始计算）
+        private const double VIDEO_TIMESTAMP_INCREMENT_DEFAULT = VIDEO_CLOCK_RATE / (double)VIDEO_FRAME_RATE_DEFAULT; // 默认每帧时间戳增量
+        
+        // ✅ 动态帧率检测和适应
+        private double _detectedFrameRate = VIDEO_FRAME_RATE_DEFAULT; // 检测到的实际帧率
+        private double _videoTimestampIncrement = VIDEO_TIMESTAMP_INCREMENT_DEFAULT; // 动态计算的时间戳增量
+        private readonly Queue<double> _frameIntervalHistory = new Queue<double>(); // 帧间隔历史（用于计算平均帧率）
+        private const int FRAME_RATE_HISTORY_SIZE = 30; // 保留最近30帧的间隔用于计算帧率
+        private const double MIN_FRAME_RATE = 15.0; // 最小帧率（避免异常值）
+        private const double MAX_FRAME_RATE = 120.0; // 最大帧率（避免异常值）
+        private DateTime _lastFrameRateUpdateTime = DateTime.MinValue;
+        private const int FRAME_RATE_UPDATE_INTERVAL_MS = 500; // 每500ms更新一次帧率
         
         // ✅ 协商后的动态负载类型（默认 H264=96, HEVC=97，协商成功后将覆盖）
         private int _negotiatedPtH264 = 96;
         private int _negotiatedPtHevc = 97;
+        
+        // ✅ 新的模块化视频处理管道（已完全替换旧方法）
+        private VideoPipeline? _videoPipeline;
         
         public event EventHandler? OnDisconnected;
         
@@ -115,13 +125,10 @@ namespace RemotePlay.Services.Streaming.Receiver
         private long _currentVideoFrameIndex = 0;
         private long _currentAudioFrameIndex = 0;
         
-        // ✅ 性能优化：缓存反射方法，避免每次发送时查找
-        private System.Reflection.MethodInfo? _cachedSendVideoMethod;
-        private System.Reflection.MethodInfo? _cachedSendRtpRawMethod;
-        private System.Reflection.MethodInfo? _cachedSendRtpRawVideoMethod;
+        // ✅ 性能优化：缓存反射方法（仅用于音频，视频已使用新的模块化管道）
         private System.Reflection.MethodInfo? _cachedSendRtpRawAudioMethod;
-        private bool _methodsInitialized = false;
-        private readonly object _methodsLock = new object();
+        private bool _audioMethodsInitialized = false;
+        private readonly object _audioMethodsLock = new object();
         
         // ✅ 性能优化：缓存连接状态，减少属性访问开销
         private RTCPeerConnectionState? _cachedConnectionState;
@@ -170,7 +177,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             _audioSsrc = (uint)random.Next(1, int.MaxValue);
             
             // ✅ 初始化时缓存反射方法（避免每次发送时查找）
-            InitializeReflectionMethods();
+            InitializeAudioReflectionMethods();
             
             // 监听连接状态变化（同时更新缓存）
             _peerConnection.onconnectionstatechange += (state) =>
@@ -189,6 +196,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                     
                     // ✅ 检测浏览器实际选择的音频编解码器
                     DetectSelectedAudioCodec();
+                    
+                    // ✅ 初始化新的模块化视频处理管道（在 SDP 协商完成后）
+                    InitializeVideoPipeline();
                     
                     // ✅ 启动连接保活机制
                     StartKeepalive();
@@ -536,6 +546,47 @@ namespace RemotePlay.Services.Streaming.Receiver
             _peerConnection?.addTrack(_videoTrack);
             _peerConnection?.addTrack(_audioTrack);
             
+            // ✅ 延迟初始化 VideoPipeline：将在连接建立后，SDP协商完成时初始化（确保 payload types 正确）
+            // 在 onconnectionstatechange 中初始化（连接建立后）
+        }
+        
+        /// <summary>
+        /// 初始化新的模块化视频处理管道
+        /// 应该在连接建立后、SDP协商完成后调用（确保 payload types 正确）
+        /// </summary>
+        private void InitializeVideoPipeline()
+        {
+            if (_videoPipeline != null || _videoTrack == null)
+            {
+                return;
+            }
+            
+            try
+            {
+                _videoPipeline = new VideoPipeline(
+                    _logger,
+                    _peerConnection,
+                    _videoTrack,
+                    _videoSsrc,
+                    _detectedVideoFormat,
+                    _negotiatedPtH264,
+                    _negotiatedPtHevc);
+                
+                // 设置统计回调
+                _videoPipeline.SetOnPacketSent(frameIndex => 
+                {
+                    _latencyStats?.RecordPacketSent(_sessionId, "video", frameIndex);
+                });
+                
+                _logger.LogInformation("✅ 模块化视频处理管道已初始化 (SSRC={Ssrc}, H264={H264}, HEVC={Hevc})", 
+                    _videoSsrc, _negotiatedPtH264, _negotiatedPtHevc);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 初始化视频处理管道失败");
+                _videoPipeline?.Dispose();
+                _videoPipeline = null;
+            }
         }
 
         private static string? NormalizePreferredVideoCodec(string? codec)
@@ -560,13 +611,13 @@ namespace RemotePlay.Services.Streaming.Receiver
             SDPAudioVideoMediaFormat h264Format,
             SDPAudioVideoMediaFormat hevcFormat)
         {
-            if (_preferredVideoCodec.ToLower() == "h264" || _preferredVideoCodec.ToLower() == "avc")
+            if (_preferredVideoCodec != null && (_preferredVideoCodec.ToLower() == "h264" || _preferredVideoCodec.ToLower() == "avc"))
             {
                 _logger.LogInformation("🎯 WebRTC 视频轨道使用首选编码：H.264");
                 return new List<SDPAudioVideoMediaFormat> { h264Format };
             }
 
-            if (_preferredVideoCodec.ToLower() == "h265"|| _preferredVideoCodec.ToLower() == "hevc")
+            if (_preferredVideoCodec != null && (_preferredVideoCodec.ToLower() == "h265" || _preferredVideoCodec.ToLower() == "hevc"))
             {
                 _logger.LogInformation("🎯 WebRTC 视频轨道使用首选编码：H.265/HEVC");
                 return new List<SDPAudioVideoMediaFormat> { hevcFormat,h264Format };
@@ -701,48 +752,20 @@ namespace RemotePlay.Services.Streaming.Receiver
         }
 
         /// <summary>
-        /// 初始化反射方法缓存（性能优化：避免每次发送时查找方法）
+        /// 初始化音频反射方法缓存（仅用于音频，视频已使用新的模块化管道）
         /// </summary>
-        private void InitializeReflectionMethods()
+        private void InitializeAudioReflectionMethods()
         {
-            lock (_methodsLock)
+            lock (_audioMethodsLock)
             {
-                if (_methodsInitialized || _peerConnection == null)
+                if (_audioMethodsInitialized || _peerConnection == null)
                     return;
                 
                 try
                 {
                     var peerConnectionType = _peerConnection.GetType();
                     
-                    // 查找 SendVideo(uint, byte[]) 方法
-                    var sendVideoMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                        .Where(m => m.Name == "SendVideo")
-                        .ToList();
-                    
-                    if (sendVideoMethods.Count == 0)
-                    {
-                        var baseType = peerConnectionType.BaseType;
-                        if (baseType != null)
-                        {
-                            sendVideoMethods = baseType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                                .Where(m => m.Name == "SendVideo")
-                                .ToList();
-                        }
-                    }
-                    
-                    foreach (var method in sendVideoMethods)
-                    {
-                        var parameters = method.GetParameters();
-                        if (parameters.Length == 2 &&
-                            parameters[0].ParameterType == typeof(uint) &&
-                            parameters[1].ParameterType == typeof(byte[]))
-                        {
-                            _cachedSendVideoMethod = method;
-                    break;
-                        }
-                    }
-                    
-                    // 查找 SendRtpRaw 相关方法（用于视频和音频）
+                    // 查找 SendRtpRaw 相关方法（仅用于音频）
                 var sendRtpRawMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
                         .Where(m => m.Name == "SendRtpRaw" || m.Name == "SendRtpPacket")
                     .ToList();
@@ -758,34 +781,26 @@ namespace RemotePlay.Services.Streaming.Receiver
                     }
                 }
                 
-                    // 查找 SendRtpRaw(byte[], SDPMediaTypesEnum) 或 SendRtpRaw(byte[], int)
+                    // 查找 SendRtpRaw(byte[], int) - 用于音频
                 foreach (var method in sendRtpRawMethods)
                     {
                         var parameters = method.GetParameters();
-                        if (parameters.Length == 2 && parameters[0].ParameterType == typeof(byte[]))
-                        {
-                            if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
-                            {
-                                _cachedSendRtpRawVideoMethod = method;
-                            }
-                            else if (parameters[1].ParameterType == typeof(int))
+                        if (parameters.Length == 2 && 
+                            parameters[0].ParameterType == typeof(byte[]) &&
+                            parameters[1].ParameterType == typeof(int))
                             {
                                 _cachedSendRtpRawAudioMethod = method;
-                            }
-                        }
-                        else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(byte[]))
-                        {
-                            _cachedSendRtpRawMethod = method;
+                            break;
                         }
                     }
                     
-                    _methodsInitialized = true;
-                    _logger.LogDebug("✅ 反射方法缓存初始化完成: SendVideo={HasSendVideo}, SendRtpRaw={HasRtpRaw}", 
-                        _cachedSendVideoMethod != null, _cachedSendRtpRawMethod != null || _cachedSendRtpRawVideoMethod != null);
+                    _audioMethodsInitialized = true;
+                    _logger.LogDebug("✅ 音频反射方法缓存初始化完成: SendRtpRaw={HasRtpRaw}", 
+                        _cachedSendRtpRawAudioMethod != null);
                     }
                     catch (Exception ex)
                     {
-                    _logger.LogWarning(ex, "⚠️ 初始化反射方法缓存失败，将使用运行时查找");
+                    _logger.LogWarning(ex, "⚠️ 初始化音频反射方法缓存失败，将使用运行时查找");
                 }
             }
         }
@@ -872,6 +887,21 @@ namespace RemotePlay.Services.Streaming.Receiver
                         _keepaliveDataChannel = null;
                     }
                     catch { }
+                }
+                
+                // ✅ 清理新的模块化视频处理管道
+                if (_videoPipeline != null)
+                {
+                    try
+                    {
+                        _videoPipeline.Dispose();
+                        _videoPipeline = null;
+                        _logger.LogDebug("✅ 视频处理管道已释放");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 释放视频处理管道时发生异常");
+                    }
                 }
                 
                 // ✅ 使用超时机制释放 WebRTC 连接，避免阻塞太久

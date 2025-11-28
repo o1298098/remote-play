@@ -2,6 +2,8 @@ using SIPSorcery.Media;
 using SIPSorcery.Net;
 using System;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Concentus;
 
 namespace RemotePlay.Services.Streaming.Receiver
@@ -11,11 +13,47 @@ namespace RemotePlay.Services.Streaming.Receiver
     /// </summary>
     public sealed partial class WebRTCReceiver
     {
+        /// <summary>
+        /// ✅ 修复：添加超时保护，避免同步阻塞导致前端冻结
+        /// 使用异步方式调用，带超时机制
+        /// </summary>
         private void SendAudioRTPRaw(byte[] rtpBytes, byte[] originalData, int payloadType = 111)
         {
             try
             {
                 if (_peerConnection == null) return;
+                
+                // ✅ 使用异步方式调用，避免阻塞
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await SendAudioRTPRawAsync(rtpBytes, originalData, payloadType);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (_audioPacketCount % 100 == 0)
+                        {
+                            _logger.LogWarning(ex, "⚠️ 异步发送音频 RTP 包失败");
+                        }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 发送音频 RTP 包失败");
+            }
+        }
+        
+        /// <summary>
+        /// 异步发送音频 RTP 包，带超时保护
+        /// </summary>
+        private async Task<bool> SendAudioRTPRawAsync(byte[] rtpBytes, byte[] originalData, int payloadType = 111)
+        {
+            try
+            {
+                if (_peerConnection == null) return false;
+                
                 var peerConnectionType = _peerConnection.GetType();
                 var sendRtpRawMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
                     .Where(m => m.Name == "SendRtpRaw")
@@ -43,23 +81,55 @@ namespace RemotePlay.Services.Streaming.Receiver
                         {
                             if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
                             {
-                                method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.audio });
-                                if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
+                                // ✅ 使用超时保护，避免阻塞
+                                using var cts = new CancellationTokenSource(100); // 100ms 超时
+                                var invokeTask = Task.Run(() => 
+                                    method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.audio }), cts.Token);
+                                
+                                try
                                 {
-                                    _logger.LogDebug("✅ 音频 RTP 包已发送 (2参数, SDPMediaTypesEnum): size={Size}", rtpBytes.Length);
+                                    await invokeTask;
+                                    if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
+                                    {
+                                        _logger.LogDebug("✅ 音频 RTP 包已发送 (2参数, SDPMediaTypesEnum): size={Size}", rtpBytes.Length);
+                                    }
+                                    rtpSent = true;
+                                    break;
                                 }
-                                rtpSent = true;
-                                break;
+                                catch (OperationCanceledException)
+                                {
+                                    if (_audioPacketCount % 100 == 0)
+                                    {
+                                        _logger.LogWarning("⚠️ 音频 RTP 发送超时 (2参数, SDPMediaTypesEnum)");
+                                    }
+                                    continue;
+                                }
                             }
                             else if (parameters[1].ParameterType == typeof(int))
                             {
-                                method.Invoke(_peerConnection, new object[] { rtpBytes, payloadType });
-                                if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
+                                // ✅ 使用超时保护，避免阻塞
+                                using var cts = new CancellationTokenSource(100); // 100ms 超时
+                                var invokeTask = Task.Run(() => 
+                                    method.Invoke(_peerConnection, new object[] { rtpBytes, payloadType }), cts.Token);
+                                
+                                try
                                 {
-                                    _logger.LogDebug("✅ 音频 RTP 包已发送 (2参数, int): payloadType={Pt}, size={Size}", payloadType, rtpBytes.Length);
+                                    await invokeTask;
+                                    if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
+                                    {
+                                        _logger.LogDebug("✅ 音频 RTP 包已发送 (2参数, int): payloadType={Pt}, size={Size}", payloadType, rtpBytes.Length);
+                                    }
+                                    rtpSent = true;
+                                    break;
                                 }
-                                rtpSent = true;
-                                break;
+                                catch (OperationCanceledException)
+                                {
+                                    if (_audioPacketCount % 100 == 0)
+                                    {
+                                        _logger.LogWarning("⚠️ 音频 RTP 发送超时 (2参数, int)");
+                                    }
+                                    continue;
+                                }
                             }
                         }
                         else if (parameters.Length == 6 &&
@@ -87,8 +157,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                             
                             int markerBit = 0;
                             
-                            try
-                            {
+                            // ✅ 使用超时保护，避免阻塞
+                            using var cts = new CancellationTokenSource(100); // 100ms 超时
+                            var invokeTask = Task.Run(() => 
                                 method.Invoke(_peerConnection, new object[] { 
                                     SDPMediaTypesEnum.audio, 
                                     payloadData,
@@ -96,23 +167,34 @@ namespace RemotePlay.Services.Streaming.Receiver
                                     markerBit,
                                     payloadType,
                                     seqNum 
-                                });
-                                
+                                }), cts.Token);
+                            
+                            try
+                            {
+                                await invokeTask;
                                 if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
                                 {
                                     _logger.LogDebug("✅ 音频 RTP 包已发送 (6参数): seq={Seq}, ts={Ts}, payloadType={Pt}, size={Size}", 
                                         seqNum, timestamp, payloadType, payloadData.Length);
                                 }
+                                rtpSent = true;
+                                break;
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                if (_audioPacketCount % 100 == 0)
+                                {
+                                    _logger.LogWarning("⚠️ 音频 RTP 发送超时 (6参数): seq={Seq}, ts={Ts}", seqNum, timestamp);
+                                }
+                                continue;
                             }
                             catch (Exception invokeEx)
                             {
                                 var innerEx = invokeEx.InnerException ?? invokeEx;
                                 _logger.LogError(innerEx, "❌ SendRtpRaw (6参数) 调用异常: seqNum={Seq}, timestamp={Ts}, payloadType={Pt}, payloadLen={Len}, error={Error}", 
                                     seqNum, timestamp, payloadType, payloadData.Length, innerEx.Message);
-                                throw;
+                                continue;
                             }
-                            rtpSent = true;
-                            break;
                         }
                     }
                     catch (Exception ex)
@@ -143,10 +225,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                         }
                     }
                 }
+                
+                return rtpSent;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ 发送音频 RTP 包失败");
+                return false;
             }
         }
 

@@ -710,17 +710,41 @@ namespace RemotePlay.Services.Streaming.AV
                         lastQueueLogTime = now;
                     }
 
+                    // ✅ 优化：使用 CancellationToken.WaitHandle 等待，避免阻塞线程池线程
                     if (_queue.IsEmpty)
                     {
-                        Thread.Sleep(1);
+                        // 使用 WaitHandle 等待，这样可以在等待时释放线程池线程
+                        // 等待最多 10ms，但会在取消信号触发时立即返回
+                        var waitHandle = token.WaitHandle;
+                        var ctWaitHandle = _ct.WaitHandle;
+                        var handles = new[] { waitHandle, ctWaitHandle };
+                        
+                        // WaitAny 返回第一个触发的句柄索引（0=token, 1=_ct），或 WaitTimeout (-1)
+                        int result = WaitHandle.WaitAny(handles, TimeSpan.FromMilliseconds(10));
+                        
+                        // ✅ Bug 2 修复：WaitHandle.WaitAny 返回 WaitHandle.WaitTimeout (-1) 表示超时
+                        // 只有当返回值是有效的句柄索引（0 或 1）时才表示取消信号触发
+                        if (result != WaitHandle.WaitTimeout)
+                        {
+                            // 取消信号触发（result == 0 表示 token，result == 1 表示 _ct）
+                            break;
+                        }
+                        // 如果 result == WaitHandle.WaitTimeout，表示超时，继续循环（这是预期行为）
                     }
                     else
                     {
                         Thread.Yield();
                     }
+                    
+                    // ✅ 优化：在每次循环开始时立即检查取消信号
+                    if (token.IsCancellationRequested || _ct.IsCancellationRequested)
+                    {
+                        break;
+                    }
                 }
 
                 _queue.Clear();
+                _logger.LogInformation("✅ AVHandler2 worker exited");
             }, token);
         }
 
@@ -743,11 +767,12 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 try
                 {
-                    var timeoutTask = Task.Delay(500);
+                    // ✅ 优化：减少等待时间，避免阻塞关闭流程
+                    var timeoutTask = Task.Delay(200); // 从 500ms 减少到 200ms
                     var completedTask = Task.WhenAny(_workerTask, timeoutTask).GetAwaiter().GetResult();
                     if (completedTask == timeoutTask)
                     {
-                        _logger.LogWarning("⚠️ AVHandler2 worker 退出超时（500ms），强制继续");
+                        _logger.LogWarning("⚠️ AVHandler2 worker 退出超时（200ms），强制继续");
                     }
                 }
                 catch (Exception ex)

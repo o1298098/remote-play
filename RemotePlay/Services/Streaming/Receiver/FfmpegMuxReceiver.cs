@@ -110,8 +110,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                     }
                 });
                 
-                // 短暂等待确保 listener 完全启动
-                Thread.Sleep(200);
+                // ✅ 优化：使用 Task.Delay 替代 Thread.Sleep，避免阻塞线程
+                Task.Delay(200).GetAwaiter().GetResult();
                 
                 // 启动 FFmpeg（此时 listener 已经准备好，FFmpeg 可以立即连接）
                 StartFfmpeg();
@@ -441,7 +441,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 }
                             }
                         }
-                        Thread.Sleep(20);
+                        // ✅ 优化：使用 Task.Delay 替代 Thread.Sleep，避免阻塞线程
+                        Task.Delay(20).GetAwaiter().GetResult();
                     }
                     if (_audioWriter == null)
                     {
@@ -575,7 +576,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                     if (videoConnected && audioConnected)
                         break;
                     
-                    Thread.Sleep(20);
+                    // ✅ 优化：使用 Task.Delay 替代 Thread.Sleep，避免阻塞线程
+                    Task.Delay(20).GetAwaiter().GetResult();
                 }
                 
                 // 在检查超时之前，再次验证连接是否真的建立（可能在其他线程中建立）
@@ -640,7 +642,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                         _logger?.LogWarning(ex, "Audio connection error after AcceptClients");
                         break;
                     }
-                    Thread.Sleep(20);
+                    // ✅ 优化：使用 Task.Delay 替代 Thread.Sleep，避免阻塞线程
+                    Task.Delay(20).GetAwaiter().GetResult();
                 }
                 
                 if (_audioWriter == null && !_disposed)

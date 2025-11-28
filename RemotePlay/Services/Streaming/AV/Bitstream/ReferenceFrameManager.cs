@@ -103,6 +103,30 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
         }
 
         /// <summary>
+        /// 移除指定的参考帧（当帧失败时调用）
+        /// </summary>
+        public void RemoveReferenceFrame(int frameIndex)
+        {
+            lock (_lock)
+            {
+                for (int i = 0; i < MAX_REFERENCE_FRAMES; i++)
+                {
+                    if (_referenceFrames[i] == frameIndex)
+                    {
+                        _referenceFrames[i] = -1;
+                        // 将后面的帧向前移动
+                        for (int j = i; j < MAX_REFERENCE_FRAMES - 1; j++)
+                        {
+                            _referenceFrames[j] = _referenceFrames[j + 1];
+                        }
+                        _referenceFrames[MAX_REFERENCE_FRAMES - 1] = -1;
+                        return;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// 获取当前参考帧列表（用于调试）
         /// </summary>
         public int[] GetReferenceFrames()
