@@ -170,6 +170,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
         
         /// <summary>
         /// 异步发送分片 NAL unit (FU-A 分片)
+        /// ✅ 修复：正确处理 H.264 和 HEVC 的 NAL 单元头格式差异
         /// </summary>
         public async Task<bool> SendFragmentedNalUnitAsync(
             byte[] nalUnit,
@@ -178,8 +179,36 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
         {
             if (nalUnit == null || nalUnit.Length == 0) return false;
 
-            byte nalType = (byte)(nalUnit[0] & 0x1F);
-            byte nalHeader = (byte)(nalUnit[0] & 0x60);
+            bool isHevc = _detectedVideoFormat == "hevc" || _detectedVideoFormat == "h265";
+            byte nalHeaderByte = nalUnit[0];
+            
+            byte nalType;
+            byte fuIndicator;
+            
+            if (isHevc)
+            {
+                // ✅ HEVC NAL 单元头格式 (RFC 7798):
+                // 位7: forbidden_zero_bit (F)
+                // 位6: nuh_layer_id (LayerID, 通常为0)
+                // 位5-1: nal_unit_type (6位类型)
+                // 位0: nuh_temporal_id_plus1
+                // FU-A: fu_indicator = (F | LayerID | 49), fu_header = (S | E | Type << 1)
+                nalType = (byte)((nalHeaderByte >> 1) & 0x3F); // 提取6位NAL类型
+                byte forbiddenBit = (byte)(nalHeaderByte & 0x80); // 保留F位
+                byte layerId = (byte)(nalHeaderByte & 0x40); // 保留LayerID位
+                fuIndicator = (byte)(forbiddenBit | layerId | 49); // 49 = FU-A for HEVC
+            }
+            else
+            {
+                // H.264 NAL 单元头格式:
+                // 位7: forbidden_zero_bit (F)
+                // 位6-5: nal_ref_idc (NRI)
+                // 位4-0: nal_unit_type (5位类型)
+                // FU-A: fu_indicator = (F | NRI | 28), fu_header = (S | E | R | Type)
+                nalType = (byte)(nalHeaderByte & 0x1F); // 提取5位NAL类型
+                byte nalHeader = (byte)(nalHeaderByte & 0x60); // 保留F和NRI位
+                fuIndicator = (byte)(nalHeader | 28); // 28 = FU-A for H.264
+            }
 
             int maxFragmentSize = RTP_MTU - 12 - 2; // RTP header + FU-A header
             int fragmentCount = (nalUnit.Length + maxFragmentSize - 1) / maxFragmentSize;
@@ -191,10 +220,23 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
 
                 try
                 {
-                    byte fuIndicator = (byte)(nalHeader | 28);
-                    byte fuHeader = nalType;
-                    if (i == 0) fuHeader |= 0x80;
-                    else if (i == fragmentCount - 1) fuHeader |= 0x40;
+                    byte fuHeader;
+                    if (isHevc)
+                    {
+                        // ✅ HEVC FU-A header: (S | E | Type << 1)
+                        // S=0x80 (Start), E=0x40 (End), Type在中间6位
+                        fuHeader = (byte)(nalType << 1);
+                        if (i == 0) fuHeader |= 0x80; // Start bit
+                        if (i == fragmentCount - 1) fuHeader |= 0x40; // End bit
+                    }
+                    else
+                    {
+                        // H.264 FU-A header: (S | E | R | Type)
+                        // S=0x80 (Start), E=0x40 (End), R=0x20 (Reserved), Type在低5位
+                        fuHeader = nalType;
+                        if (i == 0) fuHeader |= 0x80; // Start bit
+                        if (i == fragmentCount - 1) fuHeader |= 0x40; // End bit
+                    }
 
                     var payload = new byte[2 + fragmentLength];
                     payload[0] = fuIndicator;
@@ -203,7 +245,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
 
                     if (_methodCache == null) return false;
                     
-                    int payloadType = _detectedVideoFormat == "hevc" ? _negotiatedPtHevc : _negotiatedPtH264;
+                    int payloadType = isHevc ? _negotiatedPtHevc : _negotiatedPtH264;
                     bool sent = await _methodCache.InvokeSendRtpRawAsync(
                         SDPMediaTypesEnum.video, payload, timestamp, (i == fragmentCount - 1) ? 1 : 0, payloadType,
                         timeoutMs: 200, maxRetries: 2);

@@ -48,29 +48,33 @@ namespace RemotePlay.Services.Streaming.Receiver
                     _opusDecoder?.Dispose();
                     _opusDecoder = null;
                     
-                    // ✅ 重置 RTP 时间戳，使其从当前时间重新开始，避免时间戳不连续导致浏览器端音频播放异常
-                    // 使用当前时间作为新的时间戳基准，确保时间戳连续性
-                    var now = DateTime.UtcNow;
-                    var timeSinceStart = (now - _epochStart).TotalSeconds;
-                    var newTimestamp = (uint)(timeSinceStart * AUDIO_CLOCK_RATE);
-                    
-                    // ✅ 确保时间戳不会向后跳跃（如果新时间戳小于当前时间戳，说明发生了时钟回退，保持当前时间戳）
-                    if (newTimestamp > _audioTimestamp || _audioTimestamp == 0)
+                    // ✅ 修复爆音问题：保持时间戳连续性，避免时间戳跳跃
+                    // 关键问题：时间戳跳跃会导致浏览器端音频缓冲区不连续，引起爆音
+                    // 解决方案：不重新计算时间戳，而是基于当前时间戳继续递增
+                    if (_audioTimestamp == 0)
                     {
-                        _audioTimestamp = newTimestamp;
+                        // 首次初始化：使用当前时间
+                        var now = DateTime.UtcNow;
+                        var timeSinceStart = (now - _epochStart).TotalSeconds;
+                        _audioTimestamp = (uint)(timeSinceStart * AUDIO_CLOCK_RATE);
+                        _logger.LogDebug("🔄 首次初始化音频时间戳: {Timestamp}", _audioTimestamp);
                     }
                     else
                     {
-                        // 如果新时间戳小于当前时间戳，增加一个合理的增量（避免时间戳向后跳跃）
-                        _audioTimestamp += (uint)(_audioFrameSize > 0 ? _audioFrameSize : 480);
-                        _logger.LogDebug("⚠️ 检测到时间戳可能回退，使用增量方式更新时间戳");
+                        // ✅ 保持时间戳连续性：即使丢失了帧，也继续递增时间戳
+                        // 不重新计算时间戳，避免时间戳跳跃导致浏览器端音频缓冲区不连续
+                        // 后续帧会自然递增时间戳，保持连续性
+                        _logger.LogDebug("🔄 保持时间戳连续性，当前时间戳: {Timestamp}，后续帧将自然递增", _audioTimestamp);
                     }
                     
-                    // ✅ 重置后需要跳过几帧以重新同步音频流，避免爆音和无声
+                    // ✅ 修复爆音问题：增加跳过的帧数，清空浏览器端音频缓冲区
+                    // 问题：当丢失大量帧时（如85帧），浏览器端音频缓冲区可能还有旧的音频数据
+                    // 如果只跳过1帧，旧数据可能和新数据混合，导致爆音
+                    // 解决方案：跳过更多帧（3-5帧），给浏览器端足够时间清空缓冲区
                     _audioResetting = true;
-                    _audioFramesToSkip = AUDIO_RESYNC_FRAMES;
+                    _audioFramesToSkip = Math.Max(AUDIO_RESYNC_FRAMES, 3); // 至少跳过3帧，确保清空缓冲区
                     
-                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失），RTP时间戳已重置为 {Timestamp}，将跳过 {SkipFrames} 帧以重新同步",
+                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失），保持时间戳连续性 {Timestamp}，将跳过 {SkipFrames} 帧以清空浏览器端缓冲区并重新同步",
                         _audioTimestamp, _audioFramesToSkip);
                 }
                 catch (Exception ex)
