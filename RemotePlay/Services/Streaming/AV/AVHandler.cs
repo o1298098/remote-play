@@ -158,13 +158,13 @@ namespace RemotePlay.Services.Streaming.AV
             }
             
             // ✅ 设置帧丢失回调：当检测到帧丢失时，通知 receiver 重置解码器
-            _audioReceiver.SetFrameLossCallback(() =>
+            _audioReceiver.SetFrameLossCallback((lostFrames) =>
             {
                 if (_receiver is WebRTCReceiver webrtcReceiver)
                 {
                     try
                     {
-                        webrtcReceiver.ResetAudioDecoder();
+                        webrtcReceiver.ResetAudioDecoder(lostFrames);
                     }
                     catch (Exception ex)
                     {

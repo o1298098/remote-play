@@ -77,13 +77,13 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
           }}
         >
           {/* 下行速率 */}
-          <div className="flex items-center gap-0.5 flex-shrink-0" style={{ width: '75px' }}>
-            <span className="text-white/60 whitespace-nowrap text-[8px]" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)' }}>{t('streaming.monitor.labels.download')}:</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '105px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '50px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.download')}:</span>
             <span 
-              className="font-medium whitespace-nowrap text-right flex-1" 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
               style={{ 
                 textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
-                minWidth: '50px'
+                width: '53px'
               }}
             >
               {formatRate(t, stats?.downloadKbps ?? null)}
@@ -94,13 +94,13 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
           <span className="text-white/30 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)' }}>|</span>
 
           {/* 上行速率 */}
-          <div className="flex items-center gap-0.5 flex-shrink-0" style={{ width: '75px' }}>
-            <span className="text-white/60 whitespace-nowrap text-[8px]" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)' }}>{t('streaming.monitor.labels.upload')}:</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '105px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '50px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.upload')}:</span>
             <span 
-              className="font-medium whitespace-nowrap text-right flex-1" 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
               style={{ 
                 textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
-                minWidth: '50px'
+                width: '53px'
               }}
             >
               {formatRate(t, stats?.uploadKbps ?? null)}
@@ -111,13 +111,13 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
           <span className="text-white/30 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)' }}>|</span>
 
           {/* 视频码率 */}
-          <div className="flex items-center gap-0.5 flex-shrink-0" style={{ width: '75px' }}>
-            <span className="text-white/60 whitespace-nowrap text-[8px]" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)' }}>{t('streaming.monitor.labels.videoBitrate')}:</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '120px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '60px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.videoBitrate')}:</span>
             <span 
-              className="font-medium whitespace-nowrap text-right flex-1" 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
               style={{ 
                 textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
-                minWidth: '50px'
+                width: '58px'
               }}
             >
               {formatRate(t, stats?.videoBitrateKbps ?? null)}
@@ -128,13 +128,13 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
           <span className="text-white/30 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)' }}>|</span>
 
           {/* 分辨率 */}
-          <div className="flex items-center gap-0.5 flex-shrink-0" style={{ width: '85px' }}>
-            <span className="text-white/60 whitespace-nowrap text-[8px]" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)' }}>{t('streaming.monitor.labels.resolution')}:</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '115px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '55px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.resolution')}:</span>
             <span 
-              className="font-medium whitespace-nowrap text-right flex-1" 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
               style={{ 
                 textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
-                minWidth: '58px'
+                width: '58px'
               }}
             >
               {formatResolution(t, stats)}
@@ -145,13 +145,13 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
           <span className="text-white/30 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)' }}>|</span>
 
           {/* 延迟 */}
-          <div className="flex items-center gap-0.5 flex-shrink-0" style={{ width: '65px' }}>
-            <span className="text-white/60 whitespace-nowrap text-[8px]" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)' }}>{t('streaming.monitor.labels.latency')}:</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '95px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '50px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.latency')}:</span>
             <span 
-              className="font-medium whitespace-nowrap text-right flex-1" 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
               style={{ 
                 textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
-                minWidth: '40px'
+                width: '43px'
               }}
             >
               {formatLatency(t, stats?.latencyMs ?? null)}
@@ -162,13 +162,13 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
           <span className="text-white/30 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)' }}>|</span>
 
           {/* 帧率 */}
-          <div className="flex items-center gap-0.5 flex-shrink-0" style={{ width: '60px' }}>
-            <span className="text-white/60 whitespace-nowrap text-[8px]" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)' }}>{t('streaming.monitor.labels.fps')}:</span>
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '80px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '35px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.fps')}:</span>
             <span 
-              className="font-medium whitespace-nowrap text-right flex-1" 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
               style={{ 
                 textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
-                minWidth: '35px'
+                width: '43px'
               }}
             >
               {formatFps(t, stats?.fps ?? null)}

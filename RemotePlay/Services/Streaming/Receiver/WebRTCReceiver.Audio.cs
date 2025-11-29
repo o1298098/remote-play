@@ -39,7 +39,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
         }
 
-        public void ResetAudioDecoder()
+        public void ResetAudioDecoder(int lostFrames = 0)
         {
             lock (_opusDecoderLock)
             {
@@ -48,9 +48,10 @@ namespace RemotePlay.Services.Streaming.Receiver
                     _opusDecoder?.Dispose();
                     _opusDecoder = null;
                     
-                    // ✅ 修复爆音问题：保持时间戳连续性，避免时间戳跳跃
-                    // 关键问题：时间戳跳跃会导致浏览器端音频缓冲区不连续，引起爆音
-                    // 解决方案：不重新计算时间戳，而是基于当前时间戳继续递增
+                    // ✅ 修复爆音问题：根据丢失的帧数动态调整处理策略
+                    // 关键问题：当丢失大量帧时，时间戳虽然连续，但实际音频数据已经跳过了大量帧
+                    // 这会导致浏览器端音频缓冲区不连续，引起爆音
+                    
                     if (_audioTimestamp == 0)
                     {
                         // 首次初始化：使用当前时间
@@ -61,21 +62,42 @@ namespace RemotePlay.Services.Streaming.Receiver
                     }
                     else
                     {
-                        // ✅ 保持时间戳连续性：即使丢失了帧，也继续递增时间戳
-                        // 不重新计算时间戳，避免时间戳跳跃导致浏览器端音频缓冲区不连续
-                        // 后续帧会自然递增时间戳，保持连续性
-                        _logger.LogDebug("🔄 保持时间戳连续性，当前时间戳: {Timestamp}，后续帧将自然递增", _audioTimestamp);
+                        // ✅ 修复爆音问题：保持时间戳连续性，避免时间戳跳跃
+                        // 关键：RTP时间戳不能回退，必须保持单调递增
+                        // 即使丢失了大量帧，也要保持时间戳连续性，通过跳过更多帧来清空浏览器端缓冲区
+                        // 这样浏览器端会自然丢弃旧的音频数据，新数据会平滑接续
+                        _logger.LogDebug("🔄 检测到帧丢失（{LostFrames}帧），保持时间戳连续性 {Timestamp}，后续帧将自然递增，通过跳过帧来清空缓冲区", 
+                            lostFrames, _audioTimestamp);
                     }
                     
-                    // ✅ 修复爆音问题：增加跳过的帧数，清空浏览器端音频缓冲区
-                    // 问题：当丢失大量帧时（如85帧），浏览器端音频缓冲区可能还有旧的音频数据
-                    // 如果只跳过1帧，旧数据可能和新数据混合，导致爆音
-                    // 解决方案：跳过更多帧（3-5帧），给浏览器端足够时间清空缓冲区
+                    // ✅ 修复爆音问题：根据丢失的帧数动态调整跳过的帧数
+                    // 问题：当丢失大量帧时，浏览器端音频缓冲区可能还有旧的音频数据
+                    // 解决方案：根据丢失的帧数动态调整跳过的帧数
+                    // - 少量丢失（<50帧）：跳过3-5帧
+                    // - 中等丢失（50-200帧）：跳过5-10帧
+                    // - 大量丢失（>200帧）：跳过10-20帧，但不超过20帧以避免长时间静音
                     _audioResetting = true;
-                    _audioFramesToSkip = Math.Max(AUDIO_RESYNC_FRAMES, 3); // 至少跳过3帧，确保清空缓冲区
+                    int skipFrames;
+                    if (lostFrames <= 0)
+                    {
+                        skipFrames = Math.Max(AUDIO_RESYNC_FRAMES, 3); // 默认至少跳过3帧
+                    }
+                    else if (lostFrames < 50)
+                    {
+                        skipFrames = Math.Min(5, Math.Max(3, lostFrames / 10)); // 3-5帧
+                    }
+                    else if (lostFrames < 200)
+                    {
+                        skipFrames = Math.Min(10, Math.Max(5, lostFrames / 20)); // 5-10帧
+                    }
+                    else
+                    {
+                        skipFrames = Math.Min(20, Math.Max(10, lostFrames / 30)); // 10-20帧，但不超过20
+                    }
+                    _audioFramesToSkip = skipFrames;
                     
-                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失），保持时间戳连续性 {Timestamp}，将跳过 {SkipFrames} 帧以清空浏览器端缓冲区并重新同步",
-                        _audioTimestamp, _audioFramesToSkip);
+                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失 {LostFrames} 帧），时间戳 {Timestamp}，将跳过 {SkipFrames} 帧以清空浏览器端缓冲区并重新同步",
+                        lostFrames, _audioTimestamp, _audioFramesToSkip);
                 }
                 catch (Exception ex)
                 {

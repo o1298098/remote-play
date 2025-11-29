@@ -14,7 +14,7 @@ namespace RemotePlay.Services.Streaming.AV
         private readonly ILogger<AudioReceiver>? _logger;
         private ushort _frameIndexPrev = 0;
         private bool _frameIndexStartup = true;
-        private Action? _onFrameLossCallback; // ✅ 帧丢失回调
+        private Action<int>? _onFrameLossCallback; // ✅ 帧丢失回调，参数为丢失的帧数
 
         // ✅ 帧丢失检测阈值：当帧索引跳跃超过此值时，认为发生了帧丢失
         private const int MAX_FRAME_GAP = 5; // 允许最多丢失 5 帧，超过则重置解码器
@@ -25,9 +25,9 @@ namespace RemotePlay.Services.Streaming.AV
         }
 
         /// <summary>
-        /// 设置帧丢失回调（当检测到帧丢失时调用）
+        /// 设置帧丢失回调（当检测到帧丢失时调用，参数为丢失的帧数）
         /// </summary>
-        public void SetFrameLossCallback(Action? callback)
+        public void SetFrameLossCallback(Action<int>? callback)
         {
             _onFrameLossCallback = callback;
         }
@@ -131,8 +131,8 @@ namespace RemotePlay.Services.Streaming.AV
                 _logger?.LogWarning("⚠️ 检测到音频帧丢失：从 {Prev} 跳到 {Current}，丢失 {Gap} 帧，将重置解码器",
                     _frameIndexPrev, frameIndex, frameGap);
                 
-                // 通知上层重置解码器
-                _onFrameLossCallback?.Invoke();
+                // 通知上层重置解码器，传递丢失的帧数
+                _onFrameLossCallback?.Invoke(frameGap);
             }
 
             _frameIndexPrev = frameIndex;
