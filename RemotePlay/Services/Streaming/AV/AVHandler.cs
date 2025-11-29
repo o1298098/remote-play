@@ -274,7 +274,10 @@ namespace RemotePlay.Services.Streaming.AV
                     // 记录健康状态
                     RecordFrameStatus(status, now);
                     
-                    if (_receiver != null && success)
+                    // ✅ 关键修复：在宽限期内，即使success=false，如果recovered=true，也应该发送帧
+                    // 这可以避免在帧丢失后，因为参考帧缺失导致完全没有画面输出
+                    // VideoReceiver会在宽限期内将success设置为true，但为了保险起见，这里也检查recovered
+                    if (_receiver != null && (success || recovered))
                     {
                         var packetData = new byte[1 + frame.Length];
                         packetData[0] = (byte)HeaderType.VIDEO;
@@ -389,22 +392,77 @@ namespace RemotePlay.Services.Streaming.AV
                 HandleOrderedPacket,
                 dropCallback: (droppedPacket) =>
                 {
-                    _logger.LogWarning("⚠️ Video packet dropped in reorder queue: seq={Seq}, frame={Frame}",
-                        droppedPacket.Index, droppedPacket.FrameIndex);
+                    _logger.LogWarning("⚠️ Video packet dropped in reorder queue: seq={Seq}, frame={Frame}, unitIndex={UnitIndex}/{Total}",
+                        droppedPacket.Index, droppedPacket.FrameIndex, droppedPacket.UnitIndex, droppedPacket.UnitsTotal);
+                    
+                    // ✅ 检测连续丢弃，如果过多则重置ReorderQueue
+                    var now = DateTime.UtcNow;
+                    if (_lastDropTime != DateTime.MinValue && 
+                        (now - _lastDropTime).TotalMilliseconds > DROP_WINDOW_MS)
+                    {
+                        // 超过时间窗口，重置计数
+                        _consecutiveDrops = 0;
+                    }
+                    
+                    _consecutiveDrops++;
+                    _lastDropTime = now;
+                    
+                    // 如果连续丢弃超过阈值，重置ReorderQueue
+                    if (_consecutiveDrops >= MAX_CONSECUTIVE_DROPS)
+                    {
+                        _logger.LogError("🚨 连续丢弃 {Count} 个包，重置 ReorderQueue 以恢复视频流（最后丢弃的包: seq={LastSeq}, frame={LastFrame}）", 
+                            _consecutiveDrops, droppedPacket.Index, droppedPacket.FrameIndex);
+                        
+                        // ✅ 记录重置前的ReorderQueue统计信息
+                        var statsBeforeReset = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
+                        _logger.LogWarning("重置前ReorderQueue统计: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
+                            statsBeforeReset.processed, statsBeforeReset.dropped, statsBeforeReset.timeoutDropped, statsBeforeReset.bufferSize);
+                        
+                        ResetVideoReorderQueue();
+                        _consecutiveDrops = 0; // ✅ 重置计数（在ResetVideoReorderQueue之后）
+                        _lastDropTime = DateTime.MinValue;
+                        
+                        // 同时重置超时计数
+                        _consecutiveTimeouts = 0;
+                        _lastTimeoutTime = DateTime.MinValue;
+                        
+                        // ✅ 重置后请求关键帧，加快恢复
+                        if (_requestKeyframeCallback != null)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await _requestKeyframeCallback();
+                                    _logger.LogInformation("✅ 重置后已请求关键帧恢复视频流");
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "❌ 重置后请求关键帧失败");
+                                }
+                            });
+                        }
+                    }
                 },
-                sizeStart: 64,
-                sizeMin: 32,
-                sizeMax: 256,
-                timeoutMs: 200,
-                dropStrategy: ReorderQueueDropStrategy.Begin,
+                sizeStart: 128,  // ✅ 增加初始窗口大小（从64增加到128）
+                sizeMin: 64,     // ✅ 增加最小窗口大小（从32增加到64）
+                sizeMax: 512,    // ✅ 增加最大窗口大小（从256增加到512），容纳更多乱序包
+                timeoutMs: 1000, // ✅ 延长超时时间到1000ms（从200ms增加），给网络延迟更多容错空间
+                dropStrategy: ReorderQueueDropStrategy.End, // ✅ 改为End策略：丢弃新到达的包，而不是丢弃队首（保护关键帧）
                 timeoutCallback: OnReorderQueueTimeout);
         }
 
         // 超时恢复机制：跟踪连续超时次数，超过阈值时请求关键帧
         private int _consecutiveTimeouts = 0;
         private DateTime _lastTimeoutTime = DateTime.MinValue;
-        private const int MAX_CONSECUTIVE_TIMEOUTS = 10; // 连续超时10次后请求关键帧
-        private const int TIMEOUT_WINDOW_MS = 2000; // 2秒内的超时才算连续
+        private const int MAX_CONSECUTIVE_TIMEOUTS = 5; // ✅ 调整为5次（因为超时时间已增加到1000ms，5次即5秒）
+        private const int TIMEOUT_WINDOW_MS = 5000; // ✅ 调整为5秒内的超时才算连续（与超时时间匹配）
+        
+        // ✅ 丢包恢复机制：跟踪连续丢弃次数，超过阈值时重置ReorderQueue
+        private int _consecutiveDrops = 0;
+        private DateTime _lastDropTime = DateTime.MinValue;
+        private const int MAX_CONSECUTIVE_DROPS = 40; // ✅ 提高到40个包，避免过于频繁的重置导致帧率波动
+        private const int DROP_WINDOW_MS = 1000; // 1秒内的丢弃才算连续
 
         // 健康状态跟踪
         private readonly object _healthLock = new();
@@ -637,7 +695,7 @@ namespace RemotePlay.Services.Streaming.AV
                 DateTime lastQueueLogTime = DateTime.UtcNow;
                 DateTime lastTimeoutCheckTime = DateTime.UtcNow;
                 const int QUEUE_LOG_INTERVAL_SECONDS = 5; // 每5秒输出一次队列状态
-                const int TIMEOUT_CHECK_INTERVAL_MS = 50; // ✅ 每50ms检查一次超时（确保及时清理）
+                const int TIMEOUT_CHECK_INTERVAL_MS = 100; // ✅ 每100ms检查一次超时（超时时间已增加到1000ms，100ms检查足够及时）
 
                 while (!token.IsCancellationRequested && !_ct.IsCancellationRequested)
                 {

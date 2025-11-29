@@ -398,21 +398,40 @@ namespace RemotePlay.Services.Streaming.AV
                     var allocPacket = CreatePacketCopy(packet, decryptedData);
                     if (!_frameProcessor.AllocFrame(allocPacket))
                     {
-                        _logger?.LogWarning("Video receiver could not allocate frame for packet");
+                        _logger?.LogWarning("Video receiver could not allocate frame for packet: frame={Frame}, " +
+                            "unitIndex={UnitIndex}/{Total}, frameIndexCur={FrameCur}",
+                            packet.FrameIndex, packet.UnitIndex, packet.UnitsTotal, _frameIndexCur);
+                        
+                        // ✅ 关键修复：如果 AllocFrame 失败，可能需要重置 FrameProcessor
+                        // 这通常发生在帧结构发生变化时（如分辨率切换）
+                        _logger?.LogWarning("⚠️ AllocFrame 失败，可能需要重置 FrameProcessor");
                     }
                 }
 
                 // 添加 unit 到帧处理器
                 var unitPacket = CreatePacketCopy(packet, decryptedData);
-                if (!_frameProcessor.PutUnit(unitPacket))
+                bool putUnitSuccess = _frameProcessor.PutUnit(unitPacket);
+                if (!putUnitSuccess)
                 {
-                    _logger?.LogWarning("Video receiver could not put unit");
+                    _logger?.LogWarning("Video receiver could not put unit: frame={Frame}, unitIndex={UnitIndex}/{Total}, " +
+                        "frameIndexCur={FrameCur}, frameIndexPrev={FramePrev}",
+                        packet.FrameIndex, packet.UnitIndex, packet.UnitsTotal, _frameIndexCur, _frameIndexPrev);
+                    
+                    // ✅ 关键修复：如果 PutUnit 失败但这是最后一个 unit，仍然尝试刷新帧
+                    // 因为帧可能已经可以刷新了（通过 FEC 或其他 unit）
+                    if (packet.UnitIndex == packet.UnitsTotal - 1)
+                    {
+                        _logger?.LogWarning("⚠️ PutUnit 失败但这是最后一个 unit，尝试强制刷新帧 {Frame}", packet.FrameIndex);
+                    }
                 }
 
-                // 如果可以刷新，立即刷新
+                // ✅ 关键修复：如果可以刷新，立即刷新（即使 PutUnit 失败，如果是最后一个 unit 也要刷新）
                 if (_frameIndexCur != _frameIndexPrev)
                 {
-                    if (_frameProcessor.FlushPossible() || packet.UnitIndex == packet.UnitsTotal - 1)
+                    bool shouldFlush = _frameProcessor.FlushPossible() || 
+                                     (packet.UnitIndex == packet.UnitsTotal - 1);
+                    
+                    if (shouldFlush)
                     {
                         // ✅ 优化：FlushFrame现在收集回调，不在锁内调用
                         FlushFrameInternal(pendingCallbacks, ref pendingCorruptFrame);
@@ -725,8 +744,9 @@ namespace RemotePlay.Services.Streaming.AV
                         composedFrame = new byte[frameSize];
                         Array.Copy(frame, 0, composedFrame, 0, frameSize);
                     }
-                    // ✅ 优化：收集回调，在锁外调用
-                    pendingCallbacks.Add((composedFrame, true, false)); // 标记为recovered，但success=false
+                    // ✅ 关键修复：在宽限期或参考链超时后强制发送时，将success设置为true，确保AVHandler能够发送帧
+                    // 否则AVHandler会检查success=false而不发送，导致画面冻结
+                    pendingCallbacks.Add((composedFrame, true, true)); // 标记为recovered和success=true，确保发送
                 }
                 else
                 {
