@@ -8,6 +8,7 @@ import { StreamingLoading } from './components/StreamingLoading'
 import { StreamingTopBar } from './components/StreamingTopBar'
 import { StreamingStatsOverlay } from './components/StreamingStatsOverlay'
 import { MobileVirtualController } from './components/MobileVirtualController'
+import { MobileVirtualControllerPortrait } from './components/MobileVirtualControllerPortrait'
 import { MobileStatsBar } from './components/MobileStatsBar'
 import { useStreamingConnection } from '../../hooks/use-streaming-connection'
 import { useDevice } from '@/hooks/use-device'
@@ -16,7 +17,7 @@ export default function Streaming() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { toast } = useToast()
-  const { isMobile } = useDevice()
+  const { isMobile, isLandscape, isPortrait } = useDevice()
 
   const hostId = searchParams.get('hostId')
   const deviceName = searchParams.get('deviceName') || 'PlayStation'
@@ -264,23 +265,35 @@ export default function Streaming() {
       }
     }
 
-    // 在开始连接或已连接时进入全屏并锁定横屏
+    // 在开始连接或已连接时进入全屏，默认尝试锁定横屏（但不强制）
     if (isConnecting || isConnected) {
-      // 开始连接时立即请求全屏，延迟一点时间再锁定横屏，确保页面已经渲染完成
+      // 开始连接时立即请求全屏，延迟一点时间再尝试锁定横屏，确保页面已经渲染完成
       const timer = setTimeout(async () => {
         // 先请求全屏
         await requestPageFullscreen()
-        // 在全屏请求后稍等片刻再锁定横屏（某些浏览器需要全屏后才能锁定）
+        // 在全屏请求后稍等片刻再尝试锁定横屏（某些浏览器需要全屏后才能锁定）
+        // 默认尝试锁定横屏，但如果用户旋转到竖屏，允许保持竖屏
         setTimeout(async () => {
+          // 检查当前方向，如果是横屏则锁定横屏，如果是竖屏则锁定竖屏
+          const currentIsLandscape = window.innerWidth > window.innerHeight
+          if (currentIsLandscape) {
           await lockOrientation()
+          } else {
+            await lockPortraitOrientation()
+          }
         }, 300)
       }, 300)
 
-      // 监听屏幕方向变化，如果用户旋转屏幕，尝试重新锁定为横屏
+      // 监听屏幕方向变化，根据当前方向锁定
       const orientationChangeHandler = async () => {
         // 延迟一点时间再锁定，避免与系统旋转冲突
         setTimeout(async () => {
+          const currentIsLandscape = window.innerWidth > window.innerHeight
+          if (currentIsLandscape) {
           await lockOrientation()
+          } else {
+            await lockPortraitOrientation()
+          }
         }, 100)
       }
 
@@ -294,11 +307,11 @@ export default function Streaming() {
         window.removeEventListener('resize', orientationChangeHandler)
       }
     } else {
-      // 断开连接时先退出全屏，然后锁定为竖屏
+      // 断开连接时先退出全屏，然后解锁方向
       exitPageFullscreen()
-      // 退出全屏后稍等片刻再锁定竖屏（某些浏览器需要退出全屏后才能改变方向）
+      // 退出全屏后稍等片刻再解锁方向（某些浏览器需要退出全屏后才能改变方向）
       setTimeout(async () => {
-        await lockPortraitOrientation()
+        await unlockOrientation()
       }, 300)
     }
   }, [isMobile, isConnecting, isConnected])
@@ -373,7 +386,22 @@ export default function Streaming() {
       )}
 
       {(isConnecting || isConnected) && (
-        <div className="fixed inset-0 bg-black" style={{ zIndex: isConnected ? 10 : 0 }}>
+        <div 
+          className="fixed bg-black" 
+          style={{ 
+            zIndex: isConnected ? 10 : 0,
+            // 竖屏模式下，视频宽度100%，高度按16:9比例；横屏模式下，占据全屏
+            ...(isMobile && isPortrait ? {
+              top: 0,
+              left: 0,
+              right: 0,
+              width: '100%',
+              aspectRatio: '16/9',
+            } : {
+              inset: 0,
+            }),
+          }}
+        >
           <StreamingVideoPlayer ref={videoRef} isConnected={isConnected} isConnecting={isConnecting} onConnect={connect} />
         </div>
       )}
@@ -435,8 +463,10 @@ export default function Streaming() {
         </div>
       )}
 
-      {/* 移动端虚拟控制器 */}
+      {/* 移动端虚拟控制器 - 根据屏幕方向显示不同的控制器 */}
       {isMobile && isConnected && (
+        <>
+          {isLandscape ? (
         <MobileVirtualController
           sessionId={webrtcSessionId}
           isVisible={isConnected}
@@ -448,6 +478,20 @@ export default function Streaming() {
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
         />
+          ) : isPortrait ? (
+            <MobileVirtualControllerPortrait
+              sessionId={webrtcSessionId}
+              isVisible={isConnected}
+              onBack={() => {
+                disconnect()
+                navigate('/devices')
+              }}
+              onRefresh={isConnected ? () => { refreshStream() } : undefined}
+              isStatsEnabled={isStatsMonitoringEnabled}
+              onStatsToggle={isConnected ? setStatsMonitoring : undefined}
+            />
+          ) : null}
+        </>
       )}
     </div>
   )
