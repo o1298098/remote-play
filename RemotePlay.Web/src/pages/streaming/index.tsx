@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToast } from '@/hooks/use-toast'
 import { Wifi, AlertTriangle } from 'lucide-react'
@@ -316,6 +316,82 @@ export default function Streaming() {
     }
   }, [isMobile, isConnecting, isConnected])
 
+  // 切换横竖屏
+  const toggleOrientation = useCallback(async () => {
+    try {
+      const currentIsLandscape = window.innerWidth > window.innerHeight
+      if ('orientation' in screen && 'lock' in (screen as any).orientation) {
+        if (currentIsLandscape) {
+          // 当前是横屏，切换到竖屏
+          await (screen.orientation as any).lock('portrait')
+        } else {
+          // 当前是竖屏，切换到横屏
+          await (screen.orientation as any).lock('landscape')
+        }
+      } else if ((screen as any).orientation && (screen as any).orientation.lock) {
+        if (currentIsLandscape) {
+          await (screen as any).orientation.lock('portrait')
+        } else {
+          await (screen as any).orientation.lock('landscape')
+        }
+      } else if ((screen as any).lockOrientation) {
+        if (currentIsLandscape) {
+          ;(screen as any).lockOrientation('portrait')
+        } else {
+          ;(screen as any).lockOrientation('landscape')
+        }
+      }
+    } catch (error) {
+      console.debug('Failed to toggle orientation:', error)
+    }
+  }, [])
+
+  // 处理返回：移动端时先退出全屏和解锁方向
+  const handleBack = useCallback(async () => {
+    if (isMobile) {
+      // 退出全屏
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen()
+        } else if ((document as any).webkitFullscreenElement) {
+          ;(document as any).webkitExitFullscreen?.()
+        } else if ((document as any).mozFullScreenElement) {
+          ;(document as any).mozCancelFullScreen?.()
+        } else if ((document as any).msFullscreenElement) {
+          ;(document as any).msExitFullscreen?.()
+        }
+      } catch (error) {
+        console.debug('Failed to exit fullscreen:', error)
+      }
+
+      // 解锁屏幕方向
+      try {
+        if ('orientation' in screen && 'unlock' in (screen as any).orientation) {
+          ;(screen.orientation as any).unlock()
+        } else if ((screen as any).orientation && (screen as any).orientation.unlock) {
+          ;(screen as any).orientation.unlock()
+        } else if ((screen as any).unlockOrientation) {
+          ;(screen as any).unlockOrientation()
+        } else if ((screen as any).webkitUnlockOrientation) {
+          ;(screen as any).webkitUnlockOrientation()
+        } else if ((screen as any).mozUnlockOrientation) {
+          ;(screen as any).mozUnlockOrientation()
+        } else if ((screen as any).msUnlockOrientation) {
+          ;(screen as any).msUnlockOrientation()
+        }
+      } catch (error) {
+        console.debug('Failed to unlock orientation:', error)
+      }
+
+      // 等待一小段时间确保全屏和方向解锁完成
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    // 断开连接并导航
+    disconnect()
+    navigate('/devices')
+  }, [isMobile, disconnect, navigate])
+
   useEffect(() => {
     if (!hostId) {
       toast({
@@ -337,10 +413,7 @@ export default function Streaming() {
     return (
       <div className="fixed inset-0 bg-black">
         <StreamingTopBar
-          onBack={() => {
-            disconnect()
-            navigate('/devices')
-          }}
+          onBack={handleBack}
           isStatsEnabled={isStatsMonitoringEnabled}
           onRefresh={isConnected ? () => { refreshStream() } : undefined}
         />
@@ -370,10 +443,7 @@ export default function Streaming() {
     >
       {(isConnecting || isConnected) && (
         <StreamingTopBar
-          onBack={() => {
-            disconnect()
-            navigate('/devices')
-          }}
+          onBack={handleBack}
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
           onRefresh={isConnected ? () => { refreshStream() } : undefined}
@@ -470,13 +540,11 @@ export default function Streaming() {
         <MobileVirtualController
           sessionId={webrtcSessionId}
           isVisible={isConnected}
-          onBack={() => {
-            disconnect()
-            navigate('/devices')
-          }}
+          onBack={handleBack}
           onRefresh={isConnected ? () => { refreshStream() } : undefined}
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
+          onToggleOrientation={toggleOrientation}
         />
           ) : isPortrait ? (
             <MobileVirtualControllerPortrait
@@ -489,6 +557,7 @@ export default function Streaming() {
               onRefresh={isConnected ? () => { refreshStream() } : undefined}
               isStatsEnabled={isStatsMonitoringEnabled}
               onStatsToggle={isConnected ? setStatsMonitoring : undefined}
+              onToggleOrientation={toggleOrientation}
             />
           ) : null}
         </>

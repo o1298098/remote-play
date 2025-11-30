@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { useDevice } from '@/hooks/use-device'
-import { ArrowLeft, Activity } from 'lucide-react'
+import { ArrowLeft, Activity, Smartphone } from 'lucide-react'
 import { controllerService } from '@/service/controller.service'
 import { getStreamingButtonName } from '@/types/controller-mapping'
 import { useStickInputState } from '@/hooks/use-streaming-connection/stick-input-state'
@@ -29,6 +29,7 @@ interface MobileVirtualControllerPortraitProps {
   onRefresh?: () => void
   isStatsEnabled?: boolean
   onStatsToggle?: (enabled: boolean) => void
+  onToggleOrientation?: () => void
 }
 
 interface ButtonConfig {
@@ -108,7 +109,7 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       left: '50%',
       transform: 'translateX(-50%)',
     },
-    iconSize: { width: '45px', height: '35px' },
+    iconSize: { width: '50px', height: '40px' },
   },
   {
     name: 'DPAD_LEFT',
@@ -119,7 +120,7 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       top: '50%',
       transform: 'translateY(-50%)',
     },
-    iconSize: { width: '35px', height: '45px' },
+    iconSize: { width: '40px', height: '50px' },
   },
   {
     name: 'DPAD_RIGHT',
@@ -130,7 +131,7 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       top: '50%',
       transform: 'translateY(-50%)',
     },
-    iconSize: { width: '35px', height: '45px' },
+    iconSize: { width: '40px', height: '50px' },
   },
   {
     name: 'DPAD_DOWN',
@@ -141,7 +142,7 @@ const DPAD_BUTTONS: ButtonConfig[] = [
       left: '50%',
       transform: 'translateX(-50%)',
     },
-    iconSize: { width: '45px', height: '35px' },
+    iconSize: { width: '50px', height: '40px' },
   },
 ]
 
@@ -179,7 +180,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
       left: '50%',
       transform: 'translateX(-50%)',
     },
-    iconSize: { width: '30px', height: '30px' },
+    iconSize: { width: '35px', height: '35px' },
   },
   {
     name: 'SQUARE',
@@ -190,7 +191,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
       top: '50%',
       transform: 'translateY(-50%)',
     },
-    iconSize: { width: '30px', height: '30px' },
+    iconSize: { width: '35px', height: '35px' },
   },
   {
     name: 'CIRCLE',
@@ -201,7 +202,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
       top: '50%',
       transform: 'translateY(-50%)',
     },
-    iconSize: { width: '30px', height: '30px' },
+    iconSize: { width: '35px', height: '35px' },
   },
   {
     name: 'CROSS',
@@ -212,7 +213,7 @@ const ACTION_BUTTONS: ButtonConfig[] = [
       left: '50%',
       transform: 'translateX(-50%)',
     },
-    iconSize: { width: '30px', height: '30px' },
+    iconSize: { width: '35px', height: '35px' },
   },
 ]
 
@@ -403,6 +404,7 @@ export function MobileVirtualControllerPortrait({
   onRefresh: _onRefresh,
   isStatsEnabled = false,
   onStatsToggle,
+  onToggleOrientation,
 }: MobileVirtualControllerPortraitProps) {
   const { isMobile } = useDevice()
   
@@ -1160,8 +1162,25 @@ export function MobileVirtualControllerPortrait({
               ))}
             </div>
 
-            {/* 右侧：串流监控指标按钮 */}
-            <div className="flex items-center">
+            {/* 右侧：切换横竖屏按钮和串流监控指标按钮 */}
+            <div className="flex items-center gap-3">
+              {onToggleOrientation && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleOrientation()
+                  }}
+                  className="flex items-center justify-center text-white/80 active:text-white active:scale-95 transition-all"
+                  style={{
+                    touchAction: 'manipulation',
+                    width: '32px',
+                    height: '32px',
+                  }}
+                  aria-label="切换横竖屏"
+                >
+                  <Smartphone className="h-4 w-4" />
+                </button>
+              )}
               {onStatsToggle && (
                 <button
                   onClick={(e) => {
