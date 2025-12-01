@@ -402,16 +402,35 @@ namespace RemotePlay.Services.Streaming.AV
                     {
                         // 超过时间窗口，重置计数
                         _consecutiveDrops = 0;
+                        _firstDropTime = DateTime.MinValue;
+                    }
+                    
+                    // ✅ 记录第一次丢包的时间
+                    if (_consecutiveDrops == 0)
+                    {
+                        _firstDropTime = now;
                     }
                     
                     _consecutiveDrops++;
                     _lastDropTime = now;
                     
-                    // 如果连续丢弃超过阈值，重置ReorderQueue
-                    if (_consecutiveDrops >= MAX_CONSECUTIVE_DROPS)
+                    // ✅ 计算丢包持续时间
+                    var dropDuration = _firstDropTime != DateTime.MinValue 
+                        ? (now - _firstDropTime).TotalMilliseconds 
+                        : 0;
+                    
+                    // ✅ 如果连续丢弃超过阈值，或者丢包持续时间超过限制，重置ReorderQueue
+                    bool shouldReset = _consecutiveDrops >= MAX_CONSECUTIVE_DROPS ||
+                                      (dropDuration >= MAX_DROP_DURATION_MS && _consecutiveDrops >= 10); // 至少10个包且持续2秒
+                    
+                    if (shouldReset)
                     {
-                        _logger.LogError("🚨 连续丢弃 {Count} 个包，重置 ReorderQueue 以恢复视频流（最后丢弃的包: seq={LastSeq}, frame={LastFrame}）", 
-                            _consecutiveDrops, droppedPacket.Index, droppedPacket.FrameIndex);
+                        var reason = _consecutiveDrops >= MAX_CONSECUTIVE_DROPS 
+                            ? $"连续丢弃 {_consecutiveDrops} 个包" 
+                            : $"持续丢包 {dropDuration:F0}ms ({_consecutiveDrops} 个包)";
+                        
+                        _logger.LogError("🚨 {Reason}，重置 ReorderQueue 以恢复视频流（最后丢弃的包: seq={LastSeq}, frame={LastFrame}）", 
+                            reason, droppedPacket.Index, droppedPacket.FrameIndex);
                         
                         // ✅ 记录重置前的ReorderQueue统计信息
                         var statsBeforeReset = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
@@ -421,6 +440,7 @@ namespace RemotePlay.Services.Streaming.AV
                         ResetVideoReorderQueue();
                         _consecutiveDrops = 0; // ✅ 重置计数（在ResetVideoReorderQueue之后）
                         _lastDropTime = DateTime.MinValue;
+                        _firstDropTime = DateTime.MinValue;
                         
                         // 同时重置超时计数
                         _consecutiveTimeouts = 0;
@@ -461,8 +481,10 @@ namespace RemotePlay.Services.Streaming.AV
         // ✅ 丢包恢复机制：跟踪连续丢弃次数，超过阈值时重置ReorderQueue
         private int _consecutiveDrops = 0;
         private DateTime _lastDropTime = DateTime.MinValue;
-        private const int MAX_CONSECUTIVE_DROPS = 40; // ✅ 提高到40个包，避免过于频繁的重置导致帧率波动
+        private DateTime _firstDropTime = DateTime.MinValue; // ✅ 记录第一次丢包的时间
+        private const int MAX_CONSECUTIVE_DROPS = 20; // ✅ 降低到20个包，更快恢复（特别是TURN连接）
         private const int DROP_WINDOW_MS = 1000; // 1秒内的丢弃才算连续
+        private const int MAX_DROP_DURATION_MS = 2000; // ✅ 如果2秒内持续丢包，即使未达到20个也触发恢复
 
         // 健康状态跟踪
         private readonly object _healthLock = new();
