@@ -1,7 +1,6 @@
 using SIPSorcery.Net;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 
 namespace RemotePlay.Services.Streaming.Receiver
 {
@@ -10,10 +9,12 @@ namespace RemotePlay.Services.Streaming.Receiver
     /// </summary>
     public sealed partial class WebRTCReceiver
     {
-        // ✅ STUN Binding Request keepalive（用于 TURN 连接）
-        private DateTime _lastStunKeepalive = DateTime.MinValue;
-        private const int STUN_KEEPALIVE_INTERVAL_MS = 5000; // STUN Binding Request: 5秒（TURN连接需要STUN keepalive，不是DataChannel）
-        private List<(string host, int port, string protocol)>? _turnServers; // 缓存的 TURN 服务器列表
+        // ✅ TURN keepalive（服务器端必须主动发送，因为 ICE-Lite 不会自动发送）
+        private IPEndPoint? _turnRelay; // TURN relay candidate 地址
+        private UdpClient? _turnKeepaliveSocket; // 用于发送 TURN keepalive 的独立 UDP socket
+        private CancellationTokenSource? _turnKeepaliveCts; // TURN keepalive 取消令牌
+        private Task? _turnKeepaliveTask; // TURN keepalive 任务
+        private const int TURN_KEEPALIVE_INTERVAL_MS = 5000; // TURN keepalive 间隔：5秒
         private void StartKeepalive()
         {
             if (_keepaliveTask != null && !_keepaliveTask.IsCompleted)
@@ -127,6 +128,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                 _keepaliveCts?.Dispose();
                 _keepaliveCts = null;
                 _keepaliveTask = null;
+                
+                // ✅ 同时停止 TURN keepalive
+                StopTurnKeepalive();
             }
             catch (Exception ex)
             {
@@ -167,27 +171,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                         var now = DateTime.UtcNow;
                         var timeSinceLastPacket = (now - _lastVideoOrAudioPacketTime).TotalMilliseconds;
                         
-                        // ✅ 优先发送 STUN Binding Request keepalive（TURN连接需要）
-                        var timeSinceLastStunKeepalive = (now - _lastStunKeepalive).TotalMilliseconds;
-                        if (timeSinceLastStunKeepalive >= STUN_KEEPALIVE_INTERVAL_MS)
-                        {
-                            try
-                            {
-                                SendStunBindingRequest();
-                                _lastStunKeepalive = now;
-                                _lastKeepaliveTime = now;
-                                // 仅在调试模式下记录，避免日志过多
-                                if (_videoPacketCount % 1000 == 0)
-                                {
-                                    _logger.LogDebug("📤 发送 STUN Binding Request keepalive (间隔: {Interval}ms)", 
-                                        STUN_KEEPALIVE_INTERVAL_MS);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug(ex, "⚠️ STUN Binding Request keepalive 发送失败");
-                            }
-                        }
+                        // ✅ TURN keepalive 现在由独立的 StartTurnKeepalive() 循环处理
+                        // 不再需要在这里调用 SendStunBindingRequest()
                         
                         bool dataChannelKeepaliveNeeded = false;
                         bool dataChannelAvailable = false;
@@ -318,17 +303,11 @@ namespace RemotePlay.Services.Streaming.Receiver
         }
         
         /// <summary>
-        /// ✅ 发送 STUN Binding Request 作为 TURN keepalive
-        /// 这是 TURN 服务器能识别的 keepalive 包，用于保持 TURN allocation 活跃
-        /// 尝试通过反射访问 SIPSorcery 内部的传输通道来发送 STUN Binding Request
-        /// 
-        /// 注意：
-        /// - TURN 连接可能使用 UDP 或 TCP 协议
-        /// - UDP TURN: STUN Binding Request 通过 UDP socket 发送
-        /// - TCP TURN: STUN Binding Request 通过 TCP socket/stream 发送（格式相同，但通过 TCP 传输）
-        /// - 两种协议都需要定期发送 STUN Binding Request 以保持 allocation 活跃
+        /// ✅ 提取 TURN relay candidate 并启动 TURN keepalive
+        /// 这是 WebRTC 服务器端（ICE-Lite）必须主动发送的 keepalive
+        /// 因为 ICE-Lite 服务器不会自动发送 STUN Binding Request
         /// </summary>
-        private void SendStunBindingRequest()
+        private void ExtractTurnRelayAndStartKeepalive()
         {
             try
             {
@@ -337,307 +316,183 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
                 
-                // ✅ 方法1: 通过反射访问 RTCPeerConnection 内部的 ICE agent，发送 STUN Binding Request
-                var peerConnectionType = _peerConnection.GetType();
-                
-                // 尝试多种可能的字段/属性名称
-                object? iceAgent = null;
-                string? foundFieldName = null;
-                
-                // 方法1: 查找所有字段（包括不包含 "ice" 的，因为可能名称不同）
-                var fields = peerConnectionType.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                foreach (var field in fields)
+                // ✅ 从 remote description 的 SDP 中提取 TURN relay candidate
+                var remoteDesc = _peerConnection.remoteDescription;
+                if (remoteDesc?.sdp == null)
                 {
-                    var fieldName = field.Name.ToLowerInvariant();
-                    // 放宽搜索条件：查找包含 "ice"、"transport"、"agent"、"connection" 的字段
-                    if (fieldName.Contains("ice") || fieldName.Contains("transport") || 
-                        fieldName.Contains("agent") || fieldName.Contains("connection"))
+                    return;
+                }
+                
+                var sdp = remoteDesc.sdp.ToString();
+                if (string.IsNullOrWhiteSpace(sdp))
+                {
+                    return;
+                }
+                
+                // ✅ 解析 SDP 中的 relay candidate（typ relay）
+                // 格式示例: a=candidate:1 1 UDP 2130706431 192.168.1.100 54321 typ relay raddr 192.168.1.1 rport 12345
+                var lines = sdp.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                string? relayAddress = null;
+                int? relayPort = null;
+                
+                foreach (var line in lines)
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.StartsWith("a=candidate:") && trimmed.Contains("typ relay"))
                     {
-                        try
+                        // 解析 candidate 行
+                        var parts = trimmed.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        for (int i = 0; i < parts.Length; i++)
                         {
-                            var value = field.GetValue(_peerConnection);
-                            if (value != null)
+                            if (parts[i] == "typ" && i + 1 < parts.Length && parts[i + 1] == "relay")
                             {
-                                iceAgent = value;
-                                foundFieldName = field.Name;
-                                // 仅在第一次找到时记录（避免日志过多）
-                                if (_videoPacketCount % 200 == 0)
+                                // 找到 relay candidate，提取地址和端口
+                                // candidate 格式: foundation component protocol priority address port typ ...
+                                if (parts.Length >= 6)
                                 {
-                                    _logger.LogDebug("🔍 通过反射找到字段: {FieldName} (类型: {Type})", 
-                                        field.Name, value.GetType().Name);
+                                    relayAddress = parts[4]; // address
+                                    if (int.TryParse(parts[5], out var port))
+                                    {
+                                        relayPort = port;
+                                    }
                                 }
                                 break;
                             }
                         }
-                        catch { }
-                    }
-                }
-                
-                // 方法2: 查找属性
-                if (iceAgent == null)
-                {
-                    var properties = peerConnectionType.GetProperties(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                    foreach (var prop in properties)
-                    {
-                        var propName = prop.Name.ToLowerInvariant();
-                        if (propName.Contains("ice") || propName.Contains("transport") || 
-                            propName.Contains("agent") || propName.Contains("connection"))
+                        if (relayAddress != null && relayPort.HasValue)
                         {
-                            try
-                            {
-                                var value = prop.GetValue(_peerConnection);
-                                if (value != null)
-                                {
-                                    iceAgent = value;
-                                    foundFieldName = prop.Name;
-                                    if (_videoPacketCount % 200 == 0)
-                                    {
-                                        _logger.LogDebug("🔍 通过反射找到属性: {PropName} (类型: {Type})", 
-                                            prop.Name, value.GetType().Name);
-                                    }
-                                    break;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                
-                if (iceAgent != null)
-                {
-                    // ✅ 尝试方法1: 调用 ICE agent 的发送 STUN Binding Request 方法
-                    var iceAgentType = iceAgent.GetType();
-                    var methods = iceAgentType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    
-                    // 查找可能的发送方法
-                    MethodInfo? sendMethod = null;
-                    foreach (var method in methods)
-                    {
-                        var methodName = method.Name.ToLowerInvariant();
-                        if ((methodName.Contains("binding") || methodName.Contains("stun") || methodName.Contains("keepalive")) &&
-                            (methodName.Contains("send") || methodName.Contains("request")))
-                        {
-                            sendMethod = method;
                             break;
                         }
                     }
-                    
-                    if (sendMethod != null)
+                }
+                
+                if (relayAddress != null && relayPort.HasValue)
+                {
+                    try
                     {
-                        try
-                        {
-                            // 调用方法（可能是异步的）
-                            var result = sendMethod.Invoke(iceAgent, null);
-                            if (result is Task task)
-                            {
-                                // 异步方法，不等待完成（fire and forget）
-                                _ = task.ContinueWith(t =>
-                                {
-                                    if (t.IsFaulted)
-                                    {
-                                        _logger.LogWarning("⚠️ STUN Binding Request 发送异常: {Error}", t.Exception?.GetBaseException()?.Message);
-                                    }
-                                }, TaskContinuationOptions.OnlyOnFaulted);
-                            }
-                            // ✅ 成功调用，记录日志（每 20 次记录一次，避免日志过多）
-                            if (_videoPacketCount % 20 == 0)
-                            {
-                                _logger.LogDebug("✅ STUN Binding Request keepalive 已发送（通过反射调用 ICE agent）");
-                            }
-                            return; // 成功调用，返回
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "⚠️ 调用 ICE agent 发送 STUN Binding Request 失败");
-                        }
-                    }
-                    
-                    // ✅ 尝试方法2: 查找传输通道（UDP/TCP socket）并直接发送 STUN 包
-                    // 注意：TURN 连接可能使用 UDP 或 TCP，需要同时支持两种协议
-                    object? transport = null;
-                    var transportFields = iceAgentType.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                    foreach (var field in transportFields)
-                    {
-                        var fieldName = field.Name.ToLowerInvariant();
-                        // ✅ 同时搜索 UDP 和 TCP socket/transport
-                        if (fieldName.Contains("transport") || fieldName.Contains("socket") || 
-                            fieldName.Contains("udp") || fieldName.Contains("tcp") ||
-                            fieldName.Contains("connection") || fieldName.Contains("stream"))
-                        {
-                            try
-                            {
-                                var value = field.GetValue(iceAgent);
-                                if (value != null)
-                                {
-                                    transport = value;
-                                    if (_videoPacketCount % 200 == 0)
-                                    {
-                                        _logger.LogDebug("🔍 找到传输通道字段: {FieldName} (类型: {Type})", 
-                                            field.Name, value.GetType().Name);
-                                    }
-                                    break;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-                    
-                    // ✅ 如果字段搜索失败，尝试搜索集合类型的字段（可能有多个传输通道）
-                    if (transport == null)
-                    {
-                        foreach (var field in transportFields)
-                        {
-                            var fieldName = field.Name.ToLowerInvariant();
-                            if (fieldName.Contains("transport") || fieldName.Contains("connection") || 
-                                fieldName.Contains("channel") || fieldName.Contains("socket"))
-                            {
-                                try
-                                {
-                                    var value = field.GetValue(iceAgent);
-                                    if (value != null)
-                                    {
-                                        var valueType = value.GetType();
-                                        // 检查是否是集合类型（List, Dictionary, Array 等）
-                                        if (valueType.IsGenericType || valueType.IsArray)
-                                        {
-                                            // 尝试获取第一个元素
-                                            if (value is System.Collections.IEnumerable enumerable)
-                                            {
-                                                foreach (var item in enumerable)
-                                                {
-                                                    if (item != null)
-                                                    {
-                                                        transport = item;
-                                                        if (_videoPacketCount % 200 == 0)
-                                                        {
-                                                            _logger.LogDebug("🔍 从集合中找到传输通道: {FieldName} (类型: {Type})", 
-                                                                field.Name, item.GetType().Name);
-                                                        }
-                                                        break;
-                                                    }
-                                                }
-                                                if (transport != null) break;
-                                            }
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-                    }
-                    
-                    if (transport != null)
-                    {
-                        var transportType = transport.GetType();
-                        var sendMethods = transportType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        var ipAddress = IPAddress.Parse(relayAddress);
+                        _turnRelay = new IPEndPoint(ipAddress, relayPort.Value);
                         
-                        // 查找 Send 或 SendAsync 方法
-                        MethodInfo? transportSendMethod = null;
-                        foreach (var method in sendMethods)
-                        {
-                            var methodName = method.Name.ToLowerInvariant();
-                            if (methodName.Contains("send"))
-                            {
-                                var parameters = method.GetParameters();
-                                // 查找接受 byte[] 或 byte[] 和 EndPoint 的方法
-                                if (parameters.Length >= 1 && parameters[0].ParameterType == typeof(byte[]))
-                                {
-                                    transportSendMethod = method;
-                                    break;
-                                }
-                            }
-                        }
+                        _logger.LogInformation("✅ 提取到 TURN relay candidate: {Relay}", _turnRelay);
                         
-                        if (transportSendMethod != null)
-                        {
-                            try
-                            {
-                                var stunPacket = BuildStunBindingRequest();
-                                
-                                // 尝试调用 Send 方法
-                                object? result = null;
-                                if (transportSendMethod.GetParameters().Length == 1)
-                                {
-                                    result = transportSendMethod.Invoke(transport, new object[] { stunPacket });
-                                }
-                                else if (transportSendMethod.GetParameters().Length == 2)
-                                {
-                                    // 可能需要 EndPoint 参数，尝试从 ICE candidate 获取
-                                    // 这里先尝试 null 或默认值
-                                    result = transportSendMethod.Invoke(transport, new object[] { stunPacket, null! });
-                                }
-                                
-                                if (result is Task task)
-                                {
-                                    _ = task.ContinueWith(t =>
-                                    {
-                                        if (t.IsFaulted)
-                                        {
-                                            _logger.LogWarning("⚠️ STUN Binding Request 发送异常: {Error}", t.Exception?.GetBaseException()?.Message);
-                                        }
-                                    }, TaskContinuationOptions.OnlyOnFaulted);
-                                }
-                                
-                                // ✅ 成功发送
-                                if (_videoPacketCount % 20 == 0)
-                                {
-                                    _logger.LogDebug("✅ STUN Binding Request keepalive 已发送（通过传输通道）");
-                                }
-                                return;
-                            }
-                            catch (Exception ex)
-                            {
-                                if (_videoPacketCount % 100 == 0)
-                                {
-                                    _logger.LogWarning(ex, "⚠️ 通过传输通道发送 STUN Binding Request 失败");
-                                }
-                            }
-                        }
+                        // ✅ 启动 TURN keepalive
+                        StartTurnKeepalive();
                     }
-                    
-                    // ✅ 找到 ICE agent 但找不到发送方法
-                    if (_videoPacketCount % 100 == 0)
+                    catch (Exception ex)
                     {
-                        _logger.LogWarning("⚠️ 找到 ICE agent ({Type}) 但未找到 STUN Binding Request 发送方法", iceAgentType.Name);
+                        _logger.LogWarning(ex, "⚠️ 解析 TURN relay 地址失败: {Address}:{Port}", relayAddress, relayPort);
                     }
                 }
                 else
                 {
-                    // ✅ 未找到 ICE agent，尝试列出所有字段和属性（用于调试）
-                    if (_videoPacketCount % 200 == 0)
-                    {
-                        var allFields = peerConnectionType.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                        var allProperties = peerConnectionType.GetProperties(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-                        
-                        var fieldNames = string.Join(", ", allFields.Take(10).Select(f => f.Name));
-                        var propNames = string.Join(", ", allProperties.Take(10).Select(p => p.Name));
-                        
-                        _logger.LogWarning("⚠️ 无法通过反射找到 ICE agent。RTCPeerConnection 字段示例: {Fields}，属性示例: {Properties}", 
-                            fieldNames, propNames);
-                    }
-                    else if (_videoPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ 无法通过反射找到 ICE agent，STUN Binding Request keepalive 可能无法发送");
-                    }
-                }
-                
-                // ✅ 方法2: 如果反射失败，无法直接发送 STUN Binding Request
-                // 注意：SIPSorcery 的 RTCPeerConnection 没有 getStats() 方法
-                // 如果反射方法失败，只能依赖 SIPSorcery 内部的自动 keepalive 机制
-                // ⚠️ 警告：SIPSorcery 的默认 STUN keepalive 间隔是 15 秒，对于 TURN 连接可能太长了
-                // 建议：如果反射失败，考虑实现一个独立的 STUN 客户端来发送 Binding Request
-                if (_videoPacketCount % 100 == 0)
-                {
-                    _logger.LogWarning("⚠️ STUN Binding Request keepalive 反射失败，将依赖 SIPSorcery 内部机制（可能间隔过长）");
+                    // 没有找到 relay candidate，可能不是 TURN 连接
+                    _logger.LogDebug("ℹ️ 未找到 TURN relay candidate，可能使用直接连接或 STUN");
                 }
             }
             catch (Exception ex)
             {
-                // 静默失败，避免影响主流程
-                if (_videoPacketCount % 1000 == 0)
+                _logger.LogWarning(ex, "⚠️ 提取 TURN relay candidate 失败");
+            }
+        }
+        
+        /// <summary>
+        /// ✅ 启动 TURN keepalive 循环
+        /// 每 5 秒向 TURN relay 地址发送 STUN Binding Request
+        /// </summary>
+        private void StartTurnKeepalive()
+        {
+            if (_turnRelay == null)
+            {
+                return;
+            }
+            
+            // 停止现有的 keepalive
+            StopTurnKeepalive();
+            
+            try
+            {
+                // ✅ 创建独立的 UDP socket（如果还没有）
+                if (_turnKeepaliveSocket == null)
                 {
-                    _logger.LogDebug(ex, "⚠️ 发送 STUN Binding Request 失败");
+                    _turnKeepaliveSocket = new UdpClient();
                 }
+                
+                _turnKeepaliveCts = new CancellationTokenSource();
+                _turnKeepaliveTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!_turnKeepaliveCts.Token.IsCancellationRequested)
+                        {
+                            if (_turnRelay != null && _turnKeepaliveSocket != null && !_disposed)
+                            {
+                                try
+                                {
+                                    var stunPacket = BuildStunBindingRequest();
+                                    await _turnKeepaliveSocket.SendAsync(stunPacket, stunPacket.Length, _turnRelay);
+                                    
+                                    // 每 20 次记录一次日志（避免日志过多）
+                                    if (_videoPacketCount % 20 == 0)
+                                    {
+                                        _logger.LogDebug("✅ TURN keepalive 已发送到 {Relay}", _turnRelay);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "⚠️ TURN keepalive 发送失败: {Relay}", _turnRelay);
+                                }
+                            }
+                            
+                            await Task.Delay(TURN_KEEPALIVE_INTERVAL_MS, _turnKeepaliveCts.Token);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // 正常取消
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ TURN keepalive 循环异常");
+                    }
+                }, _turnKeepaliveCts.Token);
+                
+                _logger.LogInformation("✅ TURN keepalive 已启动 (间隔: {Interval}ms, Relay: {Relay})", 
+                    TURN_KEEPALIVE_INTERVAL_MS, _turnRelay);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 启动 TURN keepalive 失败");
+            }
+        }
+        
+        /// <summary>
+        /// ✅ 停止 TURN keepalive
+        /// </summary>
+        private void StopTurnKeepalive()
+        {
+            try
+            {
+                _turnKeepaliveCts?.Cancel();
+                if (_turnKeepaliveTask != null)
+                {
+                    try
+                    {
+                        _turnKeepaliveTask.Wait(TimeSpan.FromMilliseconds(500));
+                    }
+                    catch { }
+                }
+                _turnKeepaliveCts?.Dispose();
+                _turnKeepaliveCts = null;
+                _turnKeepaliveTask = null;
+                
+                _turnKeepaliveSocket?.Dispose();
+                _turnKeepaliveSocket = null;
+                
+                _turnRelay = null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ 停止 TURN keepalive 时出错");
             }
         }
         

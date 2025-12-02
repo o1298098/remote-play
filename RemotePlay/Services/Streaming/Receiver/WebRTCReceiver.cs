@@ -273,6 +273,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                          _peerConnection.connectionState == RTCPeerConnectionState.connected)
                 {
                     StartKeepalive();
+                    // ✅ 提取 TURN relay candidate 并启动 TURN keepalive（服务器端必须主动发送）
+                    ExtractTurnRelayAndStartKeepalive();
                 }
             };
             
