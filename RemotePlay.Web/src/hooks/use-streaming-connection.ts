@@ -1153,6 +1153,14 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         if (turnConfigResponse.success && turnConfigResponse.data) {
           const turnConfig = turnConfigResponse.data
           if (turnConfig.turnServers && turnConfig.turnServers.length > 0) {
+            console.log('🛰️ 从后端获取到 TURN 配置原始数据:', {
+              count: turnConfig.turnServers.length,
+              servers: turnConfig.turnServers.map((s: any) => ({
+                url: s.url,
+                hasUsername: !!s.username,
+                hasCredential: !!s.credential,
+              })),
+            })
             turnServers = turnConfig.turnServers
               .filter((server) => server.url) // 过滤掉没有 URL 的服务器
               .map((server) => {
@@ -1196,8 +1204,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         rtcpMuxPolicy: 'require',
       })
       
-      // ✅ 监听 DataChannel 事件（用于 keepalive）
-      // 注意：DataChannel 由后端在 createOffer 前创建，前端只需要监听
+      // ✅ 监听 DataChannel 事件（用于 keepalive ping/pong）
+      // 注意：DataChannel 由后端在 createOffer 前创建，前端需要监听并响应 ping
       peerConnection.ondatachannel = (event) => {
         const channel = event.channel
         console.log('📡 收到 DataChannel:', {
@@ -1206,10 +1214,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           readyState: channel.readyState,
         })
         
-        // ✅ 如果是 keepalive DataChannel，只监听状态（不需要发送，后端会发送 keepalive）
+        // ✅ 如果是 keepalive DataChannel，实现 ping/pong 机制
         if (channel.label === 'keepalive') {
           channel.onopen = () => {
-            console.log('✅ Keepalive DataChannel 已打开')
+            console.log('✅ Keepalive DataChannel 已打开，准备接收 PING 并发送 PONG')
           }
           
           channel.onclose = () => {
@@ -1220,10 +1228,34 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             console.warn('⚠️ Keepalive DataChannel 错误:', error)
           }
           
-          // ✅ 监听后端发送的 keepalive 消息
-          channel.onmessage = (_event) => {
-            // 后端发送的 keepalive 消息是 1 字节的 0x00
-            console.debug('📥 收到后端 keepalive 消息')
+          // ✅ 接收后端的 PING (0x01)，发送 PONG (0x02) 响应
+          channel.onmessage = (event) => {
+            try {
+              if (event.data instanceof ArrayBuffer) {
+                const buffer = new Uint8Array(event.data)
+                if (buffer.length > 0) {
+                  const messageType = buffer[0]
+                  if (messageType === 0x01) {
+                    // 收到 PING，发送 PONG 响应
+                    console.debug('📥 收到后端 PING，发送 PONG 响应')
+                    try {
+                      channel.send(new Uint8Array([0x02]).buffer)
+                    } catch (error) {
+                      console.warn('⚠️ 发送 PONG 失败:', error)
+                    }
+                  } else {
+                    console.debug('📥 收到未知 DataChannel 消息类型:', `0x${messageType.toString(16).padStart(2, '0')}`)
+                  }
+                }
+              } else if (typeof event.data === 'string') {
+                // 处理字符串消息（虽然不应该发生）
+                console.debug('📥 收到 DataChannel 字符串消息:', event.data)
+              } else {
+                console.debug('📥 收到未知类型的 DataChannel 消息')
+              }
+            } catch (error) {
+              console.warn('⚠️ 处理 DataChannel 消息时出错:', error)
+            }
           }
         }
       }
@@ -1619,11 +1651,20 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           const candidateType = event.candidate.type || 'unknown'
           const candidateStr = event.candidate.candidate || ''
           
+          // 原始 candidate 日志（用于排查 TURN / relay 是否正常生成）
+          console.log('🧊 原始 ICE Candidate:', candidateStr)
+          
           // 统计候选地址类型
           receivedCandidateTypes.add(candidateType)
           if (candidateType === 'relay') {
             hasRelayCandidate = true
-            console.log('🌐 收到 TURN relay 候选地址（最稳定）')
+            console.log('🌐 收到 TURN relay 候选地址（最稳定）:', {
+              full: candidateStr,
+              protocol: event.candidate.protocol,
+              address: event.candidate.address,
+              port: event.candidate.port,
+              priority: event.candidate.priority,
+            })
           } else if (candidateType === 'srflx') {
             hasSrflxCandidate = true
             console.log('📡 收到 STUN 服务器反射候选地址')

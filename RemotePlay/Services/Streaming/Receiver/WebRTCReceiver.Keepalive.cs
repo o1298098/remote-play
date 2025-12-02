@@ -1,4 +1,4 @@
-using SIPSorcery.Net;
+﻿using SIPSorcery.Net;
 
 namespace RemotePlay.Services.Streaming.Receiver
 {
@@ -45,6 +45,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     lock (_dataChannelLock)
                     {
                         _dataChannelOpen = true;
+                        _logger.LogInformation("✅ Keepalive DataChannel 已打开");
                     }
                 };
                 
@@ -54,12 +55,38 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         _dataChannelOpen = false;
                         _keepaliveDataChannel = null;
+                        _logger.LogInformation("⚠️ Keepalive DataChannel 已关闭");
                     }
                 };
                 
                 dataChannel.onerror += (error) =>
                 {
                     _logger.LogWarning("Keepalive DataChannel 错误: {Error}", error);
+                };
+                
+                // ✅ 接收前端的 pong 响应 (0x02)
+                dataChannel.onmessage += (_,__,data) =>
+                {
+                    try
+                    {
+                        if (data != null && data.Length > 0)
+                        {
+                            byte messageType = data[0];
+                            if (messageType == 0x02) // PONG
+                            {
+                                _logger.LogDebug("📥 收到前端 PONG 响应");
+                                _lastKeepaliveTime = DateTime.UtcNow;
+                            }
+                            else
+                            {
+                                _logger.LogDebug("📥 收到未知 DataChannel 消息类型: 0x{Type:X2}", messageType);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "处理 DataChannel 消息时出错");
+                    }
                 };
                 
             }
@@ -196,14 +223,16 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 {
                                     try
                                     {
-                                        _keepaliveDataChannel.send(new byte[] { 0x00 });
+                                        // ✅ 发送 PING (0x01)，等待前端返回 PONG (0x02)
+                                        _keepaliveDataChannel.send(new byte[] { 0x01 });
                                         sent = true;
                                         lastDataChannelKeepalive = now;
                                         _lastKeepaliveTime = now;
+                                        _logger.LogDebug("📤 发送 DataChannel PING");
                                     }
                                     catch (Exception ex)
                                     {
-                                        _logger.LogDebug(ex, "DataChannel keepalive 发送失败");
+                                        _logger.LogDebug(ex, "DataChannel PING 发送失败");
                                         lock (_dataChannelLock)
                                         {
                                             _dataChannelOpen = false;
