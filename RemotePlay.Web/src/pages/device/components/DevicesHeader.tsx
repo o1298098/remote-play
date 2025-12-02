@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Gamepad2, ChevronDown, User, Settings as SettingsIcon, LogOut, Settings, Power, X, Server } from 'lucide-react'
+import { Gamepad2, ChevronDown, User, Settings as SettingsIcon, LogOut, Settings, Power, X } from 'lucide-react'
 import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { cn } from '@/lib/utils'

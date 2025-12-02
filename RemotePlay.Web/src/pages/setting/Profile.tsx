@@ -1,13 +1,11 @@
 import { useNavigate } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/hooks/use-auth'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Gamepad2, Server, Settings } from 'lucide-react'
+import { ArrowLeft, Gamepad2, Server } from 'lucide-react'
 import { useEffect } from 'react'
 
 export default function Profile() {
-  const { t } = useTranslation()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
 

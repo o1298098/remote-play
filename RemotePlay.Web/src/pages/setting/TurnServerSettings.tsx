@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTranslation } from 'react-i18next'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -11,7 +10,6 @@ import { useAuth } from '@/hooks/use-auth'
 import { streamingService, type TurnServerConfig } from '@/service/streaming.service'
 
 export default function TurnServerSettings() {
-  const { t } = useTranslation()
   const { toast } = useToast()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
