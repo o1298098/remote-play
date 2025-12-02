@@ -1206,7 +1206,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           readyState: channel.readyState,
         })
         
-        // ✅ 如果是 keepalive DataChannel，监听其状态
+        // ✅ 如果是 keepalive DataChannel，只监听状态（不需要发送，后端会发送 keepalive）
         if (channel.label === 'keepalive') {
           channel.onopen = () => {
             console.log('✅ Keepalive DataChannel 已打开')
@@ -1220,10 +1220,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             console.warn('⚠️ Keepalive DataChannel 错误:', error)
           }
           
-          // ✅ 监听 keepalive 消息（可选，用于确认连接活跃）
+          // ✅ 监听后端发送的 keepalive 消息
           channel.onmessage = (_event) => {
-            // keepalive 消息是 1 字节的 0x00（由后端自动发送，前端只需确认收到）
-            console.debug('📥 收到 Keepalive 消息')
+            // 后端发送的 keepalive 消息是 1 字节的 0x00
+            console.debug('📥 收到后端 keepalive 消息')
           }
         }
       }

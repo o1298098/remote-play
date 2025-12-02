@@ -61,6 +61,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     _logger.LogWarning("Keepalive DataChannel 错误: {Error}", error);
                 };
+                
             }
         }
         
@@ -121,13 +122,18 @@ namespace RemotePlay.Services.Streaming.Receiver
         private async Task KeepaliveLoopAsync(CancellationToken ct)
         {
             DateTime lastDataChannelKeepalive = DateTime.MinValue;
-            DateTime lastSilentAudioKeepalive = DateTime.MinValue;
+            DateTime lastSilentAudioPacket = DateTime.MinValue;
             
             try
             {
+                // ✅ 如果有 audio track，必须每 20ms 持续发送静音包（音频流的必需数据）
+                bool hasAudioTrack = _audioTrack != null;
+                const int SILENT_AUDIO_INTERVAL_MS = 20; // 20ms = 50fps，音频流的必需频率
+                
                 while (!ct.IsCancellationRequested)
                 {
-                    await Task.Delay(500, ct);
+                    var delayMs = hasAudioTrack ? SILENT_AUDIO_INTERVAL_MS : 500;
+                    await Task.Delay(delayMs, ct);
                     
                     if (ct.IsCancellationRequested)
                         break;
@@ -148,8 +154,27 @@ namespace RemotePlay.Services.Streaming.Receiver
                         }
                         
                         var now = DateTime.UtcNow;
-                        var timeSinceLastPacket = (now - _lastVideoOrAudioPacketTime).TotalMilliseconds;
                         
+                        // ✅ 如果有 audio track，必须每 20ms 持续发送静音包（音频流的必需数据，不是 keepalive）
+                        if (hasAudioTrack)
+                        {
+                            var timeSinceLastSilentAudio = (now - lastSilentAudioPacket).TotalMilliseconds;
+                            if (timeSinceLastSilentAudio >= SILENT_AUDIO_INTERVAL_MS)
+                            {
+                                try
+                                {
+                                    SendSilentAudioPacket();
+                                    lastSilentAudioPacket = now;
+                                    _lastKeepaliveTime = now;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "发送静音音频包失败");
+                                }
+                            }
+                        }
+                        
+                        // ✅ DataChannel keepalive（如果有 DataChannel，每 5 秒发送，单向）
                         bool dataChannelKeepaliveNeeded = false;
                         bool dataChannelAvailable = false;
                         lock (_dataChannelLock)
@@ -186,29 +211,6 @@ namespace RemotePlay.Services.Streaming.Receiver
                                     }
                                 }
                             }
-                            
-                            if (sent)
-                            {
-                                continue;
-                            }
-                        }
-                        
-                        if (!dataChannelAvailable)
-                        {
-                            var timeSinceLastSilentAudio = (now - lastSilentAudioKeepalive).TotalMilliseconds;
-                            if (timeSinceLastSilentAudio >= 15000 && timeSinceLastPacket >= 15000)
-                            {
-                                try
-                                {
-                                    SendSilentAudioKeepalive();
-                                    lastSilentAudioKeepalive = now;
-                                    _lastKeepaliveTime = now;
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogDebug(ex, "静音音频 keepalive 发送失败");
-                                }
-                            }
                         }
                     }
                     catch (OperationCanceledException)
@@ -230,7 +232,11 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
         }
         
-        private void SendSilentAudioKeepalive()
+        /// <summary>
+        /// 发送静音音频包（音频流的必需数据，每 20ms 持续发送）
+        /// 这不是 keepalive，而是 audio track 的必需数据流
+        /// </summary>
+        private void SendSilentAudioPacket()
         {
             try
             {
@@ -239,6 +245,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
                 
+                // Opus 静音帧（10ms @ 48kHz）
                 var silentOpus = new byte[] { 0xF8, 0xFF, 0xFE };
                 SendAudioOpusDirect(silentOpus, 480);
             }
@@ -246,7 +253,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 if (_videoPacketCount % 1000 == 0)
                 {
-                    _logger.LogDebug(ex, "发送静音音频 keepalive 失败");
+                    _logger.LogDebug(ex, "发送静音音频包失败");
                 }
             }
         }
