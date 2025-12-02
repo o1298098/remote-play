@@ -76,12 +76,6 @@ services:
       - Database__NAME=remoteplay
       - Database__USER=remoteplay
       - Database__PASSWORD=remoteplay
-      - WebRTC__IcePortMin=40200
-      - WebRTC__IcePortMax=40400
-      - WebRTC__PublicIp=192.168.100.186
-      - WebRTC__TurnServers__0__Url=turn:stun.cloudflare.com:3478?transport=udp
-      # - WebRTC__TurnServers__0__Username=<turn-username>
-      # - WebRTC__TurnServers__0__Credential=<turn-password>
       # - JWT__Secret=change-me-to-a-strong-secret
       # - TZ=Asia/Shanghai
     ports:
@@ -136,10 +130,10 @@ volumes:
 ### 部署步骤
 
 1. **调整配置** 在 `docker-compose.yml` 文件中：
-   - 将 `WebRTC__PublicIp` 更新为您的服务器公网 IP 地址
    - 修改 `lan` 网络设置以匹配您的网络接口（将 `eth0` 替换为实际网络接口）
    - 根据需要更新子网和网关
-   - （可选）为生产环境设置 TURN 服务器凭证和 JWT 密钥
+   - （可选）为生产环境设置 JWT 密钥
+   - **注意**：WebRTC 和 TURN 服务器设置可在部署后通过 Web 界面配置（设置 → WebRTC 设置 / TURN 服务器设置）
 
 2. **启动服务**：
    ```bash
@@ -150,7 +144,12 @@ volumes:
    - 前端：`http://您的服务器IP:10110`
    - 后端 API：`http://您的服务器IP:10111`
 
-4. **注册 PlayStation 主机**：
+4. **配置 WebRTC 和 TURN 服务器**（可选）：
+   - 打开 Web 界面并导航到设置页面
+   - 根据需要配置 WebRTC 设置（公网 IP、ICE 端口范围）
+   - 配置 TURN 服务器以改善复杂网络环境下的连接质量
+
+5. **注册 PlayStation 主机**：
    - 打开 Web 界面
    - 点击"添加设备"以发现您的 PlayStation 主机
    - 输入 PlayStation 屏幕上显示的 PIN 码
@@ -160,7 +159,8 @@ volumes:
 
 - 确保 `lan` 网络接口与您的物理网络适配器匹配
 - 后端需要与您的 PlayStation 主机在同一网络中
-- 如需远程访问，请配置端口转发和 TURN 服务器
+- WebRTC 和 TURN 服务器设置现在可通过 Web 界面配置（设置页面）
+- 如需远程访问，请通过 Web 界面配置端口转发和 TURN 服务器
 - 在生产环境部署前，请更改默认 JWT 密钥
 
 ## 贡献指南

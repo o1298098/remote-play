@@ -76,12 +76,6 @@ services:
       - Database__NAME=remoteplay
       - Database__USER=remoteplay
       - Database__PASSWORD=remoteplay
-      - WebRTC__IcePortMin=40200
-      - WebRTC__IcePortMax=40400
-      - WebRTC__PublicIp=192.168.100.186
-      - WebRTC__TurnServers__0__Url=turn:stun.cloudflare.com:3478?transport=udp
-      # - WebRTC__TurnServers__0__Username=<turn-username>
-      # - WebRTC__TurnServers__0__Credential=<turn-password>
       # - JWT__Secret=change-me-to-a-strong-secret
       # - TZ=Asia/Shanghai
     ports:
@@ -135,10 +129,10 @@ volumes:
 ### Deployment Steps
 
 1. **Adjust the configuration** in the `docker-compose.yml` file:
-   - Update `WebRTC__PublicIp` with your server's public IP address
    - Modify the `lan` network settings to match your network interface (replace `eth0` with your actual network interface)
    - Update subnet and gateway if needed
-   - (Optional) Set TURN server credentials and JWT secret for production use
+   - (Optional) Set JWT secret for production use
+   - **Note**: WebRTC and TURN server settings can be configured in the web interface after deployment (Settings → WebRTC Settings / TURN Server Settings)
 
 2. **Start the services**:
    ```bash
@@ -149,7 +143,12 @@ volumes:
    - Frontend: `http://your-server-ip:10110`
    - Backend API: `http://your-server-ip:10111`
 
-4. **Register your PlayStation console**:
+4. **Configure WebRTC and TURN servers** (optional):
+   - Open the web interface and navigate to Settings
+   - Configure WebRTC settings (Public IP, ICE port range) if needed
+   - Configure TURN servers for better connectivity in complex network environments
+
+5. **Register your PlayStation console**:
    - Open the web interface
    - Click "Add Device" to discover your PlayStation console
    - Enter the PIN code shown on your PlayStation screen
@@ -159,7 +158,8 @@ volumes:
 
 - Ensure the `lan` network interface matches your physical network adapter
 - The backend needs to be on the same network as your PlayStation console
-- For remote access, configure port forwarding and TURN servers
+- WebRTC and TURN server settings are now configured through the web interface (Settings page)
+- For remote access, configure port forwarding and TURN servers via the web interface
 - Change the default JWT secret before production deployment
 
 ## Contributing
