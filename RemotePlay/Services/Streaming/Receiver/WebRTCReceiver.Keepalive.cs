@@ -211,23 +211,19 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 continue;
                             }
                         }
-                        
-                        if (!dataChannelAvailable)
-                        {
-                            var timeSinceLastSilentAudio = (now - lastSilentAudioKeepalive).TotalMilliseconds;
+                        var timeSinceLastSilentAudio = (now - lastSilentAudioKeepalive).TotalMilliseconds;
                             // ✅ 缩短静音音频keepalive间隔：从30秒改为15秒，提高TURN连接稳定性
-                            if (timeSinceLastSilentAudio >= 15000 && timeSinceLastPacket >= 15000)
+                        if (timeSinceLastSilentAudio >= 15000 && timeSinceLastPacket >= 15000)
+                        {
+                            try
+                             {
+                                SendSilentAudioKeepalive();
+                                lastSilentAudioKeepalive = now;
+                                _lastKeepaliveTime = now;
+                            }
+                            catch (Exception ex)
                             {
-                                try
-                                {
-                                    SendSilentAudioKeepalive();
-                                    lastSilentAudioKeepalive = now;
-                                    _lastKeepaliveTime = now;
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogDebug(ex, "⚠️ 静音音频 keepalive 发送失败");
-                                }
+                                _logger.LogDebug(ex, "⚠️ 静音音频 keepalive 发送失败");
                             }
                         }
                     }
