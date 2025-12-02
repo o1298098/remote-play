@@ -342,7 +342,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
                 
-                _logger.LogDebug("🔍 从 {Source} 提取 TURN relay candidate", 
+                _logger.LogInformation("🔍 从 {Source} 提取 TURN relay candidate", 
                     localDesc == _peerConnection.localDescription ? "localDescription" : "remoteDescription");
                 
                 // ✅ 解析 SDP 中的 relay candidate（typ relay）
@@ -358,26 +358,57 @@ namespace RemotePlay.Services.Streaming.Receiver
                     var trimmed = line.Trim();
                     if (trimmed.StartsWith("a=candidate:") && trimmed.Contains("typ relay"))
                     {
-                        _logger.LogDebug("🔍 找到 relay candidate 行: {Line}", trimmed);
+                        _logger.LogInformation("🔍 找到 relay candidate 行: {Line}", trimmed);
                         
                         // 解析 candidate 行
+                        // 格式: a=candidate:foundation component protocol priority address port typ relay raddr ... rport ...
+                        // 示例: a=candidate:1 1 UDP 2130706431 192.168.1.100 54321 typ relay raddr 192.168.1.1 rport 12345
                         var parts = trimmed.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        
+                        _logger.LogDebug("🔍 candidate 行解析: 共 {Count} 个部分", parts.Length);
+                        for (int i = 0; i < parts.Length && i < 10; i++)
+                        {
+                            _logger.LogDebug("  [{Index}]: {Value}", i, parts[i]);
+                        }
+                        
                         for (int i = 0; i < parts.Length; i++)
                         {
                             if (parts[i] == "typ" && i + 1 < parts.Length && parts[i + 1] == "relay")
                             {
                                 // 找到 relay candidate，提取地址和端口
                                 // candidate 格式: foundation component protocol priority address port typ ...
+                                // parts[0] = "a=candidate:foundation"
+                                // parts[1] = component (通常是 "1")
+                                // parts[2] = protocol (UDP 或 TCP)
+                                // parts[3] = priority
+                                // parts[4] = address (IP)
+                                // parts[5] = port
                                 if (parts.Length >= 6)
                                 {
-                                    relayProtocol = parts[2]; // UDP 或 TCP
-                                    relayAddress = parts[4]; // address
-                                    if (int.TryParse(parts[5], out var port))
+                                    // 处理 parts[0] 可能包含 "a=candidate:" 前缀
+                                    var protocolIndex = 2;
+                                    var addressIndex = 4;
+                                    var portIndex = 5;
+                                    
+                                    // 如果 parts[0] 是 "a=candidate:foundation"，需要调整索引
+                                    if (parts[0].StartsWith("a=candidate:"))
+                                    {
+                                        // 正常格式，索引不变
+                                    }
+                                    
+                                    relayProtocol = parts[protocolIndex]; // UDP 或 TCP
+                                    relayAddress = parts[addressIndex]; // address
+                                    if (int.TryParse(parts[portIndex], out var port))
                                     {
                                         relayPort = port;
                                     }
-                                    _logger.LogDebug("🔍 解析到 relay candidate: {Protocol} {Address}:{Port}", 
+                                    
+                                    _logger.LogInformation("✅ 解析到 relay candidate: Protocol={Protocol}, Address={Address}, Port={Port}", 
                                         relayProtocol, relayAddress, relayPort);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("⚠️ candidate 行格式不正确，部分数量不足: {Count}, 需要至少 6 个", parts.Length);
                                 }
                                 break;
                             }
@@ -411,7 +442,20 @@ namespace RemotePlay.Services.Streaming.Receiver
                 else
                 {
                     // 没有找到 relay candidate，可能不是 TURN 连接
-                    _logger.LogDebug("ℹ️ 未找到 TURN relay candidate，可能使用直接连接或 STUN。SDP 预览: {SdpPreview}", 
+                    // ✅ 添加更详细的诊断信息
+                    var candidateLines = lines.Where(l => l.Trim().StartsWith("a=candidate:")).ToList();
+                    var relayCandidateLines = candidateLines.Where(l => l.Contains("typ relay")).ToList();
+                    
+                    _logger.LogWarning("⚠️ 未找到 TURN relay candidate。候选行总数: {Total}, Relay 候选行数: {RelayCount}", 
+                        candidateLines.Count, relayCandidateLines.Count);
+                    
+                    if (relayCandidateLines.Any())
+                    {
+                        _logger.LogWarning("⚠️ 找到 relay 候选行但解析失败: {Lines}", 
+                            string.Join("; ", relayCandidateLines.Take(3)));
+                    }
+                    
+                    _logger.LogDebug("ℹ️ SDP 预览: {SdpPreview}", 
                         sdp.Length > 200 ? sdp.Substring(0, 200) + "..." : sdp);
                 }
             }
@@ -428,8 +472,13 @@ namespace RemotePlay.Services.Streaming.Receiver
         /// </summary>
         private void StartTurnKeepalive()
         {
+            _logger.LogDebug("🔍 StartTurnKeepalive 被调用: Relay={Relay}, Protocol={Protocol}", 
+                _turnRelay, _turnProtocol ?? "null");
+            
             if (_turnRelay == null || string.IsNullOrEmpty(_turnProtocol))
             {
+                _logger.LogWarning("⚠️ StartTurnKeepalive 参数无效: Relay={Relay}, Protocol={Protocol}", 
+                    _turnRelay, _turnProtocol ?? "null");
                 return;
             }
             
@@ -439,6 +488,9 @@ namespace RemotePlay.Services.Streaming.Receiver
             try
             {
                 _turnKeepaliveCts = new CancellationTokenSource();
+                
+                _logger.LogDebug("🔍 检查协议类型: {Protocol} (比较: UDP={IsUdp}, TCP={IsTcp})", 
+                    _turnProtocol, _turnProtocol == "UDP", _turnProtocol == "TCP");
                 
                 if (_turnProtocol == "UDP")
                 {
