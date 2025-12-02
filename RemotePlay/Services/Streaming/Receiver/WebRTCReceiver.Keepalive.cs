@@ -374,28 +374,51 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 // 异步方法，不等待完成（fire and forget）
                                 _ = task.ContinueWith(t =>
                                 {
-                                    if (t.IsFaulted && _videoPacketCount % 1000 == 0)
+                                    if (t.IsFaulted)
                                     {
-                                        _logger.LogDebug("⚠️ STUN Binding Request 发送异常: {Error}", t.Exception?.GetBaseException()?.Message);
+                                        _logger.LogWarning("⚠️ STUN Binding Request 发送异常: {Error}", t.Exception?.GetBaseException()?.Message);
                                     }
                                 }, TaskContinuationOptions.OnlyOnFaulted);
+                            }
+                            // ✅ 成功调用，记录日志（每 20 次记录一次，避免日志过多）
+                            if (_videoPacketCount % 20 == 0)
+                            {
+                                _logger.LogDebug("✅ STUN Binding Request keepalive 已发送（通过反射调用 ICE agent）");
                             }
                             return; // 成功调用，返回
                         }
                         catch (Exception ex)
                         {
-                            if (_videoPacketCount % 1000 == 0)
-                            {
-                                _logger.LogDebug(ex, "⚠️ 调用 ICE agent 发送方法失败");
-                            }
+                            _logger.LogWarning(ex, "⚠️ 调用 ICE agent 发送 STUN Binding Request 失败");
                         }
+                    }
+                    else
+                    {
+                        // ✅ 找到 ICE agent 但找不到发送方法
+                        if (_videoPacketCount % 100 == 0)
+                        {
+                            _logger.LogWarning("⚠️ 找到 ICE agent ({Type}) 但未找到 STUN Binding Request 发送方法", iceAgentType.Name);
+                        }
+                    }
+                }
+                else
+                {
+                    // ✅ 未找到 ICE agent
+                    if (_videoPacketCount % 100 == 0)
+                    {
+                        _logger.LogWarning("⚠️ 无法通过反射找到 ICE agent，STUN Binding Request keepalive 可能无法发送");
                     }
                 }
                 
                 // ✅ 方法2: 如果反射失败，无法直接发送 STUN Binding Request
                 // 注意：SIPSorcery 的 RTCPeerConnection 没有 getStats() 方法
                 // 如果反射方法失败，只能依赖 SIPSorcery 内部的自动 keepalive 机制
-                // 或者需要实现一个独立的 STUN 客户端来发送 Binding Request
+                // ⚠️ 警告：SIPSorcery 的默认 STUN keepalive 间隔是 15 秒，对于 TURN 连接可能太长了
+                // 建议：如果反射失败，考虑实现一个独立的 STUN 客户端来发送 Binding Request
+                if (_videoPacketCount % 100 == 0)
+                {
+                    _logger.LogWarning("⚠️ STUN Binding Request keepalive 反射失败，将依赖 SIPSorcery 内部机制（可能间隔过长）");
+                }
             }
             catch (Exception ex)
             {
