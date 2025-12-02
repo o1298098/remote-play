@@ -136,8 +136,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    // ✅ 提高检查频率：从1秒改为500ms，更快响应keepalive需求
-                    await Task.Delay(500, ct);
+                    await Task.Delay(1000, ct);
                     
                     if (ct.IsCancellationRequested)
                         break;
@@ -168,10 +167,14 @@ namespace RemotePlay.Services.Streaming.Receiver
                             if (dataChannelAvailable)
                             {
                                 var timeSinceLastDcKeepalive = (now - lastDataChannelKeepalive).TotalMilliseconds;
-                                // ✅ 修复：即使有数据包传输，也保持定期keepalive（5秒间隔）
-                                // 这对于TURN连接特别重要，因为NAT映射可能在没有keepalive时过期
-                                // 不再根据数据包传输情况延长keepalive间隔
-                                dataChannelKeepaliveNeeded = timeSinceLastDcKeepalive >= DATACHANNEL_KEEPALIVE_INTERVAL_MS;
+                                if (timeSinceLastPacket < DATACHANNEL_KEEPALIVE_INTERVAL_MS / 2)
+                                {
+                                    dataChannelKeepaliveNeeded = timeSinceLastDcKeepalive >= DATACHANNEL_KEEPALIVE_INTERVAL_MS * 2;
+                                }
+                                else
+                                {
+                                    dataChannelKeepaliveNeeded = timeSinceLastDcKeepalive >= DATACHANNEL_KEEPALIVE_INTERVAL_MS;
+                                }
                             }
                         }
                         
@@ -188,12 +191,6 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         sent = true;
                                         lastDataChannelKeepalive = now;
                                         _lastKeepaliveTime = now;
-                                        // 仅在调试模式下记录，避免日志过多
-                                        if (_videoPacketCount % 1000 == 0)
-                                        {
-                                            _logger.LogDebug("📤 发送 DataChannel keepalive (间隔: {Interval}ms)", 
-                                                DATACHANNEL_KEEPALIVE_INTERVAL_MS);
-                                        }
                                     }
                                     catch (Exception ex)
                                     {
@@ -211,19 +208,22 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 continue;
                             }
                         }
-                        var timeSinceLastSilentAudio = (now - lastSilentAudioKeepalive).TotalMilliseconds;
-                            // ✅ 缩短静音音频keepalive间隔：从30秒改为15秒，提高TURN连接稳定性
-                        if (timeSinceLastSilentAudio >= 15000 && timeSinceLastPacket >= 15000)
+                        
+                        if (!dataChannelAvailable)
                         {
-                            try
-                             {
-                                SendSilentAudioKeepalive();
-                                lastSilentAudioKeepalive = now;
-                                _lastKeepaliveTime = now;
-                            }
-                            catch (Exception ex)
+                            var timeSinceLastSilentAudio = (now - lastSilentAudioKeepalive).TotalMilliseconds;
+                            if (timeSinceLastSilentAudio >= 30000 && timeSinceLastPacket >= 30000)
                             {
-                                _logger.LogDebug(ex, "⚠️ 静音音频 keepalive 发送失败");
+                                try
+                                {
+                                    SendSilentAudioKeepalive();
+                                    lastSilentAudioKeepalive = now;
+                                    _lastKeepaliveTime = now;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "⚠️ 静音音频 keepalive 发送失败");
+                                }
                             }
                         }
                     }
@@ -272,4 +272,3 @@ namespace RemotePlay.Services.Streaming.Receiver
         }
     }
 }
-
