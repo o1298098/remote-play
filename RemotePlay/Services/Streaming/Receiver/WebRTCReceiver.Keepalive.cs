@@ -284,9 +284,49 @@ namespace RemotePlay.Services.Streaming.Receiver
         }
         
         /// <summary>
+        /// ✅ 构造 STUN Binding Request 包
+        /// STUN 消息格式（RFC 5389）：
+        /// - 前 2 字节：消息类型（0x0001 = Binding Request）
+        /// - 第 3-4 字节：消息长度（0x0000，无属性）
+        /// - 第 5-8 字节：魔术 Cookie（固定值 0x2112A442）
+        /// - 第 9-20 字节：事务 ID（12 字节随机值）
+        /// </summary>
+        private byte[] BuildStunBindingRequest()
+        {
+            var buffer = new byte[20]; // STUN Binding Request 最小长度：20 字节
+            
+            // 消息类型：Binding Request (0x0001)
+            // 注意：STUN 消息类型的高位是消息类别（Request = 0b00），低位是方法（Binding = 0x0001）
+            buffer[0] = 0x00;
+            buffer[1] = 0x01;
+            
+            // 消息长度：0（无属性）
+            buffer[2] = 0x00;
+            buffer[3] = 0x00;
+            
+            // 魔术 Cookie（固定值 0x2112A442）
+            buffer[4] = 0x21;
+            buffer[5] = 0x12;
+            buffer[6] = 0xA4;
+            buffer[7] = 0x42;
+            
+            // 事务 ID（12 字节随机值）
+            var random = new Random();
+            random.NextBytes(buffer.AsSpan(8, 12));
+            
+            return buffer;
+        }
+        
+        /// <summary>
         /// ✅ 发送 STUN Binding Request 作为 TURN keepalive
         /// 这是 TURN 服务器能识别的 keepalive 包，用于保持 TURN allocation 活跃
-        /// 通过反射访问 SIPSorcery 内部的 ICE agent 来发送 STUN Binding Request
+        /// 尝试通过反射访问 SIPSorcery 内部的传输通道来发送 STUN Binding Request
+        /// 
+        /// 注意：
+        /// - TURN 连接可能使用 UDP 或 TCP 协议
+        /// - UDP TURN: STUN Binding Request 通过 UDP socket 发送
+        /// - TCP TURN: STUN Binding Request 通过 TCP socket/stream 发送（格式相同，但通过 TCP 传输）
+        /// - 两种协议都需要定期发送 STUN Binding Request 以保持 allocation 活跃
         /// </summary>
         private void SendStunBindingRequest()
         {
@@ -302,19 +342,30 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 // 尝试多种可能的字段/属性名称
                 object? iceAgent = null;
+                string? foundFieldName = null;
                 
-                // 方法1: 查找 _iceAgent 字段
+                // 方法1: 查找所有字段（包括不包含 "ice" 的，因为可能名称不同）
                 var fields = peerConnectionType.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
                 foreach (var field in fields)
                 {
                     var fieldName = field.Name.ToLowerInvariant();
-                    if (fieldName.Contains("ice") && (fieldName.Contains("agent") || fieldName.Contains("transport")))
+                    // 放宽搜索条件：查找包含 "ice"、"transport"、"agent"、"connection" 的字段
+                    if (fieldName.Contains("ice") || fieldName.Contains("transport") || 
+                        fieldName.Contains("agent") || fieldName.Contains("connection"))
                     {
                         try
                         {
-                            iceAgent = field.GetValue(_peerConnection);
-                            if (iceAgent != null)
+                            var value = field.GetValue(_peerConnection);
+                            if (value != null)
                             {
+                                iceAgent = value;
+                                foundFieldName = field.Name;
+                                // 仅在第一次找到时记录（避免日志过多）
+                                if (_videoPacketCount % 200 == 0)
+                                {
+                                    _logger.LogDebug("🔍 通过反射找到字段: {FieldName} (类型: {Type})", 
+                                        field.Name, value.GetType().Name);
+                                }
                                 break;
                             }
                         }
@@ -329,13 +380,21 @@ namespace RemotePlay.Services.Streaming.Receiver
                     foreach (var prop in properties)
                     {
                         var propName = prop.Name.ToLowerInvariant();
-                        if (propName.Contains("ice") && (propName.Contains("agent") || propName.Contains("transport")))
+                        if (propName.Contains("ice") || propName.Contains("transport") || 
+                            propName.Contains("agent") || propName.Contains("connection"))
                         {
                             try
                             {
-                                iceAgent = prop.GetValue(_peerConnection);
-                                if (iceAgent != null)
+                                var value = prop.GetValue(_peerConnection);
+                                if (value != null)
                                 {
+                                    iceAgent = value;
+                                    foundFieldName = prop.Name;
+                                    if (_videoPacketCount % 200 == 0)
+                                    {
+                                        _logger.LogDebug("🔍 通过反射找到属性: {PropName} (类型: {Type})", 
+                                            prop.Name, value.GetType().Name);
+                                    }
                                     break;
                                 }
                             }
@@ -346,7 +405,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 if (iceAgent != null)
                 {
-                    // 尝试调用 ICE agent 的发送 STUN Binding Request 方法
+                    // ✅ 尝试方法1: 调用 ICE agent 的发送 STUN Binding Request 方法
                     var iceAgentType = iceAgent.GetType();
                     var methods = iceAgentType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     
@@ -392,19 +451,171 @@ namespace RemotePlay.Services.Streaming.Receiver
                             _logger.LogWarning(ex, "⚠️ 调用 ICE agent 发送 STUN Binding Request 失败");
                         }
                     }
-                    else
+                    
+                    // ✅ 尝试方法2: 查找传输通道（UDP/TCP socket）并直接发送 STUN 包
+                    // 注意：TURN 连接可能使用 UDP 或 TCP，需要同时支持两种协议
+                    object? transport = null;
+                    var transportFields = iceAgentType.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                    foreach (var field in transportFields)
                     {
-                        // ✅ 找到 ICE agent 但找不到发送方法
-                        if (_videoPacketCount % 100 == 0)
+                        var fieldName = field.Name.ToLowerInvariant();
+                        // ✅ 同时搜索 UDP 和 TCP socket/transport
+                        if (fieldName.Contains("transport") || fieldName.Contains("socket") || 
+                            fieldName.Contains("udp") || fieldName.Contains("tcp") ||
+                            fieldName.Contains("connection") || fieldName.Contains("stream"))
                         {
-                            _logger.LogWarning("⚠️ 找到 ICE agent ({Type}) 但未找到 STUN Binding Request 发送方法", iceAgentType.Name);
+                            try
+                            {
+                                var value = field.GetValue(iceAgent);
+                                if (value != null)
+                                {
+                                    transport = value;
+                                    if (_videoPacketCount % 200 == 0)
+                                    {
+                                        _logger.LogDebug("🔍 找到传输通道字段: {FieldName} (类型: {Type})", 
+                                            field.Name, value.GetType().Name);
+                                    }
+                                    break;
+                                }
+                            }
+                            catch { }
                         }
+                    }
+                    
+                    // ✅ 如果字段搜索失败，尝试搜索集合类型的字段（可能有多个传输通道）
+                    if (transport == null)
+                    {
+                        foreach (var field in transportFields)
+                        {
+                            var fieldName = field.Name.ToLowerInvariant();
+                            if (fieldName.Contains("transport") || fieldName.Contains("connection") || 
+                                fieldName.Contains("channel") || fieldName.Contains("socket"))
+                            {
+                                try
+                                {
+                                    var value = field.GetValue(iceAgent);
+                                    if (value != null)
+                                    {
+                                        var valueType = value.GetType();
+                                        // 检查是否是集合类型（List, Dictionary, Array 等）
+                                        if (valueType.IsGenericType || valueType.IsArray)
+                                        {
+                                            // 尝试获取第一个元素
+                                            if (value is System.Collections.IEnumerable enumerable)
+                                            {
+                                                foreach (var item in enumerable)
+                                                {
+                                                    if (item != null)
+                                                    {
+                                                        transport = item;
+                                                        if (_videoPacketCount % 200 == 0)
+                                                        {
+                                                            _logger.LogDebug("🔍 从集合中找到传输通道: {FieldName} (类型: {Type})", 
+                                                                field.Name, item.GetType().Name);
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                                if (transport != null) break;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    
+                    if (transport != null)
+                    {
+                        var transportType = transport.GetType();
+                        var sendMethods = transportType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        
+                        // 查找 Send 或 SendAsync 方法
+                        MethodInfo? transportSendMethod = null;
+                        foreach (var method in sendMethods)
+                        {
+                            var methodName = method.Name.ToLowerInvariant();
+                            if (methodName.Contains("send"))
+                            {
+                                var parameters = method.GetParameters();
+                                // 查找接受 byte[] 或 byte[] 和 EndPoint 的方法
+                                if (parameters.Length >= 1 && parameters[0].ParameterType == typeof(byte[]))
+                                {
+                                    transportSendMethod = method;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (transportSendMethod != null)
+                        {
+                            try
+                            {
+                                var stunPacket = BuildStunBindingRequest();
+                                
+                                // 尝试调用 Send 方法
+                                object? result = null;
+                                if (transportSendMethod.GetParameters().Length == 1)
+                                {
+                                    result = transportSendMethod.Invoke(transport, new object[] { stunPacket });
+                                }
+                                else if (transportSendMethod.GetParameters().Length == 2)
+                                {
+                                    // 可能需要 EndPoint 参数，尝试从 ICE candidate 获取
+                                    // 这里先尝试 null 或默认值
+                                    result = transportSendMethod.Invoke(transport, new object[] { stunPacket, null! });
+                                }
+                                
+                                if (result is Task task)
+                                {
+                                    _ = task.ContinueWith(t =>
+                                    {
+                                        if (t.IsFaulted)
+                                        {
+                                            _logger.LogWarning("⚠️ STUN Binding Request 发送异常: {Error}", t.Exception?.GetBaseException()?.Message);
+                                        }
+                                    }, TaskContinuationOptions.OnlyOnFaulted);
+                                }
+                                
+                                // ✅ 成功发送
+                                if (_videoPacketCount % 20 == 0)
+                                {
+                                    _logger.LogDebug("✅ STUN Binding Request keepalive 已发送（通过传输通道）");
+                                }
+                                return;
+                            }
+                            catch (Exception ex)
+                            {
+                                if (_videoPacketCount % 100 == 0)
+                                {
+                                    _logger.LogWarning(ex, "⚠️ 通过传输通道发送 STUN Binding Request 失败");
+                                }
+                            }
+                        }
+                    }
+                    
+                    // ✅ 找到 ICE agent 但找不到发送方法
+                    if (_videoPacketCount % 100 == 0)
+                    {
+                        _logger.LogWarning("⚠️ 找到 ICE agent ({Type}) 但未找到 STUN Binding Request 发送方法", iceAgentType.Name);
                     }
                 }
                 else
                 {
-                    // ✅ 未找到 ICE agent
-                    if (_videoPacketCount % 100 == 0)
+                    // ✅ 未找到 ICE agent，尝试列出所有字段和属性（用于调试）
+                    if (_videoPacketCount % 200 == 0)
+                    {
+                        var allFields = peerConnectionType.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                        var allProperties = peerConnectionType.GetProperties(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                        
+                        var fieldNames = string.Join(", ", allFields.Take(10).Select(f => f.Name));
+                        var propNames = string.Join(", ", allProperties.Take(10).Select(p => p.Name));
+                        
+                        _logger.LogWarning("⚠️ 无法通过反射找到 ICE agent。RTCPeerConnection 字段示例: {Fields}，属性示例: {Properties}", 
+                            fieldNames, propNames);
+                    }
+                    else if (_videoPacketCount % 100 == 0)
                     {
                         _logger.LogWarning("⚠️ 无法通过反射找到 ICE agent，STUN Binding Request keepalive 可能无法发送");
                     }
