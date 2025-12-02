@@ -212,7 +212,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         if (!dataChannelAvailable)
                         {
                             var timeSinceLastSilentAudio = (now - lastSilentAudioKeepalive).TotalMilliseconds;
-                            if (timeSinceLastSilentAudio >= 15000 && timeSinceLastPacket >= 15000)
+                            if (timeSinceLastSilentAudio >= 30000 && timeSinceLastPacket >= 30000)
                             {
                                 try
                                 {
