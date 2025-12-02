@@ -268,13 +268,10 @@ namespace RemotePlay.Services.Streaming.Receiver
                     _logger.LogWarning("⚠️ ICE 连接已关闭: {State}", state);
                     StopKeepalive();
                 }
-                // ✅ 如果 ICE 重新连接，重新启动保活机制
                 else if (state == RTCIceConnectionState.connected &&
                          _peerConnection.connectionState == RTCPeerConnectionState.connected)
                 {
                     StartKeepalive();
-                    // ✅ 提取 TURN relay candidate 并启动 TURN keepalive（服务器端必须主动发送）
-                    ExtractTurnRelayAndStartKeepalive();
                 }
             };
             
