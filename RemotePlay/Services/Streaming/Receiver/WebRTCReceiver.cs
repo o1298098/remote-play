@@ -147,7 +147,7 @@ namespace RemotePlay.Services.Streaming.Receiver
         private CancellationTokenSource? _keepaliveCts;
         private Task? _keepaliveTask;
         private DateTime _lastKeepaliveTime = DateTime.MinValue;
-        private const int DATACHANNEL_KEEPALIVE_INTERVAL_MS = 8000; // DataChannel keepalive: 8秒（5-10秒范围，WebRTC 官方推荐）
+        private const int DATACHANNEL_KEEPALIVE_INTERVAL_MS = 5000; // DataChannel keepalive: 5秒（TURN连接需要更频繁的keepalive，避免NAT映射过期）
         private DateTime _lastVideoOrAudioPacketTime = DateTime.UtcNow;
         private RTCDataChannel? _keepaliveDataChannel; // DataChannel 用于 keepalive（最有效）
         private bool _dataChannelOpen = false; // ✅ DataChannel 是否已打开
@@ -273,6 +273,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                          _peerConnection.connectionState == RTCPeerConnectionState.connected)
                 {
                     StartKeepalive();
+                    // ✅ 提取 TURN relay candidate 并启动 TURN keepalive（服务器端必须主动发送）
+                    ExtractTurnRelayAndStartKeepalive();
                 }
             };
             
@@ -957,3 +959,4 @@ namespace RemotePlay.Services.Streaming.Receiver
         // 可能需要将 AAC 转换为 OPUS
     }
 }
+
