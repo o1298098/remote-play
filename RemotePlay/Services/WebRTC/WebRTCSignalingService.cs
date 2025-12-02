@@ -3,9 +3,13 @@ using RemotePlay.Services.Streaming.Receiver;
 using RemotePlay.Services.Statistics;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.Configuration;
+using RemotePlay.Models.Context;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -27,6 +31,9 @@ namespace RemotePlay.Services.WebRTC
         private readonly IStreamingService? _streamingService;
         private readonly WebRTCConfig _config;
         private readonly PortRange? _portRange;
+        private readonly IServiceProvider _serviceProvider;
+        private const string TurnConfigKey = "webrtc.turn_servers";
+        private const string WebRTCConfigKey = "webrtc.config";
 
         public WebRTCSignalingService(
             ILogger<WebRTCSignalingService> logger,
@@ -34,7 +41,8 @@ namespace RemotePlay.Services.WebRTC
             LatencyStatisticsService? latencyStats = null,
             IControllerService? controllerService = null,
             IStreamingService? streamingService = null,
-            IOptions<WebRTCConfig>? webrtcOptions = null)
+            IOptions<WebRTCConfig>? webrtcOptions = null,
+            IServiceProvider? serviceProvider = null)
         {
             _logger = logger;
             _loggerFactory = loggerFactory;
@@ -42,6 +50,7 @@ namespace RemotePlay.Services.WebRTC
             _controllerService = controllerService;
             _streamingService = streamingService;
             _sessions = new ConcurrentDictionary<string, WebRTCSession>();
+            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
 
             _config = webrtcOptions?.Value ?? new WebRTCConfig();
             _portRange = CreatePortRange(_config);
@@ -83,10 +92,13 @@ namespace RemotePlay.Services.WebRTC
                     iceTransportPolicy = RTCIceTransportPolicy.all
                 };
 
-                if (_config.TurnServers?.Count > 0)
+                // 从 Settings 表读取 TURN 配置
+                var turnServers = await GetTurnServersFromSettingsAsync();
+                
+                if (turnServers.Count > 0)
                 {
                     int turnServerCount = 0;
-                    foreach (var turn in _config.TurnServers.Where(t => !string.IsNullOrWhiteSpace(t.Url)))
+                    foreach (var turn in turnServers.Where(t => !string.IsNullOrWhiteSpace(t.Url)))
                     {
                         config.iceServers.Add(new RTCIceServer
                         {
@@ -105,7 +117,22 @@ namespace RemotePlay.Services.WebRTC
                     _logger.LogInformation("ℹ️ 未配置 TURN 服务器，将仅使用 STUN 和直接连接");
                 }
 
-                var peerConnection = new RTCPeerConnection(config, portRange: _portRange);
+                // 从数据库读取 WebRTC 配置（包括端口范围和 PublicIp）
+                var webrtcConfig = await GetWebRTCConfigFromSettingsAsync();
+                var portRange = CreatePortRange(webrtcConfig);
+                
+                if (portRange != null)
+                {
+                    _logger.LogInformation("🌐 使用数据库配置的 WebRTC 端口范围: {Min}-{Max} (Shuffle={Shuffle})",
+                        webrtcConfig.IcePortMin, webrtcConfig.IcePortMax, webrtcConfig.ShufflePorts);
+                }
+                
+                if (!string.IsNullOrWhiteSpace(webrtcConfig.PublicIp))
+                {
+                    _logger.LogInformation("🌐 使用数据库配置的 WebRTC PublicIp: {PublicIp}", webrtcConfig.PublicIp);
+                }
+                
+                var peerConnection = new RTCPeerConnection(config, portRange: portRange);
 
                 // 在 createOffer 之前创建 DataChannel，确保 SDP 中包含 m=application section
                 RTCDataChannel? keepaliveDataChannel = null;
@@ -264,8 +291,8 @@ namespace RemotePlay.Services.WebRTC
                 }
 
                 var finalSdp = OptimizeSdpForLowLatency(peerConnection.localDescription.sdp.ToString());
-                finalSdp = ApplyPublicIpToSdp(finalSdp);
-                finalSdp = PrioritizeLanCandidates(finalSdp, preferLanCandidatesOverride);
+                finalSdp = ApplyPublicIpToSdp(finalSdp, webrtcConfig.PublicIp);
+                finalSdp = PrioritizeLanCandidates(finalSdp, preferLanCandidatesOverride ?? webrtcConfig.PreferLanCandidates);
 
                 return (sessionId, finalSdp);
             }
@@ -777,6 +804,205 @@ namespace RemotePlay.Services.WebRTC
             _ = RemoveSessionAsync(sessionId);
         }
         
+        /// <summary>
+        /// 从 Settings 表读取完整的 WebRTC 配置（包括 PublicIp, IcePortMin, IcePortMax, TurnServers）
+        /// </summary>
+        private async Task<WebRTCConfig> GetWebRTCConfigFromSettingsAsync()
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var context = scope.ServiceProvider.GetRequiredService<RPContext>();
+                
+                // 从数据库读取 WebRTC 配置
+                var setting = await context.Settings
+                    .AsNoTracking()
+                    .Where(s => s.Key == WebRTCConfigKey)
+                    .FirstOrDefaultAsync();
+
+                var result = new WebRTCConfig
+                {
+                    // 默认使用 appsettings.json 中的配置
+                    PublicIp = _config.PublicIp,
+                    IcePortMin = _config.IcePortMin,
+                    IcePortMax = _config.IcePortMax,
+                    ShufflePorts = _config.ShufflePorts,
+                    PreferLanCandidates = _config.PreferLanCandidates,
+                    TurnServers = new List<TurnServerConfig>()
+                };
+
+                if (setting != null)
+                {
+                    try
+                    {
+                        JObject? jsonObj = null;
+                        
+                        // 优先从 ValueJson 字段读取
+                        if (setting.ValueJson != null)
+                        {
+                            jsonObj = setting.ValueJson;
+                        }
+                        // 如果 ValueJson 为空，尝试从 Value 字段解析 JSON
+                        else if (!string.IsNullOrWhiteSpace(setting.Value))
+                        {
+                            jsonObj = JObject.Parse(setting.Value);
+                        }
+
+                        if (jsonObj != null)
+                        {
+                            // 解析 PublicIp
+                            if (jsonObj["publicIp"] != null)
+                                result.PublicIp = jsonObj["publicIp"]?.ToString();
+                            else if (jsonObj["PublicIp"] != null)
+                                result.PublicIp = jsonObj["PublicIp"]?.ToString();
+
+                            // 解析 IcePortMin
+                            if (jsonObj["icePortMin"] != null && jsonObj["icePortMin"].Type == JTokenType.Integer)
+                                result.IcePortMin = jsonObj["icePortMin"].Value<int>();
+                            else if (jsonObj["IcePortMin"] != null && jsonObj["IcePortMin"].Type == JTokenType.Integer)
+                                result.IcePortMin = jsonObj["IcePortMin"].Value<int>();
+
+                            // 解析 IcePortMax
+                            if (jsonObj["icePortMax"] != null && jsonObj["icePortMax"].Type == JTokenType.Integer)
+                                result.IcePortMax = jsonObj["icePortMax"].Value<int>();
+                            else if (jsonObj["IcePortMax"] != null && jsonObj["IcePortMax"].Type == JTokenType.Integer)
+                                result.IcePortMax = jsonObj["IcePortMax"].Value<int>();
+
+                            // 解析 TurnServers
+                            var serversToken = jsonObj["turnServers"] ?? jsonObj["TurnServers"] ?? jsonObj["servers"];
+                            if (serversToken != null && serversToken.Type == JTokenType.Array)
+                            {
+                                var turnServers = new List<TurnServerConfig>();
+                                foreach (var serverToken in serversToken)
+                                {
+                                    if (serverToken.Type != JTokenType.Object)
+                                        continue;
+
+                                    var serverObj = (JObject)serverToken;
+                                    var url = serverObj["url"]?.ToString() ?? serverObj["Url"]?.ToString() ?? serverObj["urls"]?.ToString();
+                                    if (string.IsNullOrWhiteSpace(url))
+                                        continue;
+
+                                    turnServers.Add(new TurnServerConfig
+                                    {
+                                        Url = url,
+                                        Username = serverObj["username"]?.ToString() ?? serverObj["Username"]?.ToString(),
+                                        Credential = serverObj["credential"]?.ToString() ?? serverObj["Credential"]?.ToString()
+                                    });
+                                }
+                                result.TurnServers = turnServers;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 解析 WebRTC 配置 JSON 失败，使用默认配置");
+                    }
+                }
+
+                // 如果数据库中没有 TurnServers，尝试从单独的 TURN 配置读取
+                if (result.TurnServers.Count == 0)
+                {
+                    var turnServers = await GetTurnServersFromSettingsAsync();
+                    if (turnServers.Count > 0)
+                    {
+                        result.TurnServers = turnServers;
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ 从 Settings 表读取 WebRTC 配置失败，使用默认配置");
+                return new WebRTCConfig
+                {
+                    PublicIp = _config.PublicIp,
+                    IcePortMin = _config.IcePortMin,
+                    IcePortMax = _config.IcePortMax,
+                    ShufflePorts = _config.ShufflePorts,
+                    PreferLanCandidates = _config.PreferLanCandidates,
+                    TurnServers = new List<TurnServerConfig>()
+                };
+            }
+        }
+
+        /// <summary>
+        /// 从 Settings 表读取 TURN 服务器配置
+        /// </summary>
+        private async Task<List<TurnServerConfig>> GetTurnServersFromSettingsAsync()
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var context = scope.ServiceProvider.GetRequiredService<RPContext>();
+                
+                var setting = await context.Settings
+                    .AsNoTracking()
+                    .Where(s => s.Key == TurnConfigKey)
+                    .FirstOrDefaultAsync();
+
+                if (setting == null)
+                {
+                    return new List<TurnServerConfig>();
+                }
+
+                JObject? jsonObj = null;
+                
+                // 优先从 ValueJson 字段读取
+                if (setting.ValueJson != null)
+                {
+                    jsonObj = setting.ValueJson;
+                }
+                // 如果 ValueJson 为空，尝试从 Value 字段解析 JSON
+                else if (!string.IsNullOrWhiteSpace(setting.Value))
+                {
+                    jsonObj = JObject.Parse(setting.Value);
+                }
+
+                if (jsonObj == null)
+                {
+                    return new List<TurnServerConfig>();
+                }
+
+                var turnServers = new List<TurnServerConfig>();
+                var serversToken = jsonObj["turnServers"] ?? jsonObj["TurnServers"] ?? jsonObj["servers"];
+                
+                if (serversToken != null && serversToken.Type == JTokenType.Array)
+                {
+                    foreach (var serverToken in serversToken)
+                    {
+                        if (serverToken.Type != JTokenType.Object)
+                        {
+                            continue;
+                        }
+
+                        var serverObj = (JObject)serverToken;
+                        var url = serverObj["url"]?.ToString() ?? serverObj["Url"]?.ToString() ?? serverObj["urls"]?.ToString();
+                        
+                        if (string.IsNullOrWhiteSpace(url))
+                        {
+                            continue;
+                        }
+
+                        turnServers.Add(new TurnServerConfig
+                        {
+                            Url = url,
+                            Username = serverObj["username"]?.ToString() ?? serverObj["Username"]?.ToString(),
+                            Credential = serverObj["credential"]?.ToString() ?? serverObj["Credential"]?.ToString()
+                        });
+                    }
+                }
+
+                return turnServers;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ 从 Settings 表读取 TURN 配置失败，使用空配置");
+                return new List<TurnServerConfig>();
+            }
+        }
+
         /// <summary>
         /// 清理过期会话（超过 1 小时）
         /// </summary>

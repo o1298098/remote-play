@@ -227,6 +227,9 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
                 
                 SendAudioRTPRaw(rtpBytes, opusFrame, 111);
+                
+                // ✅ 更新最后真实音频包发送时间（用于 keepalive 判断）
+                _lastAudioPacketTime = DateTime.UtcNow;
             }
             catch (Exception ex)
             {

@@ -134,7 +134,7 @@
       "deleteFailedDescription": "Unable to remove the console right now. Please try again later.",
       "deleteInvalidId": "Missing binding information, unable to remove."
     },
-    "settings": {
+    "deviceSettings": {
       "title": "Device Settings",
       "description": "Configure streaming parameters for {{name}}",
       "resolution": "Resolution",
@@ -182,6 +182,89 @@
           "H264": "H.264 codec",
           "HEVC": "HEVC/H.265 codec",
           "HEVC_HDR": "HEVC/H.265 HDR codec"
+        }
+      }
+    },
+    "settings": {
+      "title": "Settings",
+      "subtitle": "Manage your application settings and preferences",
+      "tabs": {
+        "controller": {
+          "label": "Controller Mapping",
+          "description": "Configure gamepad button mapping and vibration settings"
+        },
+        "turnServer": {
+          "label": "TURN Servers",
+          "description": "Configure WebRTC TURN servers to improve network connection"
+        },
+        "webrtc": {
+          "label": "WebRTC Settings",
+          "description": "Configure WebRTC network parameters"
+        }
+      },
+      "turnServer": {
+        "title": "TURN Server List",
+        "description": "Add TURN servers to help WebRTC establish connections in complex network environments",
+        "empty": "No TURN server configuration yet",
+        "emptyHint": "Click the button below to add a server",
+        "addServer": "Add Server",
+        "serverNumber": "Server #{{number}}",
+        "url": "Server URL",
+        "urlRequired": "Server URL *",
+        "urlPlaceholder": "turn:example.com:3478?transport=udp",
+        "urlHint": "Format: turn:host:port?transport=udp or turn:host:port?transport=tcp",
+        "username": "Username (Optional)",
+        "usernamePlaceholder": "TURN server username",
+        "credential": "Password (Optional)",
+        "credentialPlaceholder": "TURN server password",
+        "save": "Save Configuration",
+        "saving": "Saving...",
+        "reset": "Reset",
+        "instructions": {
+          "title": "Usage Instructions",
+          "point1": "TURN servers are used to establish WebRTC connections in complex network environments (such as symmetric NAT)",
+          "point2": "If your network environment is good, you may not need to configure TURN servers",
+          "point3": "It is recommended to configure multiple TURN servers to improve connection success rate",
+          "point4": "After saving the configuration, new WebRTC connections will use these servers"
+        },
+        "loading": "Loading...",
+        "loadFailed": "Load Failed",
+        "loadFailedDescription": "Unable to load TURN server configuration",
+        "saveSuccess": "Saved Successfully",
+        "saveSuccessDescription": "TURN server configuration has been saved",
+        "saveFailed": "Save Failed",
+        "saveFailedDescription": "Unable to save TURN server configuration",
+        "saveFailedInvalid": "Please fill in at least one valid TURN server URL"
+      },
+      "webrtc": {
+        "title": "WebRTC Configuration",
+        "description": "Configure WebRTC network parameters, including public IP and port range",
+        "publicIp": "Public IP Address",
+        "publicIpPlaceholder": "e.g., 120.196.xxx.xxx",
+        "publicIpHint": "In container or NAT environments, the public IP used to override local candidate addresses",
+        "icePortMin": "ICE Port Min",
+        "icePortMinPlaceholder": "e.g., 40100",
+        "icePortMinHint": "Starting UDP port value for WebRTC (1024-65535, must be even)",
+        "icePortMax": "ICE Port Max",
+        "icePortMaxPlaceholder": "e.g., 40200",
+        "icePortMaxHint": "Ending UDP port value for WebRTC (1024-65535, must be even)",
+        "save": "Save Configuration",
+        "saving": "Saving...",
+        "reset": "Reset",
+        "loading": "Loading...",
+        "loadFailed": "Load Failed",
+        "loadFailedDescription": "Unable to load WebRTC configuration",
+        "saveSuccess": "Saved Successfully",
+        "saveSuccessDescription": "WebRTC configuration has been saved",
+        "saveFailed": "Save Failed",
+        "saveFailedDescription": "Unable to save WebRTC configuration",
+        "invalidPortRange": "Port range must be between 1024-65535",
+        "portMinGreaterThanMax": "Port min cannot be greater than port max",
+        "instructions": {
+          "title": "Usage Instructions",
+          "point1": "Public IP: In container or NAT environments, if the server is in a private network, you need to set the public IP to ensure clients can connect correctly",
+          "point2": "ICE Port Range: Specify the UDP port range used by WebRTC. It is recommended that the range not be too large (e.g., 100-200 ports)",
+          "point3": "After saving the configuration, new WebRTC connections will use these parameters"
         }
       }
     },

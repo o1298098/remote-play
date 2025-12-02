@@ -134,7 +134,7 @@
       "deleteFailedDescription": "无法删除设备，请稍后重试。",
       "deleteInvalidId": "缺少设备绑定信息，无法删除。"
     },
-    "settings": {
+    "deviceSettings": {
       "title": "设备设置",
       "description": "为 {{name}} 配置流媒体参数",
       "resolution": "分辨率",
@@ -182,6 +182,89 @@
           "H264": "H.264 编码",
           "HEVC": "HEVC/H.265 编码",
           "HEVC_HDR": "HEVC/H.265 HDR 编码"
+        }
+      }
+    },
+    "settings": {
+      "title": "设置",
+      "subtitle": "管理您的应用设置和偏好",
+      "tabs": {
+        "controller": {
+          "label": "控制器映射",
+          "description": "配置游戏手柄按键映射和震动设置"
+        },
+        "turnServer": {
+          "label": "TURN 服务器",
+          "description": "配置 WebRTC TURN 服务器以改善网络连接"
+        },
+        "webrtc": {
+          "label": "WebRTC 配置",
+          "description": "配置 WebRTC 网络参数"
+        }
+      },
+      "turnServer": {
+        "title": "TURN 服务器列表",
+        "description": "添加 TURN 服务器以帮助 WebRTC 在复杂网络环境下建立连接",
+        "empty": "暂无 TURN 服务器配置",
+        "emptyHint": "点击下方按钮添加服务器",
+        "addServer": "添加服务器",
+        "serverNumber": "服务器 #{{number}}",
+        "url": "服务器 URL",
+        "urlRequired": "服务器 URL *",
+        "urlPlaceholder": "turn:example.com:3478?transport=udp",
+        "urlHint": "格式: turn:host:port?transport=udp 或 turn:host:port?transport=tcp",
+        "username": "用户名（可选）",
+        "usernamePlaceholder": "TURN 服务器用户名",
+        "credential": "密码（可选）",
+        "credentialPlaceholder": "TURN 服务器密码",
+        "save": "保存配置",
+        "saving": "保存中...",
+        "reset": "重置",
+        "instructions": {
+          "title": "使用说明",
+          "point1": "TURN 服务器用于在复杂网络环境下（如对称 NAT）建立 WebRTC 连接",
+          "point2": "如果您的网络环境良好，可能不需要配置 TURN 服务器",
+          "point3": "建议配置多个 TURN 服务器以提高连接成功率",
+          "point4": "配置保存后，新的 WebRTC 连接将使用这些服务器"
+        },
+        "loading": "加载中...",
+        "loadFailed": "加载失败",
+        "loadFailedDescription": "无法加载 TURN 服务器配置",
+        "saveSuccess": "保存成功",
+        "saveSuccessDescription": "TURN 服务器配置已保存",
+        "saveFailed": "保存失败",
+        "saveFailedDescription": "无法保存 TURN 服务器配置",
+        "saveFailedInvalid": "请至少填写一个有效的 TURN 服务器 URL"
+      },
+      "webrtc": {
+        "title": "WebRTC 配置",
+        "description": "配置 WebRTC 网络参数，包括公网 IP 和端口范围",
+        "publicIp": "公网 IP 地址",
+        "publicIpPlaceholder": "例如: 120.196.xxx.xxx",
+        "publicIpHint": "在容器或 NAT 环境下，用于覆盖本地候选地址的公网 IP",
+        "icePortMin": "ICE 端口最小值",
+        "icePortMinPlaceholder": "例如: 40100",
+        "icePortMinHint": "WebRTC 使用的 UDP 端口起始值（1024-65535，必须为偶数）",
+        "icePortMax": "ICE 端口最大值",
+        "icePortMaxPlaceholder": "例如: 40200",
+        "icePortMaxHint": "WebRTC 使用的 UDP 端口结束值（1024-65535，必须为偶数）",
+        "save": "保存配置",
+        "saving": "保存中...",
+        "reset": "重置",
+        "loading": "加载中...",
+        "loadFailed": "加载失败",
+        "loadFailedDescription": "无法加载 WebRTC 配置",
+        "saveSuccess": "保存成功",
+        "saveSuccessDescription": "WebRTC 配置已保存",
+        "saveFailed": "保存失败",
+        "saveFailedDescription": "无法保存 WebRTC 配置",
+        "invalidPortRange": "端口范围必须在 1024-65535 之间",
+        "portMinGreaterThanMax": "端口最小值不能大于最大值",
+        "instructions": {
+          "title": "使用说明",
+          "point1": "公网 IP：在容器或 NAT 环境下，如果服务器在私有网络中，需要设置公网 IP 以确保客户端能正确连接",
+          "point2": "ICE 端口范围：指定 WebRTC 使用的 UDP 端口范围，建议范围不要太大（如 100-200 个端口）",
+          "point3": "配置保存后，新的 WebRTC 连接将使用这些参数"
         }
       }
     },

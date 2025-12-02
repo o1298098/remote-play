@@ -3,7 +3,7 @@ import { Toaster } from '@/components/ui/toaster'
 import Login from './pages/auth/Login'
 import Register from './pages/auth/Register'
 import Devices from './pages/device'
-import ControllerMapping from './pages/setting/ControllerMapping'
+import Settings from './pages/setting/Settings'
 import OAuthCallback from './pages/auth/OAuthCallback'
 import Streaming from './pages/streaming'
 import { useAuth } from './hooks/use-auth'
@@ -40,10 +40,10 @@ function App() {
                 }
               />
               <Route
-                path="/controller-mapping"
+                path="/settings"
                 element={
                   <ProtectedRoute>
-                    <ControllerMapping />
+                    <Settings />
                   </ProtectedRoute>
                 }
               />

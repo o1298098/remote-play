@@ -23,6 +23,8 @@ namespace RemotePlay.Controllers
     public class StreamingController : ControllerBase
     {
         private const string TurnConfigKey = "webrtc.turn_servers";
+        private const string WebRTCConfigKey = "webrtc.config";
+        private const string SettingsCategory = "webrtc";
 
         private readonly IStreamingService _streamingService;
         private readonly IOptions<WebRTCConfig> _webRtcConfig;
@@ -180,7 +182,7 @@ namespace RemotePlay.Controllers
         }
 
         /// <summary>
-        /// 获取当前用户的 WebRTC TURN 服务器配置
+        /// 获取 WebRTC TURN 服务器配置（从 Settings 表读取）
         /// </summary>
         [HttpGet("webrtc/turn-config")]
         [Authorize]
@@ -188,65 +190,44 @@ namespace RemotePlay.Controllers
         {
             try
             {
-                var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                if (string.IsNullOrEmpty(userId))
-                {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Success = false,
-                        ErrorMessage = "未授权"
-                    });
-                }
-
-                // 从配置文件中获取默认配置（通过环境变量配置）
-                var defaultConfig = _webRtcConfig.Value ?? new WebRTCConfig();
-                var result = new WebRTCConfig
-                {
-                    PublicIp = defaultConfig.PublicIp,
-                    IcePortMin = defaultConfig.IcePortMin,
-                    IcePortMax = defaultConfig.IcePortMax,
-                    ShufflePorts = defaultConfig.ShufflePorts,
-                    PreferLanCandidates = defaultConfig.PreferLanCandidates,
-                    TurnServers = defaultConfig.TurnServers?.ToList() ?? new List<TurnServerConfig>()
-                };
-
-                // 尝试从数据库获取用户特定的 TURN 配置
-                var userConfig = await _context.DeviceConfigs
+                // 从 Settings 表读取 TURN 配置
+                var setting = await _context.Settings
                     .AsNoTracking()
-                    .Where(dc => dc.UserId == userId
-                        && dc.ConfigKey == TurnConfigKey
-                        && dc.IsActive)
-                    .OrderByDescending(dc => dc.UpdatedAt ?? dc.CreatedAt)
+                    .Where(s => s.Key == TurnConfigKey)
                     .FirstOrDefaultAsync(cancellationToken);
 
-                if (userConfig != null && !string.IsNullOrWhiteSpace(userConfig.ConfigValue))
+                var result = new WebRTCConfig
+                {
+                    TurnServers = new List<TurnServerConfig>()
+                };
+
+                if (setting != null)
                 {
                     try
                     {
-                        WebRTCConfig? userTurnConfig = null;
-
-                        // 尝试从 ConfigJson 字段解析
-                        if (userConfig.ConfigJson != null)
+                        // 优先从 ValueJson 字段读取
+                        if (setting.ValueJson != null)
                         {
-                            userTurnConfig = ParseTurnConfigFromJson(userConfig.ConfigJson);
+                            var turnConfig = ParseTurnConfigFromJson(setting.ValueJson);
+                            if (turnConfig != null && turnConfig.TurnServers.Count > 0)
+                            {
+                                result.TurnServers = turnConfig.TurnServers;
+                            }
                         }
-
-                        // 如果 ConfigJson 没有结果，尝试从 ConfigValue 字段解析 JSON
-                        if (userTurnConfig == null && !string.IsNullOrWhiteSpace(userConfig.ConfigValue))
+                        // 如果 ValueJson 为空，尝试从 Value 字段解析 JSON
+                        else if (!string.IsNullOrWhiteSpace(setting.Value))
                         {
-                            var jsonObj = JObject.Parse(userConfig.ConfigValue);
-                            userTurnConfig = ParseTurnConfigFromJson(jsonObj);
-                        }
-
-                        // 如果解析成功且有 TURN 服务器配置，则用用户配置覆盖默认配置
-                        if (userTurnConfig != null && userTurnConfig.TurnServers.Count > 0)
-                        {
-                            result.TurnServers = userTurnConfig.TurnServers;
+                            var jsonObj = JObject.Parse(setting.Value);
+                            var turnConfig = ParseTurnConfigFromJson(jsonObj);
+                            if (turnConfig != null && turnConfig.TurnServers.Count > 0)
+                            {
+                                result.TurnServers = turnConfig.TurnServers;
+                            }
                         }
                     }
                     catch (JsonException ex)
                     {
-                        _logger.LogWarning(ex, "⚠️ 解析用户 {UserId} 的 TURN 配置 JSON 失败，使用默认配置", userId);
+                        _logger.LogWarning(ex, "⚠️ 解析 TURN 配置 JSON 失败，使用空配置");
                     }
                 }
 
@@ -264,6 +245,90 @@ namespace RemotePlay.Controllers
                 {
                     Success = false,
                     ErrorMessage = "获取 TURN 配置失败: " + ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// 保存 WebRTC TURN 服务器配置到 Settings 表
+        /// </summary>
+        [HttpPost("webrtc/turn-config")]
+        [Authorize]
+        public async Task<ActionResult<ResponseModel>> SaveWebRTCTurnConfig(
+            [FromBody] WebRTCConfig config,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (config == null)
+                {
+                    return BadRequest(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "配置不能为空"
+                    });
+                }
+
+                // 构建 JSON 对象
+                var jsonObj = new JObject
+                {
+                    ["turnServers"] = new JArray(
+                        (config.TurnServers ?? new List<TurnServerConfig>())
+                            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                            .Select(s => new JObject
+                            {
+                                ["url"] = s.Url,
+                                ["username"] = s.Username ?? string.Empty,
+                                ["credential"] = s.Credential ?? string.Empty
+                            })
+                    )
+                };
+
+                // 查找或创建 Settings 记录
+                var setting = await _context.Settings
+                    .Where(s => s.Key == TurnConfigKey)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (setting == null)
+                {
+                    // 创建新记录
+                    setting = new Models.DB.Base.Settings
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Key = TurnConfigKey,
+                        ValueJson = jsonObj,
+                        Category = SettingsCategory,
+                        Description = "WebRTC TURN 服务器配置",
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    _context.Settings.Add(setting);
+                }
+                else
+                {
+                    // 更新现有记录
+                    setting.ValueJson = jsonObj;
+                    setting.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation("✅ TURN 配置已保存到 Settings 表: {Count} 个服务器", 
+                    config.TurnServers?.Count ?? 0);
+
+                return Ok(new ApiSuccessResponse<bool>
+                {
+                    Success = true,
+                    Data = true,
+                    Message = "保存 TURN 配置成功"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ StreamingController 保存 TURN 配置失败");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "保存 TURN 配置失败: " + ex.Message
                 });
             }
         }
@@ -315,6 +380,286 @@ namespace RemotePlay.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ 解析 TURN 配置 JSON 对象失败");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 获取完整的 WebRTC 配置（包括 PublicIp, IcePortMin, IcePortMax, TurnServers）
+        /// </summary>
+        [HttpGet("webrtc/config")]
+        [Authorize]
+        public async Task<ActionResult<ResponseModel>> GetWebRTCConfig(CancellationToken cancellationToken)
+        {
+            try
+            {
+                // 从 Settings 表读取 WebRTC 配置
+                var setting = await _context.Settings
+                    .AsNoTracking()
+                    .Where(s => s.Key == WebRTCConfigKey)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                var result = new WebRTCConfig
+                {
+                    PublicIp = _webRtcConfig.Value.PublicIp,
+                    IcePortMin = _webRtcConfig.Value.IcePortMin,
+                    IcePortMax = _webRtcConfig.Value.IcePortMax,
+                    TurnServers = new List<TurnServerConfig>()
+                };
+
+                if (setting != null)
+                {
+                    try
+                    {
+                        // 优先从 ValueJson 字段读取
+                        if (setting.ValueJson != null)
+                        {
+                            var config = ParseWebRTCConfigFromJson(setting.ValueJson);
+                            if (config != null)
+                            {
+                                // 如果 JSON 中明确设置了值（包括 null），则使用该值
+                                if (setting.ValueJson["publicIp"] != null || setting.ValueJson["PublicIp"] != null)
+                                    result.PublicIp = config.PublicIp;
+                                if (setting.ValueJson["icePortMin"] != null || setting.ValueJson["IcePortMin"] != null)
+                                    result.IcePortMin = config.IcePortMin;
+                                if (setting.ValueJson["icePortMax"] != null || setting.ValueJson["IcePortMax"] != null)
+                                    result.IcePortMax = config.IcePortMax;
+                                if (config.TurnServers != null && config.TurnServers.Count > 0)
+                                    result.TurnServers = config.TurnServers;
+                            }
+                        }
+                        // 如果 ValueJson 为空，尝试从 Value 字段解析 JSON
+                        else if (!string.IsNullOrWhiteSpace(setting.Value))
+                        {
+                            var jsonObj = JObject.Parse(setting.Value);
+                            var config = ParseWebRTCConfigFromJson(jsonObj);
+                            if (config != null)
+                            {
+                                // 如果 JSON 中明确设置了值（包括 null），则使用该值
+                                if (jsonObj["publicIp"] != null || jsonObj["PublicIp"] != null)
+                                    result.PublicIp = config.PublicIp;
+                                if (jsonObj["icePortMin"] != null || jsonObj["IcePortMin"] != null)
+                                    result.IcePortMin = config.IcePortMin;
+                                if (jsonObj["icePortMax"] != null || jsonObj["IcePortMax"] != null)
+                                    result.IcePortMax = config.IcePortMax;
+                                if (config.TurnServers != null && config.TurnServers.Count > 0)
+                                    result.TurnServers = config.TurnServers;
+                            }
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 解析 WebRTC 配置 JSON 失败，使用默认配置");
+                    }
+                }
+
+                // 同时读取 TURN 配置（如果存在单独的 TURN 配置，优先使用）
+                var turnSetting = await _context.Settings
+                    .AsNoTracking()
+                    .Where(s => s.Key == TurnConfigKey)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (turnSetting != null)
+                {
+                    try
+                    {
+                        var turnConfig = turnSetting.ValueJson != null
+                            ? ParseTurnConfigFromJson(turnSetting.ValueJson)
+                            : !string.IsNullOrWhiteSpace(turnSetting.Value)
+                                ? ParseTurnConfigFromJson(JObject.Parse(turnSetting.Value))
+                                : null;
+
+                        if (turnConfig != null && turnConfig.TurnServers.Count > 0)
+                        {
+                            result.TurnServers = turnConfig.TurnServers;
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 解析 TURN 配置 JSON 失败");
+                    }
+                }
+
+                return Ok(new ApiSuccessResponse<WebRTCConfig>
+                {
+                    Success = true,
+                    Data = result,
+                    Message = "获取 WebRTC 配置成功"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ StreamingController 获取 WebRTC 配置失败");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "获取 WebRTC 配置失败: " + ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// 保存完整的 WebRTC 配置到 Settings 表
+        /// </summary>
+        [HttpPost("webrtc/config")]
+        [Authorize]
+        public async Task<ActionResult<ResponseModel>> SaveWebRTCConfig(
+            [FromBody] WebRTCConfig config,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (config == null)
+                {
+                    return BadRequest(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "配置不能为空"
+                    });
+                }
+
+                // 构建 JSON 对象
+                var jsonObj = new JObject();
+                
+                if (!string.IsNullOrWhiteSpace(config.PublicIp))
+                    jsonObj["publicIp"] = config.PublicIp.Trim();
+                
+                if (config.IcePortMin.HasValue)
+                    jsonObj["icePortMin"] = config.IcePortMin.Value;
+                
+                if (config.IcePortMax.HasValue)
+                    jsonObj["icePortMax"] = config.IcePortMax.Value;
+
+                // 包含 TURN 服务器配置
+                if (config.TurnServers != null && config.TurnServers.Count > 0)
+                {
+                    jsonObj["turnServers"] = new JArray(
+                        config.TurnServers
+                            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                            .Select(s => new JObject
+                            {
+                                ["url"] = s.Url,
+                                ["username"] = s.Username ?? string.Empty,
+                                ["credential"] = s.Credential ?? string.Empty
+                            })
+                    );
+                }
+
+                // 查找或创建 Settings 记录
+                var setting = await _context.Settings
+                    .Where(s => s.Key == WebRTCConfigKey)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (setting == null)
+                {
+                    // 创建新记录
+                    setting = new Models.DB.Base.Settings
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Key = WebRTCConfigKey,
+                        ValueJson = jsonObj,
+                        Category = SettingsCategory,
+                        Description = "WebRTC 完整配置（PublicIp, IcePortMin, IcePortMax, TurnServers）",
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    _context.Settings.Add(setting);
+                }
+                else
+                {
+                    // 更新现有记录
+                    setting.ValueJson = jsonObj;
+                    setting.UpdatedAt = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation("✅ WebRTC 配置已保存到 Settings 表: PublicIp={PublicIp}, IcePortMin={IcePortMin}, IcePortMax={IcePortMax}, TurnServers={Count}",
+                    config.PublicIp, config.IcePortMin, config.IcePortMax, config.TurnServers?.Count ?? 0);
+
+                return Ok(new ApiSuccessResponse<bool>
+                {
+                    Success = true,
+                    Data = true,
+                    Message = "保存 WebRTC 配置成功"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ StreamingController 保存 WebRTC 配置失败");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "保存 WebRTC 配置失败: " + ex.Message
+                });
+            }
+        }
+
+        private WebRTCConfig? ParseWebRTCConfigFromJson(JObject json)
+        {
+            try
+            {
+                var config = new WebRTCConfig();
+
+                // 解析 PublicIp（支持 null）
+                var publicIpToken = json["publicIp"] ?? json["PublicIp"];
+                if (publicIpToken != null)
+                {
+                    if (publicIpToken.Type == JTokenType.Null)
+                        config.PublicIp = null;
+                    else
+                        config.PublicIp = publicIpToken.ToString();
+                }
+
+                // 解析 IcePortMin（支持 null）
+                var icePortMinToken = json["icePortMin"] ?? json["IcePortMin"];
+                if (icePortMinToken != null)
+                {
+                    if (icePortMinToken.Type == JTokenType.Null)
+                        config.IcePortMin = null;
+                    else if (icePortMinToken.Type == JTokenType.Integer)
+                        config.IcePortMin = icePortMinToken.Value<int>();
+                }
+
+                // 解析 IcePortMax（支持 null）
+                var icePortMaxToken = json["icePortMax"] ?? json["IcePortMax"];
+                if (icePortMaxToken != null)
+                {
+                    if (icePortMaxToken.Type == JTokenType.Null)
+                        config.IcePortMax = null;
+                    else if (icePortMaxToken.Type == JTokenType.Integer)
+                        config.IcePortMax = icePortMaxToken.Value<int>();
+                }
+
+                // 解析 TurnServers
+                var turnServers = new List<TurnServerConfig>();
+                var serversToken = json["turnServers"] ?? json["TurnServers"] ?? json["servers"];
+                if (serversToken != null && serversToken.Type == JTokenType.Array)
+                {
+                    foreach (var serverToken in serversToken)
+                    {
+                        if (serverToken.Type != JTokenType.Object)
+                            continue;
+
+                        var serverObj = (JObject)serverToken;
+                        var url = serverObj["url"]?.ToString() ?? serverObj["Url"]?.ToString() ?? serverObj["urls"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(url))
+                            continue;
+
+                        turnServers.Add(new TurnServerConfig
+                        {
+                            Url = url,
+                            Username = serverObj["username"]?.ToString() ?? serverObj["Username"]?.ToString(),
+                            Credential = serverObj["credential"]?.ToString() ?? serverObj["Credential"]?.ToString()
+                        });
+                    }
+                }
+                config.TurnServers = turnServers;
+
+                return config;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 解析 WebRTC 配置 JSON 对象失败");
                 return null;
             }
         }

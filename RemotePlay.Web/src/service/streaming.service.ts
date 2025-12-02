@@ -197,4 +197,39 @@ export const streamingService = {
       method: 'GET',
     })
   },
+
+  /**
+   * 保存 WebRTC TURN 服务器配置到 Settings 表
+   */
+  saveTurnConfig: async (config: WebRTCConfig): Promise<ApiResponse<boolean>> => {
+    return apiRequest<boolean>('/streaming/webrtc/turn-config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(config),
+    })
+  },
+
+  /**
+   * 获取完整的 WebRTC 配置（包括 PublicIp, IcePortMin, IcePortMax, TurnServers）
+   */
+  getWebRTCConfig: async (): Promise<ApiResponse<WebRTCConfig>> => {
+    return apiRequest<WebRTCConfig>('/streaming/webrtc/config', {
+      method: 'GET',
+    })
+  },
+
+  /**
+   * 保存完整的 WebRTC 配置到 Settings 表
+   */
+  saveWebRTCConfig: async (config: WebRTCConfig): Promise<ApiResponse<boolean>> => {
+    return apiRequest<boolean>('/streaming/webrtc/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(config),
+    })
+  },
 }

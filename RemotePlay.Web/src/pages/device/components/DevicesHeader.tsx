@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Gamepad2, ChevronDown, User, Settings as SettingsIcon, LogOut, Settings, Power, X } from 'lucide-react'
+import { Gamepad2, ChevronDown, User, Settings as SettingsIcon, LogOut, Settings, Power, X, Server } from 'lucide-react'
 import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { cn } from '@/lib/utils'
@@ -123,7 +123,7 @@ export function DevicesHeader() {
                   <DropdownMenuSeparator />
                 </>
               )}
-              <DropdownMenuItem onClick={() => navigate('/controller-mapping')}>
+              <DropdownMenuItem onClick={() => navigate('/settings?tab=controller')}>
                 <Settings className="mr-2 h-4 w-4" />
                 <span>{t('devices.controllerMapping.title')}</span>
               </DropdownMenuItem>
@@ -150,7 +150,7 @@ export function DevicesHeader() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate('/profile')}>
+              <DropdownMenuItem onClick={() => navigate('/settings')}>
                 <SettingsIcon className="mr-2 h-4 w-4" />
                 <span>{t('devices.header.settings')}</span>
               </DropdownMenuItem>

@@ -94,9 +94,10 @@ namespace RemotePlay.Services.WebRTC
             }
         }
 
-        private string ApplyPublicIpToSdp(string sdp)
+        private string ApplyPublicIpToSdp(string sdp, string? publicIp = null)
         {
-            var publicIp = _config.PublicIp?.Trim();
+            // 优先使用传入的 publicIp，否则使用 _config 中的值
+            publicIp = publicIp?.Trim() ?? _config.PublicIp?.Trim();
             if (string.IsNullOrWhiteSpace(publicIp))
             {
                 return sdp;

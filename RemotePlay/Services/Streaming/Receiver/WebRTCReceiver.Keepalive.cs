@@ -182,21 +182,29 @@ namespace RemotePlay.Services.Streaming.Receiver
                         
                         var now = DateTime.UtcNow;
                         
-                        // ✅ 如果有 audio track，必须每 20ms 持续发送静音包（音频流的必需数据，不是 keepalive）
+                        // ✅ 如果有 audio track，只在没有真实音频数据时才发送静音包作为 keepalive
                         if (hasAudioTrack)
                         {
-                            var timeSinceLastSilentAudio = (now - lastSilentAudioPacket).TotalMilliseconds;
-                            if (timeSinceLastSilentAudio >= SILENT_AUDIO_INTERVAL_MS)
+                            // 检查最近是否有真实音频包发送（100ms 内）
+                            var timeSinceLastRealAudio = (now - _lastAudioPacketTime).TotalMilliseconds;
+                            const int REAL_AUDIO_TIMEOUT_MS = 100; // 如果 100ms 内没有真实音频，才发送静音包
+                            
+                            if (timeSinceLastRealAudio >= REAL_AUDIO_TIMEOUT_MS)
                             {
-                                try
+                                // 只有在超过一定时间没有真实音频时才发送静音包
+                                var timeSinceLastSilentAudio = (now - lastSilentAudioPacket).TotalMilliseconds;
+                                if (timeSinceLastSilentAudio >= SILENT_AUDIO_INTERVAL_MS)
                                 {
-                                    SendSilentAudioPacket();
-                                    lastSilentAudioPacket = now;
-                                    _lastKeepaliveTime = now;
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogDebug(ex, "发送静音音频包失败");
+                                    try
+                                    {
+                                        SendSilentAudioPacket();
+                                        lastSilentAudioPacket = now;
+                                        _lastKeepaliveTime = now;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogDebug(ex, "发送静音音频包失败");
+                                    }
                                 }
                             }
                         }

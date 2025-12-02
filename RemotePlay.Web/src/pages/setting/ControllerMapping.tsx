@@ -506,37 +506,7 @@ export default function ControllerMapping() {
   }, [mappings])
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-        <div className="container mx-auto px-6 py-4 flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate('/devices')}
-            className="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-              <Gamepad2 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-                {t('devices.controllerMapping.title')}
-              </h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {t('devices.controllerMapping.subtitle')}
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="container mx-auto px-6 py-8">
-        <div className="max-w-4xl mx-auto space-y-6">
+    <div className="space-y-6">
           {/* Instructions Card */}
           <Card className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
             <CardHeader>
@@ -878,8 +848,6 @@ export default function ControllerMapping() {
               {isSaving ? t('common.loading') : t('common.save')}
             </Button>
           </div>
-        </div>
-      </main>
     </div>
   )
 }

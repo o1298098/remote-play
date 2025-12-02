@@ -110,9 +110,9 @@ export function DeviceSettingsDialog({
             setSettings(ensureStreamType(response.data.settings, response.data.options))
           } else {
             toast({
-              title: t('devices.settings.loadFailed'),
+              title: t('devices.deviceSettings.loadFailed'),
               description:
-                response.errorMessage ?? t('devices.settings.loadFailedDescription'),
+                response.errorMessage ?? t('devices.deviceSettings.loadFailedDescription'),
               variant: 'destructive',
             })
           }
@@ -125,7 +125,7 @@ export function DeviceSettingsDialog({
             description:
               error instanceof Error
                 ? error.message
-                : t('devices.settings.loadFailedDescription'),
+                : t('devices.deviceSettings.loadFailedDescription'),
             variant: 'destructive',
           })
         }
@@ -160,24 +160,24 @@ export function DeviceSettingsDialog({
         onSave?.(nextSettings)
 
         toast({
-          title: t('devices.settings.saveSuccess'),
-          description: t('devices.settings.saveSuccessDescription'),
+          title: t('devices.deviceSettings.saveSuccess'),
+          description: t('devices.deviceSettings.saveSuccessDescription'),
         })
 
         onOpenChange(false)
       } else {
         toast({
-          title: t('devices.settings.saveFailed'),
+          title: t('devices.deviceSettings.saveFailed'),
           description:
-            response.errorMessage ?? t('devices.settings.saveFailedDescription'),
+            response.errorMessage ?? t('devices.deviceSettings.saveFailedDescription'),
           variant: 'destructive',
         })
       }
     } catch (error) {
       console.error('保存设置失败:', error)
       toast({
-        title: t('devices.settings.saveFailed'),
-        description: error instanceof Error ? error.message : t('devices.settings.saveFailedDescription'),
+        title: t('devices.deviceSettings.saveFailed'),
+        description: error instanceof Error ? error.message : t('devices.deviceSettings.saveFailedDescription'),
         variant: 'destructive',
       })
     } finally {
@@ -209,8 +209,8 @@ export function DeviceSettingsDialog({
 
     setSettings(nextSettings)
     toast({
-      title: t('devices.settings.reset'),
-      description: t('devices.settings.resetDescription'),
+      title: t('devices.deviceSettings.reset'),
+      description: t('devices.deviceSettings.resetDescription'),
     })
   }
 
@@ -222,10 +222,10 @@ export function DeviceSettingsDialog({
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30">
               <Settings className="h-4 w-4 text-blue-600 dark:text-blue-400" />
             </div>
-            {t('devices.settings.title')}
+            {t('devices.deviceSettings.title')}
           </DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground mt-2">
-            {t('devices.settings.description', { name: deviceName })}
+            {t('devices.deviceSettings.description', { name: deviceName })}
           </DialogDescription>
         </DialogHeader>
 
@@ -236,7 +236,7 @@ export function DeviceSettingsDialog({
               <div className="flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-gray-800">
                 <Monitor className="h-3.5 w-3.5 text-gray-600 dark:text-gray-400" />
               </div>
-              {t('devices.settings.resolution')}
+              {t('devices.deviceSettings.resolution')}
             </Label>
             <Select
               value={settings.resolution ?? ''}
@@ -257,7 +257,7 @@ export function DeviceSettingsDialog({
               <SelectContent>
                 {options?.resolutions.map((option) => (
                   <SelectItem key={option.key} value={option.key}>
-                    {t(`devices.settings.options.resolution.${option.labelKey || option.key}`, {
+                    {t(`devices.deviceSettings.options.resolution.${option.labelKey || option.key}`, {
                       defaultValue: option.label,
                     })}
                   </SelectItem>
@@ -265,7 +265,7 @@ export function DeviceSettingsDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('devices.settings.resolutionHint')}
+              {t('devices.deviceSettings.resolutionHint')}
             </p>
           </div>
 
@@ -275,7 +275,7 @@ export function DeviceSettingsDialog({
               <div className="flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-gray-800">
                 <Gauge className="h-3.5 w-3.5 text-gray-600 dark:text-gray-400" />
               </div>
-              {t('devices.settings.frameRate')}
+              {t('devices.deviceSettings.frameRate')}
             </Label>
             <Select
               value={settings.frameRate ?? ''}
@@ -296,7 +296,7 @@ export function DeviceSettingsDialog({
               <SelectContent>
                 {options?.frameRates.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
-                    {t(`devices.settings.options.frameRate.${option.labelKey || option.value}`, {
+                    {t(`devices.deviceSettings.options.frameRate.${option.labelKey || option.value}`, {
                       defaultValue: option.label,
                     })}
                   </SelectItem>
@@ -304,7 +304,7 @@ export function DeviceSettingsDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('devices.settings.frameRateHint')}
+              {t('devices.deviceSettings.frameRateHint')}
             </p>
           </div>
 
@@ -314,7 +314,7 @@ export function DeviceSettingsDialog({
               <div className="flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-gray-800">
                 <Network className="h-3.5 w-3.5 text-gray-600 dark:text-gray-400" />
               </div>
-              {t('devices.settings.bitrate')}
+              {t('devices.deviceSettings.bitrate')}
             </Label>
             <Select
               value={settings.bitrate ?? ''}
@@ -338,7 +338,7 @@ export function DeviceSettingsDialog({
               <SelectContent>
                 {options?.bitrates.map((option) => (
                   <SelectItem key={option.bitrate} value={option.bitrate}>
-                    {t(`devices.settings.options.bitrate.${option.labelKey || option.quality}`, {
+                    {t(`devices.deviceSettings.options.bitrate.${option.labelKey || option.quality}`, {
                       defaultValue: option.label,
                     })}
                   </SelectItem>
@@ -346,7 +346,7 @@ export function DeviceSettingsDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('devices.settings.bitrateHint')}
+              {t('devices.deviceSettings.bitrateHint')}
             </p>
           </div>
 
@@ -356,7 +356,7 @@ export function DeviceSettingsDialog({
               <div className="flex items-center justify-center w-5 h-5 rounded bg-gray-100 dark:bg-gray-800">
                 <Cpu className="h-3.5 w-3.5 text-gray-600 dark:text-gray-400" />
               </div>
-              {t('devices.settings.streamType')}
+              {t('devices.deviceSettings.streamType')}
             </Label>
             <Select
               value={settings.streamType ?? ''}
@@ -377,7 +377,7 @@ export function DeviceSettingsDialog({
               <SelectContent>
                 {options?.streamTypes.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
-                    {t(`devices.settings.options.streamType.${option.labelKey || option.value}`, {
+                    {t(`devices.deviceSettings.options.streamType.${option.labelKey || option.value}`, {
                       defaultValue: option.label,
                     })}
                   </SelectItem>
@@ -385,7 +385,7 @@ export function DeviceSettingsDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('devices.settings.streamTypeHint')}
+              {t('devices.deviceSettings.streamTypeHint')}
             </p>
           </div>
 
@@ -397,10 +397,10 @@ export function DeviceSettingsDialog({
                 </div>
                 <div className="flex-1 space-y-1.5">
                   <h3 className="text-sm font-semibold text-red-700 dark:text-red-300">
-                    {t('devices.settings.deleteSection.title')}
+                    {t('devices.deviceSettings.deleteSection.title')}
                   </h3>
                   <p className="text-xs text-red-600/90 dark:text-red-300/80 leading-relaxed">
-                    {t('devices.settings.deleteSection.description')}
+                    {t('devices.deviceSettings.deleteSection.description')}
                   </p>
                 </div>
               </div>
@@ -422,10 +422,10 @@ export function DeviceSettingsDialog({
                   {isDeleting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {t('devices.settings.deleteSection.loading')}
+                      {t('devices.deviceSettings.deleteSection.loading')}
                     </>
                   ) : (
-                    t('devices.settings.deleteSection.action')
+                    t('devices.deviceSettings.deleteSection.action')
                   )}
                 </Button>
               </div>
@@ -441,7 +441,7 @@ export function DeviceSettingsDialog({
             disabled={isSaving || isLoading || !options}
             className="flex-1 sm:flex-initial"
           >
-            {t('devices.settings.reset')}
+            {t('devices.deviceSettings.reset')}
           </Button>
           <Button 
             variant="outline" 
