@@ -16,6 +16,7 @@ export default function WebRTCSettingsTab() {
     icePortMin: null,
     icePortMax: null,
     turnServers: [],
+    forceUseTurn: false,
   })
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -34,6 +35,7 @@ export default function WebRTCSettingsTab() {
           icePortMin: response.data.icePortMin ?? null,
           icePortMax: response.data.icePortMax ?? null,
           turnServers: response.data.turnServers || [],
+          forceUseTurn: response.data.forceUseTurn ?? false,
         })
       }
     } catch (error) {
@@ -190,6 +192,24 @@ export default function WebRTCSettingsTab() {
                 {t('devices.settings.webrtc.icePortMaxHint')}
               </p>
             </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-4 border-t">
+            <div className="space-y-0.5">
+              <Label htmlFor="forceUseTurn" className="text-base">
+                {t('devices.settings.webrtc.forceUseTurn')}
+              </Label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {t('devices.settings.webrtc.forceUseTurnHint')}
+              </p>
+            </div>
+            <input
+              id="forceUseTurn"
+              type="checkbox"
+              checked={config.forceUseTurn ?? false}
+              onChange={(e) => setConfig({ ...config, forceUseTurn: e.target.checked })}
+              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
           </div>
 
           <div className="flex gap-2 pt-4">

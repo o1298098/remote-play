@@ -81,19 +81,37 @@ namespace RemotePlay.Services.WebRTC
 
             try
             {
+                // 从数据库读取 WebRTC 配置（包括端口范围和 PublicIp）
+                var webrtcConfig = await GetWebRTCConfigFromSettingsAsync();
+                
+                // 从 Settings 表读取 TURN 配置
+                var turnServers = await GetTurnServersFromSettingsAsync();
+                
+                // 确定 ICE 传输策略
+                var iceTransportPolicy = RTCIceTransportPolicy.all;
+                if (webrtcConfig.ForceUseTurn)
+                {
+                    if (turnServers.Count > 0)
+                    {
+                        iceTransportPolicy = RTCIceTransportPolicy.relay;
+                        _logger.LogWarning("🔒 强制使用 TURN 服务器（仅 relay 候选地址）: SessionId={SessionId}", sessionId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ 启用了 ForceUseTurn 但未配置 TURN 服务器，将回退为 all: SessionId={SessionId}", sessionId);
+                    }
+                }
+                
                 var config = new RTCConfiguration
                 {
                     iceServers = new List<RTCIceServer>
-            {
-                new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
-            },
+                    {
+                        new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
+                    },
                     bundlePolicy = RTCBundlePolicy.max_bundle,
                     rtcpMuxPolicy = RTCRtcpMuxPolicy.require,
-                    iceTransportPolicy = RTCIceTransportPolicy.all
+                    iceTransportPolicy = iceTransportPolicy
                 };
-
-                // 从 Settings 表读取 TURN 配置
-                var turnServers = await GetTurnServersFromSettingsAsync();
                 
                 if (turnServers.Count > 0)
                 {
@@ -116,9 +134,6 @@ namespace RemotePlay.Services.WebRTC
                 {
                     _logger.LogInformation("ℹ️ 未配置 TURN 服务器，将仅使用 STUN 和直接连接");
                 }
-
-                // 从数据库读取 WebRTC 配置（包括端口范围和 PublicIp）
-                var webrtcConfig = await GetWebRTCConfigFromSettingsAsync();
                 var portRange = CreatePortRange(webrtcConfig);
                 
                 if (portRange != null)
@@ -891,6 +906,13 @@ namespace RemotePlay.Services.WebRTC
                                     });
                                 }
                                 result.TurnServers = turnServers;
+                            }
+
+                            // 解析 ForceUseTurn
+                            var forceUseTurnToken = jsonObj["forceUseTurn"] ?? jsonObj["ForceUseTurn"];
+                            if (forceUseTurnToken != null && forceUseTurnToken.Type == JTokenType.Boolean)
+                            {
+                                result.ForceUseTurn = forceUseTurnToken.Value<bool>();
                             }
                         }
                     }

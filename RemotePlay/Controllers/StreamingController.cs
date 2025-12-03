@@ -426,6 +426,9 @@ namespace RemotePlay.Controllers
                                     result.IcePortMax = config.IcePortMax;
                                 if (config.TurnServers != null && config.TurnServers.Count > 0)
                                     result.TurnServers = config.TurnServers;
+                                // 复制 ForceUseTurn
+                                if (setting.ValueJson["forceUseTurn"] != null || setting.ValueJson["ForceUseTurn"] != null)
+                                    result.ForceUseTurn = config.ForceUseTurn;
                             }
                         }
                         // 如果 ValueJson 为空，尝试从 Value 字段解析 JSON
@@ -444,6 +447,9 @@ namespace RemotePlay.Controllers
                                     result.IcePortMax = config.IcePortMax;
                                 if (config.TurnServers != null && config.TurnServers.Count > 0)
                                     result.TurnServers = config.TurnServers;
+                                // 复制 ForceUseTurn
+                                if (jsonObj["forceUseTurn"] != null || jsonObj["ForceUseTurn"] != null)
+                                    result.ForceUseTurn = config.ForceUseTurn;
                             }
                         }
                     }
@@ -518,37 +524,55 @@ namespace RemotePlay.Controllers
                     });
                 }
 
-                // 构建 JSON 对象
-                var jsonObj = new JObject();
+                // 先读取现有配置，以便合并更新（保留未修改的字段）
+                var existingSetting = await _context.Settings
+                    .Where(s => s.Key == WebRTCConfigKey)
+                    .FirstOrDefaultAsync(cancellationToken);
                 
-                if (!string.IsNullOrWhiteSpace(config.PublicIp))
+                var jsonObj = existingSetting?.ValueJson != null 
+                    ? JObject.FromObject(existingSetting.ValueJson) 
+                    : new JObject();
+                
+                // 总是更新 PublicIp（包括 null/空值，以支持清除）
+                // 如果传入 null 或空字符串，则设置为 null 以清除该字段
+                if (string.IsNullOrWhiteSpace(config.PublicIp))
+                    jsonObj["publicIp"] = JValue.CreateNull();
+                else
                     jsonObj["publicIp"] = config.PublicIp.Trim();
                 
+                // 总是更新端口范围（包括 null 值，以支持清除）
                 if (config.IcePortMin.HasValue)
                     jsonObj["icePortMin"] = config.IcePortMin.Value;
+                else
+                    jsonObj["icePortMin"] = JValue.CreateNull();
                 
                 if (config.IcePortMax.HasValue)
                     jsonObj["icePortMax"] = config.IcePortMax.Value;
+                else
+                    jsonObj["icePortMax"] = JValue.CreateNull();
 
-                // 包含 TURN 服务器配置
-                if (config.TurnServers != null && config.TurnServers.Count > 0)
+                // 总是更新 TURN 服务器配置（包括空数组，以支持清除所有服务器）
+                // 如果 config.TurnServers 为 null，则不更新该字段（保持原值）
+                if (config.TurnServers != null)
                 {
-                    jsonObj["turnServers"] = new JArray(
-                        config.TurnServers
-                            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
-                            .Select(s => new JObject
-                            {
-                                ["url"] = s.Url,
-                                ["username"] = s.Username ?? string.Empty,
-                                ["credential"] = s.Credential ?? string.Empty
-                            })
-                    );
+                    var validServers = config.TurnServers
+                        .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+                        .Select(s => new JObject
+                        {
+                            ["url"] = s.Url,
+                            ["username"] = s.Username ?? string.Empty,
+                            ["credential"] = s.Credential ?? string.Empty
+                        })
+                        .ToList();
+                    
+                    jsonObj["turnServers"] = new JArray(validServers);
                 }
 
-                // 查找或创建 Settings 记录
-                var setting = await _context.Settings
-                    .Where(s => s.Key == WebRTCConfigKey)
-                    .FirstOrDefaultAsync(cancellationToken);
+                // 总是更新 ForceUseTurn
+                jsonObj["forceUseTurn"] = config.ForceUseTurn;
+
+                // 使用之前查询的 existingSetting，避免重复查询
+                var setting = existingSetting;
 
                 if (setting == null)
                 {
@@ -654,6 +678,13 @@ namespace RemotePlay.Controllers
                     }
                 }
                 config.TurnServers = turnServers;
+
+                // 解析 ForceUseTurn
+                var forceUseTurnToken = json["forceUseTurn"] ?? json["ForceUseTurn"];
+                if (forceUseTurnToken != null && forceUseTurnToken.Type == JTokenType.Boolean)
+                {
+                    config.ForceUseTurn = forceUseTurnToken.Value<bool>();
+                }
 
                 return config;
             }

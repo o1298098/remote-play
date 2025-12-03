@@ -69,6 +69,7 @@ export interface WebRTCConfig {
   shufflePorts?: boolean
   turnServers: TurnServerConfig[]
   preferLanCandidates?: boolean
+  forceUseTurn?: boolean
 }
 
 export interface TurnServerConfig {

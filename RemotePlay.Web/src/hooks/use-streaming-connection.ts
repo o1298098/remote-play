@@ -1148,6 +1148,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       // 获取用户配置的 TURN 服务器
       let turnServers: RTCIceServer[] = []
+      let forceUseTurn = false
       try {
         const turnConfigResponse = await streamingService.getTurnConfig()
         if (turnConfigResponse.success && turnConfigResponse.data) {
@@ -1177,6 +1178,15 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               })
             console.log('✅ 加载了用户配置的 TURN 服务器:', turnServers.length, '个')
           }
+          // 检查是否强制使用 TURN
+          if (turnConfig.forceUseTurn) {
+            forceUseTurn = true
+            if (turnServers.length === 0) {
+              console.warn('⚠️ 启用了强制使用 TURN，但未配置 TURN 服务器')
+            } else {
+              console.log('🔒 强制使用 TURN 服务器（仅 relay 候选地址）')
+            }
+          }
         }
       } catch (error) {
         console.warn('⚠️ 获取 TURN 配置失败，使用默认配置:', error)
@@ -1185,6 +1195,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       // 合并 STUN 和 TURN 服务器配置
       // TURN 服务器优先，因为它们在 NAT 穿透方面更可靠
       const iceServers: RTCIceServer[] = [...turnServers, ...defaultIceServers]
+
+      // 确定 ICE 传输策略
+      const iceTransportPolicy: RTCIceTransportPolicy = forceUseTurn && turnServers.length > 0 ? 'relay' : 'all'
 
       console.log('🔧 RTCPeerConnection 配置:', {
         iceServers: iceServers.map((s) => ({
@@ -1195,6 +1208,8 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         iceCandidatePoolSize: isLikelyLan ? 1 : 4,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
+        iceTransportPolicy,
+        forceUseTurn,
       })
 
       const peerConnection = new RTCPeerConnection({
@@ -1202,6 +1217,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         iceCandidatePoolSize: isLikelyLan ? 1 : 4,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
+        iceTransportPolicy,
       })
       
       // ✅ 监听 DataChannel 事件（用于 keepalive ping/pong）

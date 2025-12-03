@@ -33,6 +33,12 @@ namespace RemotePlay.Models.Configuration
         /// 是否在生成 SDP 时优先保留局域网候选地址，默认开启以优化局域网低延迟。
         /// </summary>
         public bool PreferLanCandidates { get; set; } = true;
+
+        /// <summary>
+        /// 是否强制使用 TURN 服务器（仅 relay 候选地址）。用于测试 TURN 服务器配置。
+        /// 设置为 true 时，iceTransportPolicy 将设置为 relay，仅使用 TURN relay 候选地址。
+        /// </summary>
+        public bool ForceUseTurn { get; set; } = false;
     }
 
     public class TurnServerConfig
