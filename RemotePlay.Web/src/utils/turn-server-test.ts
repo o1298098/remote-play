@@ -164,10 +164,7 @@ export async function testTurnServer(
       }
     }
 
-    // 创建一个数据通道以触发 ICE 收集
-    const dataChannel = pc.createDataChannel('test')
-    
-    // 创建 offer
+    // 创建 offer（这会触发 ICE 收集）
     const offer = await pc.createOffer({
       offerToReceiveAudio: false,
       offerToReceiveVideo: false,
