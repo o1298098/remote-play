@@ -1,0 +1,556 @@
+{
+  "common": {
+    "loading": "読み込み中...",
+    "confirm": "確認",
+    "cancel": "キャンセル",
+    "submit": "送信",
+    "save": "保存",
+    "delete": "削除",
+    "edit": "編集",
+    "close": "閉じる",
+    "back": "戻る",
+    "next": "次へ",
+    "previous": "前へ",
+    "search": "検索",
+    "filter": "フィルター",
+    "sort": "並び替え",
+    "refresh": "更新",
+    "error": "エラー",
+    "theme": {
+      "toggle": "テーマを切り替え",
+      "light": "ライト",
+      "dark": "ダーク",
+      "system": "システム"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "ログイン",
+      "subtitle": "アカウントにログインしてゲームストリーミングを開始",
+      "usernameOrEmail": "ユーザー名またはメールアドレス",
+      "usernameOrEmailPlaceholder": "username または name@example.com",
+      "password": "パスワード",
+      "passwordPlaceholder": "••••••••",
+      "loginButton": "ログイン",
+      "loggingIn": "ログイン中...",
+      "success": "ログイン成功",
+      "successDescription": "おかえりなさい！",
+      "failure": "ログイン失敗",
+      "failureDescription": "ユーザー名またはパスワードが正しくありません",
+      "noAccount": "アカウントをお持ちでないですか？",
+      "registerLink": "今すぐ登録"
+    },
+    "register": {
+      "title": "アカウント作成",
+      "subtitle": "新しいアカウントを登録してRemote Playを使用開始",
+      "username": "ユーザー名",
+      "usernamePlaceholder": "username",
+      "usernameHint": "英字、数字、アンダースコアのみ。最低3文字必要です。",
+      "email": "メールアドレス",
+      "emailPlaceholder": "name@example.com",
+      "password": "パスワード",
+      "passwordPlaceholder": "••••••••",
+      "passwordHint": "最低8文字必要です",
+      "confirmPassword": "パスワード確認",
+      "confirmPasswordPlaceholder": "••••••••",
+      "registerButton": "登録",
+      "registering": "登録中...",
+      "success": "登録成功",
+      "successDescription": "Remote Playへようこそ！",
+      "failure": "登録失敗",
+      "failureDescription": "登録に失敗しました。後でもう一度お試しください",
+      "usernameFormatError": "ユーザー名形式が無効です",
+      "usernameFormatErrorDescription": "ユーザー名は英字、数字、アンダースコアのみ使用できます",
+      "usernameTooShort": "ユーザー名が短すぎます",
+      "usernameTooShortDescription": "ユーザー名は最低3文字必要です",
+      "passwordMismatch": "パスワードが一致しません",
+      "passwordMismatchDescription": "両方のパスワードが一致していることを確認してください",
+      "passwordTooShort": "パスワードが短すぎます",
+      "passwordTooShortDescription": "パスワードは最低8文字必要です",
+      "hasAccount": "既にアカウントをお持ちですか？",
+      "loginLink": "今すぐログイン"
+    },
+    "logout": {
+      "title": "ログアウトしました",
+      "description": "アカウントから安全にログアウトしました"
+    }
+  },
+  "devices": {
+    "title": "コンソールをリモートでプレイ",
+    "header": {
+      "title": "REMOTE PLAY",
+      "myAccount": "マイアカウント",
+      "settings": "設定",
+      "settingsDescription": "設定機能はまもなく提供予定です",
+      "controllerMapping": "コントローラーマッピング",
+      "accountInfo": "アカウント情報",
+      "accountInfoDescription": "アカウント情報機能はまもなく提供予定です",
+      "logout": "ログアウト",
+      "gamepad": {
+        "menuTitle": "コントローラー",
+        "notDetected": "コントローラーが検出されませんでした",
+        "enable": "コントローラーを有効化",
+        "disable": "コントローラーを無効化",
+        "stats": "{{buttons}}ボタン · {{axes}}軸",
+        "disconnectTooltip": "切断",
+        "disconnectedToastTitle": "🎮 コントローラーが切断されました",
+        "disconnectedToastDescription": "{{name}}がアプリから切断されました"
+      }
+    },
+    "console": {
+      "status": {
+        "online": "オンライン",
+        "offline": "オフライン",
+        "standby": "スタンバイ"
+      },
+      "available": "利用可能：スタンバイオン",
+      "readyToPlay": "プレイ準備完了",
+      "standby": "スタンバイ中",
+      "offline": "オフライン",
+      "notRegistered": "未登録",
+      "connect": "接続",
+      "register": "登録",
+      "addConsole": {
+        "title": "コンソールを追加",
+        "description": "接続するためにコンソールでリモート機能を有効にしてください",
+        "button": "追加",
+        "toastTitle": "コンソールを追加",
+        "toastDescription": "PlayStationコンソールでリモートプレイ機能を有効にしてください"
+      },
+      "offlineToastTitle": "コンソールオフライン",
+      "offlineToastDescription": "このコンソールは現在利用できません",
+      "connectingToastTitle": "接続中",
+      "connectingToastDescription": "{{name}}に接続中...",
+      "openSettings": "設定を開く",
+      "enableReorder": "並び替えを有効化",
+      "disableReorder": "並び替え完了",
+      "reorderModeEnabledTitle": "並び替えモードが有効になりました",
+      "reorderModeEnabledDescription": "カードをドラッグして並び替えます。完了したら編集アイコンを再度クリックしてください。",
+      "delete": "コンソールを削除",
+      "deleteConfirm": "バインドされたコンソール{{name}}を削除してもよろしいですか？これによりコンソール自体には影響しません。",
+      "deleteSuccessTitle": "削除されました",
+      "deleteSuccessDescription": "{{name}}がバインドデバイスリストから削除されました。",
+      "deleteFailedTitle": "削除失敗",
+      "deleteFailedDescription": "現在コンソールを削除できません。後でもう一度お試しください。",
+      "deleteInvalidId": "バインド情報が不足しています。削除できません。"
+    },
+    "deviceSettings": {
+      "title": "デバイス設定",
+      "description": "{{name}}のストリーミングパラメータを設定",
+      "resolution": "解像度",
+      "resolutionHint": "ビデオストリームの解像度を選択してください。より高い解像度には、より良いネットワーク接続が必要です。",
+      "frameRate": "フレームレート",
+      "frameRateHint": "ビデオストリームのフレームレートを選択してください。より高いフレームレートはより滑らかな体験を提供しますが、より多くの帯域幅が必要です。",
+      "bitrate": "ビットレート",
+      "bitrateHint": "ビデオストリームのビットレートを選択してください。より高いビットレートはより良い品質を提供しますが、より高速なネットワーク速度が必要です。",
+      "streamType": "ストリームコーデック",
+      "streamTypeHint": "ストリーミングに使用するコーデックを選択してください。HEVCはより低いビットレートでより良い品質を提供しますが、すべてのデバイスでサポートされていない可能性があります。",
+      "saveSuccess": "設定を保存しました",
+      "saveSuccessDescription": "デバイス設定が正常に保存されました",
+      "saveFailed": "保存失敗",
+      "saveFailedDescription": "デバイス設定を保存できませんでした。後でもう一度お試しください",
+      "loadFailed": "読み込み失敗",
+      "loadFailedDescription": "デバイス設定を読み込めませんでした。後でもう一度お試しください",
+      "reset": "リセット",
+      "resetDescription": "設定がデフォルトにリセットされました",
+      "deleteSection": {
+        "title": "デバイスバインドを削除",
+        "description": "このコンソールをアカウントから削除します。コンソール自体には影響しません。",
+        "action": "バインドを削除",
+        "loading": "削除中..."
+      },
+      "options": {
+        "resolution": {
+          "RES_360P": "360p",
+          "RES_540P": "540p",
+          "RES_720P": "720p",
+          "RES_1080P": "1080p"
+        },
+        "frameRate": {
+          "30FPS": "30fps",
+          "60FPS": "60fps"
+        },
+        "bitrate": {
+          "DEFAULT": "ビットレート自動調整",
+          "VERY_LOW": "非常に低品質（約2Mbps）",
+          "LOW": "低品質（約4Mbps）",
+          "MEDIUM": "中品質（約6Mbps）",
+          "HIGH": "高品質（約10Mbps）",
+          "VERY_HIGH": "非常に高品質（約15Mbps）"
+        },
+        "streamType": {
+          "H264": "H.264コーデック",
+          "HEVC": "HEVC/H.265コーデック",
+          "HEVC_HDR": "HEVC/H.265 HDRコーデック"
+        }
+      }
+    },
+    "settings": {
+      "title": "設定",
+      "subtitle": "アプリケーション設定と環境設定を管理",
+      "tabs": {
+        "controller": {
+          "label": "コントローラーマッピング",
+          "description": "ゲームパッドボタンマッピングと振動設定を構成"
+        },
+        "turnServer": {
+          "label": "TURNサーバー",
+          "description": "ネットワーク接続を改善するためにWebRTC TURNサーバーを構成"
+        },
+        "webrtc": {
+          "label": "WebRTC設定",
+          "description": "WebRTCネットワークパラメータを構成"
+        }
+      },
+      "turnServer": {
+        "title": "TURNサーバーリスト",
+        "description": "複雑なネットワーク環境でWebRTC接続を確立するためにTURNサーバーを追加",
+        "empty": "まだTURNサーバー設定がありません",
+        "emptyHint": "下のボタンをクリックしてサーバーを追加してください",
+        "addServer": "サーバーを追加",
+        "serverNumber": "サーバー #{{number}}",
+        "url": "サーバーURL",
+        "urlRequired": "サーバーURL *",
+        "urlPlaceholder": "turn:example.com:3478?transport=udp",
+        "urlHint": "形式: turn:host:port?transport=udp または turn:host:port?transport=tcp",
+        "username": "ユーザー名（オプション）",
+        "usernamePlaceholder": "TURNサーバーユーザー名",
+        "credential": "パスワード（オプション）",
+        "credentialPlaceholder": "TURNサーバーパスワード",
+        "save": "設定を保存",
+        "saving": "保存中...",
+        "reset": "リセット",
+        "instructions": {
+          "title": "使用説明",
+          "point1": "TURNサーバーは、複雑なネットワーク環境（対称NATなど）でWebRTC接続を確立するために使用されます",
+          "point2": "ネットワーク環境が良好な場合、TURNサーバーを構成する必要がない場合があります",
+          "point3": "接続成功率を向上させるために、複数のTURNサーバーを構成することをお勧めします",
+          "point4": "設定を保存すると、新しいWebRTC接続がこれらのサーバーを使用します"
+        },
+        "loading": "読み込み中...",
+        "loadFailed": "読み込み失敗",
+        "loadFailedDescription": "TURNサーバー設定を読み込めませんでした",
+        "saveSuccess": "保存成功",
+        "saveSuccessDescription": "TURNサーバー設定が保存されました",
+        "saveFailed": "保存失敗",
+        "saveFailedDescription": "TURNサーバー設定を保存できませんでした",
+        "saveFailedInvalid": "少なくとも1つの有効なTURNサーバーURLを入力してください"
+      },
+      "webrtc": {
+        "title": "WebRTC設定",
+        "description": "パブリックIPとポート範囲を含むWebRTCネットワークパラメータを構成",
+        "publicIp": "パブリックIPアドレス",
+        "publicIpPlaceholder": "例: 120.196.xxx.xxx",
+        "publicIpHint": "コンテナまたはNAT環境では、ローカル候補アドレスを上書きするために使用されるパブリックIP",
+        "icePortMin": "ICEポート最小値",
+        "icePortMinPlaceholder": "例: 40100",
+        "icePortMinHint": "WebRTC用のUDPポート開始値（1024-65535、偶数である必要があります）",
+        "icePortMax": "ICEポート最大値",
+        "icePortMaxPlaceholder": "例: 40200",
+        "icePortMaxHint": "WebRTC用のUDPポート終了値（1024-65535、偶数である必要があります）",
+        "forceUseTurn": "TURNサーバーを強制使用",
+        "forceUseTurnHint": "有効にすると、TURNサーバー設定のテスト用にTURNリレー候補アドレスのみが使用されます。事前にTURNサーバーを設定する必要があります。",
+        "save": "設定を保存",
+        "saving": "保存中...",
+        "reset": "リセット",
+        "loading": "読み込み中...",
+        "loadFailed": "読み込み失敗",
+        "loadFailedDescription": "WebRTC設定を読み込めませんでした",
+        "saveSuccess": "保存成功",
+        "saveSuccessDescription": "WebRTC設定が保存されました",
+        "saveFailed": "保存失敗",
+        "saveFailedDescription": "WebRTC設定を保存できませんでした",
+        "invalidPortRange": "ポート範囲は1024-65535の間である必要があります",
+        "portMinGreaterThanMax": "ポート最小値は最大値より大きくできません",
+        "instructions": {
+          "title": "使用説明",
+          "point1": "パブリックIP：コンテナまたはNAT環境では、サーバーがプライベートネットワークにある場合、クライアントが正しく接続できるようにパブリックIPを設定する必要があります",
+          "point2": "ICEポート範囲：WebRTCが使用するUDPポート範囲を指定します。範囲が大きすぎないことをお勧めします（例：100-200ポート）",
+          "point3": "設定を保存すると、新しいWebRTC接続がこれらのパラメータを使用します"
+        }
+      }
+    },
+    "controllerMapping": {
+      "title": "コントローラーマッピング",
+      "subtitle": "キーボードとマウスからコントローラーボタンへのマッピングを構成",
+      "instructions": {
+        "title": "説明",
+        "step1": "コントローラー上のボタンまたは下のリストのボタンをクリックしてマッピングを開始",
+        "step2": "マッピングするキーボードキーまたはマウスボタンを押す",
+        "step3": "マッピングが完了したら、保存ボタンをクリックしてマッピングを保存"
+      },
+      "gamepad": {
+        "title": "コントローラーレイアウト",
+        "description": "コントローラー上のボタンをクリックしてマッピング"
+      },
+      "buttonList": {
+        "title": "ボタンリスト",
+        "description": "このリストからもボタンをマッピングできます"
+      },
+      "buttons": {
+        "CROSS": "X",
+        "CIRCLE": "O",
+        "TRIANGLE": "△",
+        "SQUARE": "□",
+        "L1": "L1",
+        "R1": "R1",
+        "L2": "L2",
+        "R2": "R2",
+        "L3": "L3",
+        "R3": "R3",
+        "DPAD_UP": "十字キー上",
+        "DPAD_DOWN": "十字キー下",
+        "DPAD_LEFT": "十字キー左",
+        "DPAD_RIGHT": "十字キー右",
+        "OPTIONS": "オプション",
+        "SHARE": "シェア",
+        "TOUCHPAD": "タッチパッド",
+        "PS": "PSボタン"
+      },
+      "mouseButtons": {
+        "0": "マウス左",
+        "1": "マウス中",
+        "2": "マウス右"
+      },
+      "leftStick": {
+        "title": "左スティック方向",
+        "description": "左スティックの4方向のキーボードキーをカスタマイズ。",
+        "directions": {
+          "UP": "上",
+          "DOWN": "下",
+          "LEFT": "左",
+          "RIGHT": "右"
+        },
+        "mapHint": "クリックして再マッピング",
+        "clear": "クリア",
+        "listening": "左スティックを監視中…",
+        "listeningDescription": "左スティック{{direction}}に割り当てるキーを押してください",
+        "mappingSet": "左スティックマッピングが更新されました",
+        "mappingSetDescription": "左スティック{{direction}}が{{key}}にマッピングされました",
+        "mappingCleared": "左スティックマッピングがクリアされました",
+        "mappingClearedDescription": "左スティック{{direction}}のマッピングがクリアされました"
+      },
+      "rightStick": {
+        "title": "右スティック",
+        "description": "右スティックはマウスの動きに追従し、読み取り専用です。",
+        "axisX": "X軸",
+        "axisY": "Y軸",
+        "axisXValue": "マウス水平移動",
+        "axisYValue": "マウス垂直移動"
+      },
+      "tester": {
+        "title": "コントローラーテスター",
+        "description": "スティックとボタンからのライブ入力を監視。",
+        "noGamepad": "コントローラーが検出されませんでした。接続してもう一度お試しください。",
+        "selectLabel": "アクティブなコントローラー",
+        "selectPlaceholder": "コントローラーを選択",
+        "unknownDevice": "不明なコントローラー",
+        "stickTitle": "スティック状態",
+        "leftStick": "左スティック",
+        "rightStick": "右スティック",
+        "stickAxes": "X: {{x}} / Y: {{y}}",
+        "triggerTitle": "トリガー圧力",
+        "buttonTitle": "ボタン状態",
+        "analogValue": "値: {{value}}",
+        "genericButton": "ボタン{{index}}",
+        "buttonPressed": "押されている",
+        "buttonReleased": "離されている"
+      },
+      "rumble": {
+        "title": "コントローラー振動",
+        "description": "コンソールからの振動フィードバックをローカルコントローラーに同期。",
+        "statusOn": "振動が有効になっています",
+        "statusOff": "振動が無効になっています",
+        "toggleEnable": "振動を有効化",
+        "toggleDisable": "振動を無効化",
+        "strengthLabel": "強度",
+        "strengthValue": "{{value}}%",
+        "test": "振動テスト",
+        "notSupported": "振動対応のコントローラーが検出されませんでした。",
+        "toastTestSuccess": "振動テストを送信しました",
+        "toastTestFailed": "振動のトリガーに失敗しました",
+        "toastDisabled": "振動は現在無効になっています。まず有効にしてください。"
+      },
+      "mapButton": "クリックしてマッピング",
+      "listening": "監視中...",
+      "listeningDescription": "{{button}}にマッピングするキーを押してください",
+      "mappingSet": "マッピングが設定されました",
+      "mappingSetDescription": "{{button}}が{{key}}にマッピングされました",
+      "mappingCleared": "マッピングがクリアされました",
+      "mappingClearedDescription": "{{button}}のマッピングがクリアされました",
+      "saveSuccess": "保存成功",
+      "saveSuccessDescription": "コントローラーマッピング設定が保存されました",
+      "saveFailed": "保存失敗",
+      "saveFailedDescription": "コントローラーマッピング設定を保存できませんでした。後でもう一度お試しください",
+      "reset": "リセット",
+      "resetDescription": "マッピングがデフォルトにリセットされました",
+      "notMapped": "未マッピング"
+    },
+    "bindDevice": {
+      "title": "PSコンソールをバインド",
+      "description": {
+        "discover": "PlayStationコンソールを発見して接続",
+        "bind": "デバイス情報を構成してバインドを完了"
+      },
+      "discover": {
+        "scanning": "ネットワーク上のデバイスをスキャン中...",
+        "scanningHint": "お待ちください。数秒かかる場合があります",
+        "foundDevices": "見つかったデバイス",
+        "rescan": "再スキャン",
+        "noDevices": "デバイスが見つかりませんでした",
+        "noDevicesHint": "PSコンソールが電源オンで同じネットワークに接続されていることを確認してください",
+        "manualIp": "手動IPアドレス（オプション）",
+        "manualIpPlaceholder": "例: 192.168.1.100",
+        "manualIpHint": "デバイスのIPアドレスがわかっている場合は、直接入力して接続できます",
+        "unknownType": "不明なタイプ"
+      },
+      "bind": {
+        "deviceName": "デバイス名",
+        "deviceNamePlaceholder": "デバイスに名前を付ける",
+        "needsRegistration": "デバイス登録が必要（初回バインド時）",
+        "needsRegistrationHint": "このデバイスを初めてバインドする場合、登録のためにアカウントIDとPINを提供する必要があります",
+        "accountId": "アカウントID（Base64）",
+        "accountIdPlaceholder": "PSNアカウントIDを入力するか、ボタンをクリックして取得",
+        "accountIdHint": "これはPSNアカウントIDで、通常はBase64エンコードされた8バイトデータです。\"PSNログインで取得\"ボタンをクリックすると自動的に取得できます。",
+        "getAccountId": "PSNログインで取得",
+        "gettingAccountId": "取得中...",
+        "gettingAccountIdTitle": "アカウントIDを取得中...",
+        "gettingAccountIdHint": "ポップアップウィンドウでPSNログインを完了してください",
+        "pin": "PINコード",
+        "pinPlaceholder": "8桁のPINコードを入力",
+        "pinHint": "PSコンソールに表示される8桁の数字PINコード",
+        "completeBind": "バインドを完了",
+        "binding": "バインド中..."
+      },
+      "oauth": {
+        "loginTitle": "PSNログイン",
+        "callbackSteps": {
+          "title": "説明",
+          "step1": "ポップアップウィンドウでPSNログインを完了",
+          "step2": "ログイン成功後、ページはコールバックアドレス（{domain}）にリダイレクトされます",
+          "step3": "システムは自動的にコールバックURLを取得しようとします",
+          "step4": "自動取得が失敗した場合、ブラウザのアドレスバーから完全なURL（{codeParam}パラメータを含む）をコピーして下に貼り付けてください",
+          "hint": "ヒント: {selectKey1}または{selectKey2}を押すとアドレスバーをすばやく選択でき、その後{copyKey}を押してコピーできます"
+        },
+        "callbackUrlPlaceholder": "PSNコールバックページの完全なURLを貼り付け（remoteplay.dl.playstation.netで始まる）",
+        "callbackUrlInvalid": "URLに\"remoteplay.dl.playstation.net\"と\"code=\"パラメータが含まれていることを確認してください",
+        "clipboardRead": "クリップボードからURLを読み取り",
+        "cancelGet": "取得をキャンセル",
+        "callbackDetected": "✅ コールバックページが検出されました",
+        "callbackDetectedHint": "ページがリダイレクトされました。アドレスバーからURLをコピー（Ctrl+C）して、📋ボタンをクリックするか、入力フィールドに貼り付けてください"
+      },
+      "errors": {
+        "discoverFailed": "デバイス検出失敗",
+        "discoverFailedHint": "後でもう一度お試しください",
+        "ipRequired": "IPアドレスが必要です",
+        "ipRequiredHint": "PSコンソールのIPアドレスを入力してください",
+        "ipInvalid": "IPアドレスを空にすることはできません",
+        "accountIdAndPinRequired": "アカウントIDとPINが必要です",
+        "accountIdAndPinRequiredHint": "デバイス登録にはアカウントIDとPINコードが必要です",
+        "bindSuccess": "バインド成功",
+        "bindSuccessHint": "デバイスがアカウントに正常にバインドされました",
+        "bindFailed": "バインド失敗",
+        "bindFailedHint": "後でもう一度お試しください",
+        "getLoginUrlFailed": "ログインURLの取得に失敗しました",
+        "cannotOpenWindow": "ログインウィンドウを開けません",
+        "cannotOpenWindowHint": "ポップアップウィンドウを許可してもう一度お試しください",
+        "loginFailed": "ログイン失敗",
+        "loginFailedHint": "後でもう一度お試しください",
+        "getAccountIdFailed": "アカウントIDの取得に失敗しました",
+        "getAccountIdSuccess": "アカウントIDの取得に成功しました",
+        "getAccountIdSuccessHint": "取得したアカウント: {name}",
+        "callbackUrlRequired": "コールバックURLが必要です",
+        "clipboardInvalid": "クリップボードの内容が無効です",
+        "clipboardInvalidHint": "code=パラメータを含むコールバックURLをコピーしたことを確認してください",
+        "clipboardReadFailed": "クリップボードを読み取れません",
+        "clipboardReadFailedHint": "URLを手動で貼り付けるか、クリップボードアクセス権限を付与してください",
+        "loginHint": "ログイン説明",
+        "loginHintDescription": "ポップアップウィンドウでPSNログインを完了してください。ログイン成功後、アカウントIDが自動的に取得されます"
+      }
+    }
+  },
+  "streaming": {
+    "monitor": {
+      "enable": "モニタリングを有効化",
+      "disable": "モニタリングを無効化",
+      "title": "ライブモニタリング",
+      "webrtc": "WebRTC",
+      "labels": {
+        "download": "ダウンロード速度",
+        "upload": "アップロード速度",
+        "videoBitrate": "ビデオビットレート",
+        "resolution": "解像度",
+        "latency": "レイテンシ",
+        "fps": "フレームレート"
+      },
+      "units": {
+        "mbps": "{{value}} Mbps",
+        "kbps": "{{value}} Kbps",
+        "ms": "{{value}} ミリ秒",
+        "resolution": "{{width}} × {{height}}",
+        "fps": "{{value}} fps"
+      }
+    },
+    "loading": {
+      "connectingDevice": "デバイスに接続中"
+    },
+    "videoPlayer": {
+      "connecting": "接続中...",
+      "waiting": "接続を待機中",
+      "start": "接続を開始"
+    },
+    "header": {
+      "unnamedDevice": "名前のないコンソール",
+      "connect": "接続",
+      "gamepadCount_one": "{{count}}個のコントローラー",
+      "gamepadCount_other": "{{count}}個のコントローラー"
+    },
+    "connection": {
+      "state": {
+        "disconnected": "切断",
+        "fetchingDevice": "デバイス情報を取得中...",
+        "checkingStatus": "デバイスステータスを確認中...",
+        "wakingUp": "デバイスがスタンバイ中、起動中...",
+        "waitingReady": "デバイスの準備完了を待機中...",
+        "waitingReadyWithTime": "デバイスの準備完了を待機中... ({{seconds}}秒)",
+        "connecting": "接続中...",
+        "creatingSession": "セッションを作成中...",
+        "connected": "接続済み",
+        "failed": "接続失敗"
+      },
+      "toast": {
+        "wakingTitle": "デバイスを起動中",
+        "wakingDescription": "デバイスがスタンバイ中、起動中...",
+        "prepareFailedTitle": "デバイスの準備に失敗しました",
+        "connectingTitle": "接続中",
+        "connectingDescription": "{{name}}に接続中...",
+        "connectedTitle": "接続成功",
+        "connectedDescription": "ビデオストリームが接続されました",
+        "connectFailedTitle": "接続失敗",
+        "controllerFailedTitle": "コントローラー接続失敗",
+        "streamFrozenTitle": "再生のフリーズが検出されました",
+        "streamFrozenDescription": "フリーズフレーム: {{frozen}}、回復: {{recovered}}。新しいキーフレームをリクエストしました。",
+        "streamRecoveredTitle": "再生が回復中",
+        "streamRecoveredDescription": "{{recovered}}フレームを回復しました。ビデオはすぐに再開されるはずです。",
+        "streamRateLimitedTitle": "キーフレームリクエストが制限されました",
+        "streamRateLimitedDescription": "{{window}}秒以内に{{requested}}回のIDRリクエストが多すぎます。再度リクエストする前に待機中です。"
+      },
+      "errors": {
+        "missingDeviceInfo": "デバイス情報が不足しています",
+        "fetchDeviceFailed": "デバイス情報の取得に失敗しました",
+        "deviceNotFound": "デバイス情報が見つかりませんでした",
+        "ipNotSet": "デバイスIPアドレスが設定されていません",
+        "wakeDeviceFailed": "デバイスの起動に失敗しました",
+        "deviceNotReady": "デバイスの準備ができていません",
+        "deviceReadyTimeout": "デバイスの準備完了タイムアウト（{{seconds}}秒）",
+        "connectRemotePlayFailed": "Remote Playセッションへの接続に失敗しました",
+        "sessionCreateFailed": "セッションの作成に失敗しました",
+        "sessionDataMissing": "セッション応答にデータがありません",
+        "sessionIdMissing": "セッションIDの取得に失敗しました",
+        "offerCreateFailed": "WebRTCオファーの作成に失敗しました",
+        "offerDataMissing": "オファー応答にデータがありません",
+        "unknown": "不明なエラー"
+      }
+    }
+  }
+}

@@ -1,0 +1,557 @@
+{
+  "common": {
+    "loading": "載入中...",
+    "confirm": "確認",
+    "cancel": "取消",
+    "submit": "提交",
+    "save": "保存",
+    "delete": "刪除",
+    "edit": "編輯",
+    "close": "關閉",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "search": "搜尋",
+    "filter": "篩選",
+    "sort": "排序",
+    "refresh": "重新整理",
+    "error": "錯誤",
+    "theme": {
+      "toggle": "切換主題",
+      "light": "淺色",
+      "dark": "深色",
+      "system": "跟隨系統"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "登入",
+      "subtitle": "登入您的帳戶以開始遊戲串流",
+      "usernameOrEmail": "使用者名稱或電子郵件",
+      "usernameOrEmailPlaceholder": "username 或 name@example.com",
+      "password": "密碼",
+      "passwordPlaceholder": "••••••••",
+      "loginButton": "登入",
+      "loggingIn": "登入中...",
+      "success": "登入成功",
+      "successDescription": "歡迎回來！",
+      "failure": "登入失敗",
+      "failureDescription": "使用者名稱或密碼錯誤",
+      "noAccount": "還沒有帳戶？",
+      "registerLink": "立即註冊"
+    },
+    "register": {
+      "title": "建立帳戶",
+      "subtitle": "註冊新帳戶以開始使用 Remote Play",
+      "username": "使用者名稱",
+      "usernamePlaceholder": "username",
+      "usernameHint": "只能包含字母、數字和底線，至少 3 個字元",
+      "email": "電子郵件",
+      "emailPlaceholder": "name@example.com",
+      "password": "密碼",
+      "passwordPlaceholder": "••••••••",
+      "passwordHint": "至少需要 8 個字元",
+      "confirmPassword": "確認密碼",
+      "confirmPasswordPlaceholder": "••••••••",
+      "registerButton": "註冊",
+      "registering": "註冊中...",
+      "success": "註冊成功",
+      "successDescription": "歡迎加入 Remote Play！",
+      "failure": "註冊失敗",
+      "failureDescription": "註冊失敗，請稍後重試",
+      "usernameFormatError": "使用者名稱格式錯誤",
+      "usernameFormatErrorDescription": "使用者名稱只能包含字母、數字和底線",
+      "usernameTooShort": "使用者名稱太短",
+      "usernameTooShortDescription": "使用者名稱至少需要 3 個字元",
+      "passwordMismatch": "密碼不相符",
+      "passwordMismatchDescription": "請確保兩次輸入的密碼相同",
+      "passwordTooShort": "密碼太短",
+      "passwordTooShortDescription": "密碼至少需要 8 個字元",
+      "hasAccount": "已有帳戶？",
+      "loginLink": "立即登入"
+    },
+    "logout": {
+      "title": "已登出登入",
+      "description": "您已安全登出帳戶"
+    }
+  },
+  "devices": {
+    "title": "遠端遊玩你的主機",
+    "header": {
+      "title": "REMOTE PLAY",
+      "myAccount": "我的帳戶",
+      "settings": "設定",
+      "settingsDescription": "設定功能即將推出",
+      "controllerMapping": "手把對應",
+      "accountInfo": "帳戶資訊",
+      "accountInfoDescription": "帳戶資訊功能即將推出",
+      "logout": "登出登入",
+      "gamepad": {
+        "menuTitle": "遊戲手把",
+        "notDetected": "未檢測到手把",
+        "enable": "啟用手把",
+        "disable": "停用手把",
+        "stats": "{{buttons}} 按鈕 · {{axes}} 轴",
+        "disconnectTooltip": "中斷連線",
+        "disconnectedToastTitle": "🎮 手把已中斷",
+        "disconnectedToastDescription": "{{name}} 已從應用程式中中斷連線"
+      }
+    },
+    "console": {
+      "status": {
+        "online": "線上",
+        "offline": "離線",
+        "standby": "待機"
+      },
+      "available": "可用：待機開啟",
+      "readyToPlay": "可以开玩",
+      "standby": "待機中",
+      "offline": "離線",
+      "notRegistered": "未註冊",
+      "connect": "連線",
+      "register": "註冊",
+      "addConsole": {
+        "title": "新增主機",
+        "description": "请在主機上啟用遠端功能後再連線",
+        "button": "新增",
+        "toastTitle": "新增主機",
+        "toastDescription": "请在您的 PlayStation 主機上啟用遠端遊玩功能"
+      },
+      "offlineToastTitle": "主機離線",
+      "offlineToastDescription": "該主機目前不可用",
+      "connectingToastTitle": "正在連線",
+      "connectingToastDescription": "正在連線到 {{name}}...",
+      "openSettings": "開啟設定",
+      "enableReorder": "調整排序",
+      "disableReorder": "完成排序",
+      "reorderModeEnabledTitle": "排序模式已開啟",
+      "reorderModeEnabledDescription": "拖曳卡片即可重新排序，完成後再次點擊編輯圖示登出",
+      "delete": "刪除裝置",
+      "deleteConfirm": "確定要刪除已綁定的主機 {{name}} 嗎？此操作不會影響主機本身的資料。",
+      "deleteSuccessTitle": "刪除成功",
+      "deleteSuccessDescription": "{{name}} 已從綁定清單中移除。",
+      "deleteFailedTitle": "刪除失敗",
+      "deleteFailedDescription": "無法刪除裝置，請稍後重試。",
+      "deleteInvalidId": "缺少裝置綁定資訊，無法刪除。"
+    },
+    "deviceSettings": {
+      "title": "裝置設定",
+      "description": "為 {{name}} 設定串流媒體參數",
+      "resolution": "解析度",
+      "resolutionHint": "選擇視訊串流的解析度。更高的解析度需要更好的網路連線。",
+      "frameRate": "幀率",
+      "frameRateHint": "選擇視訊串流的幀率。更高的幀率提供更流暢的體驗，但需要更多頻寬。",
+      "bitrate": "位元率",
+      "bitrateHint": "選擇視訊串流的位元率。更高的位元率提供更好的画质，但需要更快的網路速度。",
+      "streamType": "串流編碼",
+      "streamTypeHint": "選擇使用的串流編碼格式。HEVC 編碼在高畫質下表現更好，但可能不相容所有裝置。",
+      "saveSuccess": "設定已儲存",
+      "saveSuccessDescription": "裝置設定已成功保存",
+      "saveFailed": "儲存失敗",
+      "saveFailedDescription": "無法儲存裝置設定，請稍後重試",
+      "loadFailed": "載入失敗",
+      "loadFailedDescription": "無法載入裝置設定，請稍後重試",
+      "reset": "重設",
+      "resetDescription": "已重設為預設設定",
+      "deleteSection": {
+        "title": "解綁裝置",
+        "description": "將裝置从目前帳戶的綁定清單中移除。此操作不會影響主機本身的資料。",
+        "action": "刪除綁定",
+        "loading": "正在刪除..."
+      },
+      "options": {
+        "resolution": {
+          "RES_360P": "360p",
+          "RES_540P": "540p",
+          "RES_720P": "720p",
+          "RES_1080P": "1080p"
+        },
+        "frameRate": {
+          "30FPS": "30fps",
+          "60FPS": "60fps"
+        },
+        "bitrate": {
+          "DEFAULT": "自動匹配位元率",
+          "VERY_LOW": "非常低画质（約 2Mbps）",
+          "LOW": "低画质（約 4Mbps）",
+          "MEDIUM": "中等画质（約 6Mbps）",
+          "HIGH": "高畫質（約 10Mbps）",
+          "VERY_HIGH": "非常高畫質（約 15Mbps）"
+        },
+        "streamType": {
+          "H264": "H.264 編碼",
+          "HEVC": "HEVC/H.265 編碼",
+          "HEVC_HDR": "HEVC/H.265 HDR 編碼"
+        }
+      }
+    },
+    "settings": {
+      "title": "設定",
+      "subtitle": "管理您的應用程式設定和偏好",
+      "tabs": {
+        "controller": {
+          "label": "控制器對應",
+          "description": "設定遊戲手把按键對應和震動設定"
+        },
+        "turnServer": {
+          "label": "TURN 伺服器",
+          "description": "設定 WebRTC TURN 伺服器以改善網路連線"
+        },
+        "webrtc": {
+          "label": "WebRTC 設定",
+          "description": "設定 WebRTC 網路參數"
+        }
+      },
+      "turnServer": {
+        "title": "TURN 伺服器清單",
+        "description": "新增 TURN 伺服器以協助 WebRTC 在複雜網路環境下建立連線",
+        "empty": "暫無 TURN 伺服器設定",
+        "emptyHint": "點擊下方按鈕新增伺服器",
+        "addServer": "新增伺服器",
+        "serverNumber": "伺服器 #{{number}}",
+        "url": "伺服器 URL",
+        "urlRequired": "伺服器 URL *",
+        "urlPlaceholder": "turn:example.com:3478?transport=udp",
+        "urlHint": "格式: turn:host:port?transport=udp 或 turn:host:port?transport=tcp",
+        "username": "使用者名稱（可選）",
+        "usernamePlaceholder": "TURN 伺服器使用者名稱",
+        "credential": "密碼（可選）",
+        "credentialPlaceholder": "TURN 伺服器密碼",
+        "save": "儲存設定",
+        "saving": "儲存中...",
+        "reset": "重設",
+        "instructions": {
+          "title": "使用說明",
+          "point1": "TURN 伺服器用於在複雜網路環境下（如對稱 NAT）建立 WebRTC 連線",
+          "point2": "如果您的網路環境良好，可能不需要設定 TURN 伺服器",
+          "point3": "建議設定多個 TURN 伺服器以提高連線成功率",
+          "point4": "設定儲存後，新的 WebRTC 連線將使用這些伺服器"
+        },
+        "loading": "載入中...",
+        "loadFailed": "載入失敗",
+        "loadFailedDescription": "無法載入 TURN 伺服器設定",
+        "saveSuccess": "儲存成功",
+        "saveSuccessDescription": "TURN 伺服器設定已儲存",
+        "saveFailed": "儲存失敗",
+        "saveFailedDescription": "無法儲存 TURN 伺服器設定",
+        "saveFailedInvalid": "请至少填寫一個有效的 TURN 伺服器 URL"
+      },
+      "webrtc": {
+        "title": "WebRTC 設定",
+        "description": "設定 WebRTC 網路參數，包括公網 IP 和連接埠範圍",
+        "publicIp": "公網 IP 位址",
+        "publicIpPlaceholder": "例如: 120.196.xxx.xxx",
+        "publicIpHint": "在容器或 NAT 環境下，用於覆蓋本機候選位址的公網 IP",
+        "icePortMin": "ICE 連接埠最小值",
+        "icePortMinPlaceholder": "例如: 40100",
+        "icePortMinHint": "WebRTC 使用的 UDP 連接埠起始值（1024-65535，必須為偶數）",
+        "icePortMax": "ICE 連接埠最大值",
+        "icePortMaxPlaceholder": "例如: 40200",
+        "icePortMaxHint": "WebRTC 使用的 UDP 連接埠結束值（1024-65535，必須為偶數）",
+        "forceUseTurn": "強制使用 TURN 伺服器",
+        "forceUseTurnHint": "啟用後，僅使用 TURN relay 候選位址，用於測試 TURN 伺服器設定。需要先設定 TURN 伺服器。",
+        "save": "儲存設定",
+        "saving": "儲存中...",
+        "reset": "重設",
+        "loading": "載入中...",
+        "loadFailed": "載入失敗",
+        "loadFailedDescription": "無法載入 WebRTC 設定",
+        "saveSuccess": "儲存成功",
+        "saveSuccessDescription": "WebRTC 設定已儲存",
+        "saveFailed": "儲存失敗",
+        "saveFailedDescription": "無法儲存 WebRTC 設定",
+        "invalidPortRange": "連接埠範圍必須在 1024-65535 之間",
+        "portMinGreaterThanMax": "連接埠最小值不能大於最大值",
+        "instructions": {
+          "title": "使用說明",
+          "point1": "公網 IP：在容器或 NAT 環境下，如果伺服器在私有網路中，需要設定公網 IP 以確保用戶端能正確連線",
+          "point2": "ICE 連接埠範圍：指定 WebRTC 使用的 UDP 連接埠範圍，建議範圍不要太大（如 100-200 個連接埠）",
+          "point3": "設定儲存後，新的 WebRTC 連線將使用這些參數"
+        }
+      }
+    },
+    "controllerMapping": {
+      "title": "手把對應設定",
+      "subtitle": "設定鍵盤和滑鼠到手把按鈕的對應",
+      "instructions": {
+        "title": "使用說明",
+        "step1": "點擊手把上的按鈕或下方清單中的按鈕開始對應",
+        "step2": "按下您想要對應的鍵盤按鍵或滑鼠按鍵",
+        "step3": "對應完成後點擊儲存按鈕以儲存設定"
+      },
+      "gamepad": {
+        "title": "手把版面設定",
+        "description": "點擊手把上的按鈕進行對應"
+      },
+      "buttonList": {
+        "title": "按鈕清單",
+        "description": "您也可以在此清單中進行對應"
+      },
+      "buttons": {
+        "CROSS": "X",
+        "CIRCLE": "O",
+        "TRIANGLE": "△",
+        "SQUARE": "□",
+        "L1": "L1",
+        "R1": "R1",
+        "L2": "L2",
+        "R2": "R2",
+        "L3": "L3",
+        "R3": "R3",
+        "DPAD_UP": "方向键 上",
+        "DPAD_DOWN": "方向键 下",
+        "DPAD_LEFT": "方向键 左",
+        "DPAD_RIGHT": "方向键 右",
+      "OPTIONS": "選項鍵",
+      "SHARE": "分享鍵",
+      "TOUCHPAD": "觸控板",
+      "PS": "PS鍵"
+    },
+      "mouseButtons": {
+        "0": "滑鼠左鍵",
+        "1": "滑鼠中鍵",
+        "2": "滑鼠右鍵"
+      },
+      "leftStick": {
+        "title": "左搖桿方向",
+        "description": "為鍵盤自訂左搖桿的四個方向。",
+        "directions": {
+          "UP": "上",
+          "DOWN": "下",
+          "LEFT": "左",
+          "RIGHT": "右"
+        },
+        "mapHint": "點擊設定對應",
+        "clear": "清除",
+        "listening": "監聽左搖桿…",
+        "listeningDescription": "請按下要對應到左搖桿{{direction}}的按键",
+        "mappingSet": "左搖桿對應已設定",
+        "mappingSetDescription": "左搖桿{{direction}}已對應到 {{key}}",
+        "mappingCleared": "左搖桿對應已清除",
+        "mappingClearedDescription": "左搖桿{{direction}}的對應已清除"
+      },
+      "rightStick": {
+        "title": "右搖桿",
+        "description": "右搖桿預設跟隨滑鼠移動，僅供檢視。",
+        "axisX": "X 轴",
+        "axisY": "Y 轴",
+        "axisXValue": "滑鼠左右移動",
+        "axisYValue": "滑鼠上下移動"
+      },
+      "tester": {
+        "title": "手把測試",
+        "description": "即時檢視手把搖桿与按键的輸入狀態",
+        "noGamepad": "未檢測到手把，請連接裝置後重試。",
+        "selectLabel": "目前手把",
+        "selectPlaceholder": "請選擇一個手把",
+        "unknownDevice": "未知手把",
+        "stickTitle": "搖桿狀態",
+        "leftStick": "左搖桿",
+        "rightStick": "右搖桿",
+        "stickAxes": "X：{{x}} / Y：{{y}}",
+        "triggerTitle": "扳機壓力",
+        "buttonTitle": "按鈕状态",
+        "analogValue": "力度：{{value}}",
+        "genericButton": "按鈕 {{index}}",
+        "buttonPressed": "按下",
+        "buttonReleased": "未按下"
+      },
+      "rumble": {
+        "title": "手把震動",
+        "description": "將主機的震動回饋同步到本機手把。",
+        "statusOn": "已開啟手把震動",
+        "statusOff": "已關閉手把震動",
+        "toggleEnable": "開啟震動",
+        "toggleDisable": "關閉震動",
+        "strengthLabel": "震動強度",
+        "strengthValue": "{{value}}%",
+        "test": "測試震動",
+        "notSupported": "未檢測到支援震動的手把。",
+        "toastTestSuccess": "測試震動已傳送",
+        "toastTestFailed": "無法觸發震動",
+        "toastDisabled": "震動功能已關閉，請先開啟。"
+      },
+      "mapButton": "點擊對應",
+      "listening": "監聽中...",
+      "listeningDescription": "請按下要對應到 {{button}} 的按键",
+      "mappingSet": "對應已設定",
+      "mappingSetDescription": "{{button}} 已對應到 {{key}}",
+      "mappingCleared": "對應已清除",
+      "mappingClearedDescription": "{{button}} 的對應已清除",
+      "saveSuccess": "儲存成功",
+      "saveSuccessDescription": "手把對應設定已儲存",
+      "saveFailed": "儲存失敗",
+      "saveFailedDescription": "無法儲存手把對應設定，請稍後重試",
+      "reset": "重設",
+      "resetDescription": "已重設為預設對應",
+      "notMapped": "未對應"
+    },
+    "bindDevice": {
+      "title": "綁定PS主機",
+      "description": {
+        "discover": "發現並連線到您的PlayStation主機",
+        "bind": "設定裝置資訊並完成綁定"
+      },
+      "discover": {
+        "scanning": "正在掃描網路中的裝置...",
+        "scanningHint": "請稍候，這可能需要幾秒鐘",
+        "foundDevices": "發現的裝置",
+        "rescan": "重新掃描",
+        "noDevices": "未發現裝置",
+        "noDevicesHint": "請確保PS主機已開機並連線到同一網路",
+        "manualIp": "手動輸入IP位址（可選）",
+        "manualIpPlaceholder": "例如: 192.168.1.100",
+        "manualIpHint": "如果知道裝置的IP位址，可以直接輸入進行連線",
+        "unknownType": "未知類型"
+      },
+      "bind": {
+        "deviceName": "裝置名稱",
+        "deviceNamePlaceholder": "為裝置起一個名稱",
+        "needsRegistration": "需要註冊裝置（首次綁定需要）",
+        "needsRegistrationHint": "如果這是第一次綁定此裝置，需要提供帳戶ID和PIN碼進行註冊",
+        "accountId": "帳戶ID（Base64）",
+        "accountIdPlaceholder": "請輸入PSN帳戶ID或點擊按鈕取得",
+        "accountIdHint": "這是您的PSN帳戶ID，通常是Base64編碼的8位元組資料。點擊\"透過PSN登入取得\"按鈕可以自動取得。",
+        "getAccountId": "透過PSN登入取得",
+        "gettingAccountId": "取得中...",
+        "gettingAccountIdTitle": "正在取得帳戶ID...",
+        "gettingAccountIdHint": "請在彈出視窗中完成PSN登入",
+        "pin": "PIN码",
+        "pinPlaceholder": "請輸入8位PIN码",
+        "pinHint": "在PS主機上顯示的8位數字PIN碼",
+        "completeBind": "完成綁定",
+        "binding": "綁定中..."
+      },
+      "oauth": {
+        "loginTitle": "PSN登入",
+        "callbackSteps": {
+          "title": "步驟說明",
+          "step1": "在彈出視窗中完成PSN登入",
+          "step2": "登入成功後，頁面會跳轉到回呼位址（{domain}）",
+          "step3": "系統會自動嘗試取得回呼URL",
+          "step4": "如果自動取得失敗，請複製瀏覽器網址列中的完整URL（包含 {codeParam} 參數）並貼上到下方",
+          "hint": "提示：您可以按 {selectKey1} 或 {selectKey2} 快速選中網址列，然後按 {copyKey} 複製"
+        },
+        "callbackUrlPlaceholder": "貼上PSN回呼頁面的完整URL（以 remoteplay.dl.playstation.net 开头）",
+        "callbackUrlInvalid": "請確保URL包含 \"remoteplay.dl.playstation.net\" 和 \"code=\" 參數",
+        "clipboardRead": "從剪貼簿讀取URL",
+        "cancelGet": "取消取得",
+        "callbackDetected": "✅ 檢測到回呼頁面",
+        "callbackDetectedHint": "頁面已跳轉，請複製網址列中的URL（Ctrl+C），然後點擊📋按鈕或貼上到輸入欄位"
+      },
+      "errors": {
+        "discoverFailed": "裝置發現失敗",
+        "discoverFailedHint": "請稍後重試",
+        "ipRequired": "請輸入IP位址",
+        "ipRequiredHint": "請輸入PS主機的IP位址",
+        "ipInvalid": "IP位址不能為空",
+        "accountIdAndPinRequired": "請輸入帳戶ID和PIN",
+        "accountIdAndPinRequiredHint": "註冊裝置需要提供帳戶ID和PIN碼",
+        "bindSuccess": "綁定成功",
+        "bindSuccessHint": "裝置已成功綁定到您的帳戶",
+        "bindFailed": "綁定失敗",
+        "bindFailedHint": "請稍後重試",
+        "getLoginUrlFailed": "取得登入URL失敗",
+        "cannotOpenWindow": "無法開啟登入視窗",
+        "cannotOpenWindowHint": "請允許彈出視窗後重試",
+        "loginFailed": "登入失敗",
+        "loginFailedHint": "請稍後重試",
+        "getAccountIdFailed": "取得帳戶ID失敗",
+        "getAccountIdSuccess": "取得帳戶ID成功",
+        "getAccountIdSuccessHint": "已取得帳戶: {name}",
+        "callbackUrlRequired": "請輸入回呼URL",
+        "clipboardInvalid": "剪貼簿內容無效",
+        "clipboardInvalidHint": "請確保已複製包含 code= 參數的回呼URL",
+        "clipboardReadFailed": "無法讀取剪貼簿",
+        "clipboardReadFailedHint": "請手動貼上URL，或授予剪貼簿存取權限",
+        "loginHint": "登入提示",
+        "loginHintDescription": "請在彈出視窗中完成PSN登入，登入成功後會自動嘗試取得帳戶ID"
+      }
+    }
+  },
+  "streaming": {
+    "monitor": {
+      "enable": "開啟監控",
+      "disable": "關閉監控",
+      "title": "即時監控",
+      "webrtc": "WebRTC",
+      "labels": {
+        "download": "下行速率",
+        "upload": "上行速率",
+        "videoBitrate": "視訊位元率",
+        "resolution": "解析度",
+        "latency": "延迟",
+        "fps": "幀率"
+      },
+      "units": {
+        "mbps": "{{value}} Mbps",
+        "kbps": "{{value}} Kbps",
+        "ms": "{{value}} 毫秒",
+        "resolution": "{{width}} × {{height}}",
+        "fps": "{{value}} fps"
+      }
+    },
+    "loading": {
+      "connectingDevice": "正在連線裝置"
+    },
+    "videoPlayer": {
+      "connecting": "正在連線...",
+      "waiting": "等待連線",
+      "start": "開始連線"
+    },
+    "header": {
+      "unnamedDevice": "未命名主機",
+      "connect": "連線",
+      "gamepadCount_one": "{{count}} 手把",
+      "gamepadCount_other": "{{count}} 手把"
+    },
+    "connection": {
+      "state": {
+        "disconnected": "未連線",
+        "fetchingDevice": "正在取得裝置資訊...",
+        "checkingStatus": "正在查詢裝置狀態...",
+        "wakingUp": "裝置處於待機狀態，正在唤醒...",
+        "waitingReady": "等待裝置就緒...",
+        "waitingReadyWithTime": "等待裝置就緒... ({{seconds}}秒)",
+        "connecting": "正在連線...",
+        "creatingSession": "正在建立工作階段...",
+        "connected": "已連線",
+        "failed": "連線失敗"
+      },
+      "toast": {
+        "wakingTitle": "正在喚醒裝置",
+        "wakingDescription": "裝置處於待機狀態，正在唤醒...",
+        "prepareFailedTitle": "裝置準備失敗",
+        "connectingTitle": "正在連線",
+        "connectingDescription": "正在連線到 {{name}}...",
+        "connectedTitle": "連線成功",
+        "connectedDescription": "視訊串流已連線",
+        "connectFailedTitle": "連線失敗",
+        "controllerFailedTitle": "控制器連線失敗",
+        "streamFrozenTitle": "檢測到畫面卡頓",
+        "streamFrozenDescription": "累计冻结帧 {{frozen}}，已恢复 {{recovered}} 帧，已嘗試重新取得關鍵幀。",
+        "streamRecoveredTitle": "畫面恢復中",
+        "streamRecoveredDescription": "已恢复 {{recovered}} 帧，畫面正在恢復。",
+        "streamRateLimitedTitle": "關鍵幀請求過於頻繁",
+        "streamRateLimitedDescription": "{{window}} 秒内已请求 {{requested}} 次，稍後會自動重試。"
+      },
+      "errors": {
+        "missingDeviceInfo": "缺少裝置資訊",
+        "fetchDeviceFailed": "無法取得裝置資訊",
+        "deviceNotFound": "未找到裝置資訊",
+        "ipNotSet": "裝置 IP 位址未設定",
+        "wakeDeviceFailed": "喚醒裝置失敗",
+        "deviceNotReady": "裝置未就緒",
+        "deviceReadyTimeout": "裝置就緒逾時（{{seconds}}秒）",
+        "connectRemotePlayFailed": "連線 Remote Play 会话失敗",
+        "sessionCreateFailed": "建立工作階段失敗",
+        "sessionDataMissing": "工作階段回應格式錯誤：缺少資料",
+        "sessionIdMissing": "無法获取会话 ID",
+        "offerCreateFailed": "建立 WebRTC Offer 失敗",
+        "offerDataMissing": "Offer 响应格式錯誤：缺少資料",
+        "unknown": "未知錯誤"
+      }
+    }
+  }
+}
+

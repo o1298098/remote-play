@@ -9,8 +9,15 @@ import { Button } from '@/components/ui/button'
 import { Languages } from 'lucide-react'
 
 const languages = [
-  { code: 'zh-CN', name: '中文' },
   { code: 'en', name: 'English' },
+  { code: 'fr', name: 'Français' },
+  { code: 'de', name: 'Deutsch' },
+  { code: 'es', name: 'Español' },
+  { code: 'ja', name: '日本語' },
+  { code: 'ko', name: '한국어' },
+  { code: 'ru', name: 'Русский' },
+  { code: 'zh-CN', name: '简体中文' },
+  { code: 'zh-TW', name: '繁体中文' },
 ]
 
 export function LanguageSwitcher() {

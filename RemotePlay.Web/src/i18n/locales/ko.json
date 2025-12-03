@@ -1,0 +1,556 @@
+{
+  "common": {
+    "loading": "로딩 중...",
+    "confirm": "확인",
+    "cancel": "취소",
+    "submit": "제출",
+    "save": "저장",
+    "delete": "삭제",
+    "edit": "편집",
+    "close": "닫기",
+    "back": "뒤로",
+    "next": "다음",
+    "previous": "이전",
+    "search": "검색",
+    "filter": "필터",
+    "sort": "정렬",
+    "refresh": "새로고침",
+    "error": "오류",
+    "theme": {
+      "toggle": "테마 전환",
+      "light": "라이트",
+      "dark": "다크",
+      "system": "시스템"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "로그인",
+      "subtitle": "계정에 로그인하여 게임 스트리밍 시작",
+      "usernameOrEmail": "사용자 이름 또는 이메일",
+      "usernameOrEmailPlaceholder": "username 또는 name@example.com",
+      "password": "비밀번호",
+      "passwordPlaceholder": "••••••••",
+      "loginButton": "로그인",
+      "loggingIn": "로그인 중...",
+      "success": "로그인 성공",
+      "successDescription": "다시 오신 것을 환영합니다!",
+      "failure": "로그인 실패",
+      "failureDescription": "사용자 이름 또는 비밀번호가 올바르지 않습니다",
+      "noAccount": "계정이 없으신가요?",
+      "registerLink": "지금 가입하기"
+    },
+    "register": {
+      "title": "계정 만들기",
+      "subtitle": "새 계정을 등록하여 Remote Play 사용 시작",
+      "username": "사용자 이름",
+      "usernamePlaceholder": "username",
+      "usernameHint": "영문자, 숫자, 언더스코어만 사용 가능. 최소 3자 이상.",
+      "email": "이메일",
+      "emailPlaceholder": "name@example.com",
+      "password": "비밀번호",
+      "passwordPlaceholder": "••••••••",
+      "passwordHint": "최소 8자 이상 필요",
+      "confirmPassword": "비밀번호 확인",
+      "confirmPasswordPlaceholder": "••••••••",
+      "registerButton": "등록",
+      "registering": "등록 중...",
+      "success": "등록 성공",
+      "successDescription": "Remote Play에 오신 것을 환영합니다!",
+      "failure": "등록 실패",
+      "failureDescription": "등록에 실패했습니다. 나중에 다시 시도해 주세요",
+      "usernameFormatError": "사용자 이름 형식이 잘못되었습니다",
+      "usernameFormatErrorDescription": "사용자 이름은 영문자, 숫자, 언더스코어만 포함할 수 있습니다",
+      "usernameTooShort": "사용자 이름이 너무 짧습니다",
+      "usernameTooShortDescription": "사용자 이름은 최소 3자 이상이어야 합니다",
+      "passwordMismatch": "비밀번호가 일치하지 않습니다",
+      "passwordMismatchDescription": "두 비밀번호가 일치하는지 확인해 주세요",
+      "passwordTooShort": "비밀번호가 너무 짧습니다",
+      "passwordTooShortDescription": "비밀번호는 최소 8자 이상이어야 합니다",
+      "hasAccount": "이미 계정이 있으신가요?",
+      "loginLink": "지금 로그인"
+    },
+    "logout": {
+      "title": "로그아웃됨",
+      "description": "계정에서 안전하게 로그아웃했습니다"
+    }
+  },
+  "devices": {
+    "title": "콘솔을 원격으로 플레이",
+    "header": {
+      "title": "REMOTE PLAY",
+      "myAccount": "내 계정",
+      "settings": "설정",
+      "settingsDescription": "설정 기능이 곧 제공됩니다",
+      "controllerMapping": "컨트롤러 매핑",
+      "accountInfo": "계정 정보",
+      "accountInfoDescription": "계정 정보 기능이 곧 제공됩니다",
+      "logout": "로그아웃",
+      "gamepad": {
+        "menuTitle": "컨트롤러",
+        "notDetected": "컨트롤러가 감지되지 않았습니다",
+        "enable": "컨트롤러 활성화",
+        "disable": "컨트롤러 비활성화",
+        "stats": "{{buttons}}개 버튼 · {{axes}}개 축",
+        "disconnectTooltip": "연결 해제",
+        "disconnectedToastTitle": "🎮 컨트롤러 연결 해제됨",
+        "disconnectedToastDescription": "{{name}}이(가) 앱에서 연결 해제되었습니다"
+      }
+    },
+    "console": {
+      "status": {
+        "online": "온라인",
+        "offline": "오프라인",
+        "standby": "대기"
+      },
+      "available": "사용 가능: 대기 모드 켜짐",
+      "readyToPlay": "플레이 준비 완료",
+      "standby": "대기 중",
+      "offline": "오프라인",
+      "notRegistered": "등록되지 않음",
+      "connect": "연결",
+      "register": "등록",
+      "addConsole": {
+        "title": "콘솔 추가",
+        "description": "연결하려면 콘솔에서 원격 기능을 활성화하세요",
+        "button": "추가",
+        "toastTitle": "콘솔 추가",
+        "toastDescription": "PlayStation 콘솔에서 원격 플레이 기능을 활성화하세요"
+      },
+      "offlineToastTitle": "콘솔 오프라인",
+      "offlineToastDescription": "이 콘솔은 현재 사용할 수 없습니다",
+      "connectingToastTitle": "연결 중",
+      "connectingToastDescription": "{{name}}에 연결 중...",
+      "openSettings": "설정 열기",
+      "enableReorder": "순서 변경 활성화",
+      "disableReorder": "순서 변경 완료",
+      "reorderModeEnabledTitle": "순서 변경 모드가 활성화되었습니다",
+      "reorderModeEnabledDescription": "카드를 끌어서 재정렬하세요. 완료되면 편집 아이콘을 다시 클릭하세요.",
+      "delete": "콘솔 제거",
+      "deleteConfirm": "바인딩된 콘솔 {{name}}을(를) 제거하시겠습니까? 이것은 콘솔 자체에 영향을 주지 않습니다.",
+      "deleteSuccessTitle": "제거됨",
+      "deleteSuccessDescription": "{{name}}이(가) 바인딩된 장치 목록에서 제거되었습니다.",
+      "deleteFailedTitle": "제거 실패",
+      "deleteFailedDescription": "현재 콘솔을 제거할 수 없습니다. 나중에 다시 시도해 주세요.",
+      "deleteInvalidId": "바인딩 정보가 없어 제거할 수 없습니다."
+    },
+    "deviceSettings": {
+      "title": "장치 설정",
+      "description": "{{name}}의 스트리밍 매개변수 구성",
+      "resolution": "해상도",
+      "resolutionHint": "비디오 스트림의 해상도를 선택하세요. 더 높은 해상도는 더 나은 네트워크 연결이 필요합니다.",
+      "frameRate": "프레임 속도",
+      "frameRateHint": "비디오 스트림의 프레임 속도를 선택하세요. 더 높은 프레임 속도는 더 부드러운 경험을 제공하지만 더 많은 대역폭이 필요합니다.",
+      "bitrate": "비트레이트",
+      "bitrateHint": "비디오 스트림의 비트레이트를 선택하세요. 더 높은 비트레이트는 더 나은 품질을 제공하지만 더 빠른 네트워크 속도가 필요합니다.",
+      "streamType": "스트림 코덱",
+      "streamTypeHint": "스트리밍에 사용할 코덱을 선택하세요. HEVC는 더 낮은 비트레이트에서 더 나은 품질을 제공하지만 모든 장치에서 지원되지 않을 수 있습니다.",
+      "saveSuccess": "설정 저장됨",
+      "saveSuccessDescription": "장치 설정이 성공적으로 저장되었습니다",
+      "saveFailed": "저장 실패",
+      "saveFailedDescription": "장치 설정을 저장할 수 없습니다. 나중에 다시 시도해 주세요",
+      "loadFailed": "로드 실패",
+      "loadFailedDescription": "장치 설정을 로드할 수 없습니다. 나중에 다시 시도해 주세요",
+      "reset": "재설정",
+      "resetDescription": "설정이 기본값으로 재설정되었습니다",
+      "deleteSection": {
+        "title": "장치 바인딩 제거",
+        "description": "이 콘솔을 계정에서 제거합니다. 콘솔 자체에는 영향을 주지 않습니다.",
+        "action": "바인딩 제거",
+        "loading": "제거 중..."
+      },
+      "options": {
+        "resolution": {
+          "RES_360P": "360p",
+          "RES_540P": "540p",
+          "RES_720P": "720p",
+          "RES_1080P": "1080p"
+        },
+        "frameRate": {
+          "30FPS": "30fps",
+          "60FPS": "60fps"
+        },
+        "bitrate": {
+          "DEFAULT": "비트레이트 자동 조정",
+          "VERY_LOW": "매우 낮은 품질 (~2 Mbps)",
+          "LOW": "낮은 품질 (~4 Mbps)",
+          "MEDIUM": "보통 품질 (~6 Mbps)",
+          "HIGH": "높은 품질 (~10 Mbps)",
+          "VERY_HIGH": "매우 높은 품질 (~15 Mbps)"
+        },
+        "streamType": {
+          "H264": "H.264 코덱",
+          "HEVC": "HEVC/H.265 코덱",
+          "HEVC_HDR": "HEVC/H.265 HDR 코덱"
+        }
+      }
+    },
+    "settings": {
+      "title": "설정",
+      "subtitle": "애플리케이션 설정 및 기본 설정 관리",
+      "tabs": {
+        "controller": {
+          "label": "컨트롤러 매핑",
+          "description": "게임패드 버튼 매핑 및 진동 설정 구성"
+        },
+        "turnServer": {
+          "label": "TURN 서버",
+          "description": "네트워크 연결을 개선하기 위해 WebRTC TURN 서버 구성"
+        },
+        "webrtc": {
+          "label": "WebRTC 설정",
+          "description": "WebRTC 네트워크 매개변수 구성"
+        }
+      },
+      "turnServer": {
+        "title": "TURN 서버 목록",
+        "description": "복잡한 네트워크 환경에서 WebRTC 연결을 설정하는 데 도움이 되도록 TURN 서버 추가",
+        "empty": "아직 TURN 서버 구성이 없습니다",
+        "emptyHint": "아래 버튼을 클릭하여 서버 추가",
+        "addServer": "서버 추가",
+        "serverNumber": "서버 #{{number}}",
+        "url": "서버 URL",
+        "urlRequired": "서버 URL *",
+        "urlPlaceholder": "turn:example.com:3478?transport=udp",
+        "urlHint": "형식: turn:host:port?transport=udp 또는 turn:host:port?transport=tcp",
+        "username": "사용자 이름 (선택 사항)",
+        "usernamePlaceholder": "TURN 서버 사용자 이름",
+        "credential": "비밀번호 (선택 사항)",
+        "credentialPlaceholder": "TURN 서버 비밀번호",
+        "save": "구성 저장",
+        "saving": "저장 중...",
+        "reset": "재설정",
+        "instructions": {
+          "title": "사용 설명",
+          "point1": "TURN 서버는 복잡한 네트워크 환경(대칭 NAT 등)에서 WebRTC 연결을 설정하는 데 사용됩니다",
+          "point2": "네트워크 환경이 양호한 경우 TURN 서버를 구성할 필요가 없을 수 있습니다",
+          "point3": "연결 성공률을 높이기 위해 여러 TURN 서버를 구성하는 것이 좋습니다",
+          "point4": "구성을 저장하면 새로운 WebRTC 연결이 이러한 서버를 사용합니다"
+        },
+        "loading": "로딩 중...",
+        "loadFailed": "로드 실패",
+        "loadFailedDescription": "TURN 서버 구성을 로드할 수 없습니다",
+        "saveSuccess": "저장 성공",
+        "saveSuccessDescription": "TURN 서버 구성이 저장되었습니다",
+        "saveFailed": "저장 실패",
+        "saveFailedDescription": "TURN 서버 구성을 저장할 수 없습니다",
+        "saveFailedInvalid": "최소 하나의 유효한 TURN 서버 URL을 입력해 주세요"
+      },
+      "webrtc": {
+        "title": "WebRTC 구성",
+        "description": "공용 IP 및 포트 범위를 포함한 WebRTC 네트워크 매개변수 구성",
+        "publicIp": "공용 IP 주소",
+        "publicIpPlaceholder": "예: 120.196.xxx.xxx",
+        "publicIpHint": "컨테이너 또는 NAT 환경에서 로컬 후보 주소를 재정의하는 데 사용되는 공용 IP",
+        "icePortMin": "ICE 포트 최소값",
+        "icePortMinPlaceholder": "예: 40100",
+        "icePortMinHint": "WebRTC용 UDP 포트 시작 값 (1024-65535, 짝수여야 함)",
+        "icePortMax": "ICE 포트 최대값",
+        "icePortMaxPlaceholder": "예: 40200",
+        "icePortMaxHint": "WebRTC용 UDP 포트 종료 값 (1024-65535, 짝수여야 함)",
+        "forceUseTurn": "TURN 서버 강제 사용",
+        "forceUseTurnHint": "활성화하면 TURN 서버 구성 테스트를 위해 TURN 릴레이 후보 주소만 사용됩니다. 먼저 TURN 서버를 구성해야 합니다.",
+        "save": "구성 저장",
+        "saving": "저장 중...",
+        "reset": "재설정",
+        "loading": "로딩 중...",
+        "loadFailed": "로드 실패",
+        "loadFailedDescription": "WebRTC 구성을 로드할 수 없습니다",
+        "saveSuccess": "저장 성공",
+        "saveSuccessDescription": "WebRTC 구성이 저장되었습니다",
+        "saveFailed": "저장 실패",
+        "saveFailedDescription": "WebRTC 구성을 저장할 수 없습니다",
+        "invalidPortRange": "포트 범위는 1024-65535 사이여야 합니다",
+        "portMinGreaterThanMax": "포트 최소값은 최대값보다 클 수 없습니다",
+        "instructions": {
+          "title": "사용 설명",
+          "point1": "공용 IP: 컨테이너 또는 NAT 환경에서 서버가 사설 네트워크에 있는 경우 클라이언트가 올바르게 연결할 수 있도록 공용 IP를 설정해야 합니다",
+          "point2": "ICE 포트 범위: WebRTC에서 사용하는 UDP 포트 범위를 지정합니다. 범위가 너무 크지 않은 것이 좋습니다 (예: 100-200 포트)",
+          "point3": "구성을 저장하면 새로운 WebRTC 연결이 이러한 매개변수를 사용합니다"
+        }
+      }
+    },
+    "controllerMapping": {
+      "title": "컨트롤러 매핑",
+      "subtitle": "키보드 및 마우스를 컨트롤러 버튼 매핑에 구성",
+      "instructions": {
+        "title": "설명",
+        "step1": "컨트롤러의 버튼 또는 아래 목록의 버튼을 클릭하여 매핑 시작",
+        "step2": "매핑하려는 키보드 키 또는 마우스 버튼을 누르세요",
+        "step3": "매핑을 완료한 후 저장 버튼을 클릭하여 매핑 저장"
+      },
+      "gamepad": {
+        "title": "컨트롤러 레이아웃",
+        "description": "컨트롤러의 버튼을 클릭하여 매핑"
+      },
+      "buttonList": {
+        "title": "버튼 목록",
+        "description": "이 목록에서도 버튼을 매핑할 수 있습니다"
+      },
+      "buttons": {
+        "CROSS": "X",
+        "CIRCLE": "O",
+        "TRIANGLE": "△",
+        "SQUARE": "□",
+        "L1": "L1",
+        "R1": "R1",
+        "L2": "L2",
+        "R2": "R2",
+        "L3": "L3",
+        "R3": "R3",
+        "DPAD_UP": "D-패드 위",
+        "DPAD_DOWN": "D-패드 아래",
+        "DPAD_LEFT": "D-패드 왼쪽",
+        "DPAD_RIGHT": "D-패드 오른쪽",
+        "OPTIONS": "옵션",
+        "SHARE": "공유",
+        "TOUCHPAD": "터치패드",
+        "PS": "PS 버튼"
+      },
+      "mouseButtons": {
+        "0": "마우스 왼쪽",
+        "1": "마우스 가운데",
+        "2": "마우스 오른쪽"
+      },
+      "leftStick": {
+        "title": "왼쪽 스틱 방향",
+        "description": "왼쪽 스틱의 네 방향에 대한 키보드 키 사용자 지정.",
+        "directions": {
+          "UP": "위",
+          "DOWN": "아래",
+          "LEFT": "왼쪽",
+          "RIGHT": "오른쪽"
+        },
+        "mapHint": "클릭하여 다시 매핑",
+        "clear": "지우기",
+        "listening": "왼쪽 스틱 감지 중…",
+        "listeningDescription": "왼쪽 스틱 {{direction}}에 할당할 키를 누르세요",
+        "mappingSet": "왼쪽 스틱 매핑 업데이트됨",
+        "mappingSetDescription": "왼쪽 스틱 {{direction}}이(가) {{key}}에 매핑되었습니다",
+        "mappingCleared": "왼쪽 스틱 매핑 지워짐",
+        "mappingClearedDescription": "왼쪽 스틱 {{direction}}의 매핑이 지워졌습니다"
+      },
+      "rightStick": {
+        "title": "오른쪽 스틱",
+        "description": "오른쪽 스틱은 마우스 움직임을 따르며 읽기 전용입니다.",
+        "axisX": "X축",
+        "axisY": "Y축",
+        "axisXValue": "마우스 수평 이동",
+        "axisYValue": "마우스 수직 이동"
+      },
+      "tester": {
+        "title": "컨트롤러 테스터",
+        "description": "스틱 및 버튼의 실시간 입력 모니터링.",
+        "noGamepad": "컨트롤러가 감지되지 않았습니다. 연결한 후 다시 시도해 주세요.",
+        "selectLabel": "활성 컨트롤러",
+        "selectPlaceholder": "컨트롤러 선택",
+        "unknownDevice": "알 수 없는 컨트롤러",
+        "stickTitle": "스틱 상태",
+        "leftStick": "왼쪽 스틱",
+        "rightStick": "오른쪽 스틱",
+        "stickAxes": "X: {{x}} / Y: {{y}}",
+        "triggerTitle": "트리거 압력",
+        "buttonTitle": "버튼 상태",
+        "analogValue": "값: {{value}}",
+        "genericButton": "버튼 {{index}}",
+        "buttonPressed": "눌림",
+        "buttonReleased": "눌리지 않음"
+      },
+      "rumble": {
+        "title": "컨트롤러 진동",
+        "description": "콘솔의 진동 피드백을 로컬 컨트롤러에 동기화.",
+        "statusOn": "진동이 활성화되었습니다",
+        "statusOff": "진동이 비활성화되었습니다",
+        "toggleEnable": "진동 활성화",
+        "toggleDisable": "진동 비활성화",
+        "strengthLabel": "강도",
+        "strengthValue": "{{value}}%",
+        "test": "진동 테스트",
+        "notSupported": "진동 지원 컨트롤러가 감지되지 않았습니다.",
+        "toastTestSuccess": "진동 테스트 전송됨",
+        "toastTestFailed": "진동 트리거 실패",
+        "toastDisabled": "진동이 현재 비활성화되어 있습니다. 먼저 활성화해 주세요."
+      },
+      "mapButton": "클릭하여 매핑",
+      "listening": "감지 중...",
+      "listeningDescription": "{{button}}에 매핑할 키를 누르세요",
+      "mappingSet": "매핑 설정됨",
+      "mappingSetDescription": "{{button}}이(가) {{key}}에 매핑되었습니다",
+      "mappingCleared": "매핑 지워짐",
+      "mappingClearedDescription": "{{button}}의 매핑이 지워졌습니다",
+      "saveSuccess": "저장 성공",
+      "saveSuccessDescription": "컨트롤러 매핑 설정이 저장되었습니다",
+      "saveFailed": "저장 실패",
+      "saveFailedDescription": "컨트롤러 매핑 설정을 저장할 수 없습니다. 나중에 다시 시도해 주세요",
+      "reset": "재설정",
+      "resetDescription": "매핑이 기본값으로 재설정되었습니다",
+      "notMapped": "매핑되지 않음"
+    },
+    "bindDevice": {
+      "title": "PS 콘솔 바인딩",
+      "description": {
+        "discover": "PlayStation 콘솔 찾기 및 연결",
+        "bind": "장치 정보 구성 및 바인딩 완료"
+      },
+      "discover": {
+        "scanning": "네트워크에서 장치 스캔 중...",
+        "scanningHint": "잠시 기다려 주세요. 몇 초가 걸릴 수 있습니다",
+        "foundDevices": "발견된 장치",
+        "rescan": "다시 스캔",
+        "noDevices": "장치를 찾을 수 없습니다",
+        "noDevicesHint": "PS 콘솔이 전원이 켜져 있고 같은 네트워크에 연결되어 있는지 확인하세요",
+        "manualIp": "수동 IP 주소 (선택 사항)",
+        "manualIpPlaceholder": "예: 192.168.1.100",
+        "manualIpHint": "장치 IP 주소를 알고 있는 경우 직접 입력하여 연결할 수 있습니다",
+        "unknownType": "알 수 없는 유형"
+      },
+      "bind": {
+        "deviceName": "장치 이름",
+        "deviceNamePlaceholder": "장치에 이름 지정",
+        "needsRegistration": "장치 등록 필요 (첫 바인딩 시)",
+        "needsRegistrationHint": "이 장치를 처음 바인딩하는 경우 등록을 위해 계정 ID와 PIN을 제공해야 합니다",
+        "accountId": "계정 ID (Base64)",
+        "accountIdPlaceholder": "PSN 계정 ID를 입력하거나 버튼을 클릭하여 가져오기",
+        "accountIdHint": "PSN 계정 ID이며, 일반적으로 Base64로 인코딩된 8바이트 데이터입니다. \"PSN 로그인으로 가져오기\" 버튼을 클릭하면 자동으로 가져올 수 있습니다.",
+        "getAccountId": "PSN 로그인으로 가져오기",
+        "gettingAccountId": "가져오는 중...",
+        "gettingAccountIdTitle": "계정 ID 가져오는 중...",
+        "gettingAccountIdHint": "팝업 창에서 PSN 로그인을 완료하세요",
+        "pin": "PIN 코드",
+        "pinPlaceholder": "8자리 PIN 코드 입력",
+        "pinHint": "PS 콘솔에 표시되는 8자리 숫자 PIN 코드",
+        "completeBind": "바인딩 완료",
+        "binding": "바인딩 중..."
+      },
+      "oauth": {
+        "loginTitle": "PSN 로그인",
+        "callbackSteps": {
+          "title": "설명",
+          "step1": "팝업 창에서 PSN 로그인 완료",
+          "step2": "로그인 성공 후 페이지가 콜백 주소({domain})로 리디렉션됩니다",
+          "step3": "시스템이 자동으로 콜백 URL을 가져오려고 시도합니다",
+          "step4": "자동 가져오기가 실패한 경우 브라우저 주소 표시줄에서 전체 URL({codeParam} 매개변수 포함)을 복사하여 아래에 붙여넣으세요",
+          "hint": "팁: {selectKey1} 또는 {selectKey2}를 눌러 주소 표시줄을 빠르게 선택한 다음 {copyKey}를 눌러 복사할 수 있습니다"
+        },
+        "callbackUrlPlaceholder": "PSN 콜백 페이지의 전체 URL 붙여넣기 (remoteplay.dl.playstation.net으로 시작)",
+        "callbackUrlInvalid": "URL에 \"remoteplay.dl.playstation.net\"과 \"code=\" 매개변수가 포함되어 있는지 확인하세요",
+        "clipboardRead": "클립보드에서 URL 읽기",
+        "cancelGet": "가져오기 취소",
+        "callbackDetected": "✅ 콜백 페이지 감지됨",
+        "callbackDetectedHint": "페이지가 리디렉션되었습니다. 주소 표시줄에서 URL을 복사(Ctrl+C)한 다음 📋 버튼을 클릭하거나 입력 필드에 붙여넣으세요"
+      },
+      "errors": {
+        "discoverFailed": "장치 검색 실패",
+        "discoverFailedHint": "나중에 다시 시도해 주세요",
+        "ipRequired": "IP 주소 필요",
+        "ipRequiredHint": "PS 콘솔의 IP 주소를 입력하세요",
+        "ipInvalid": "IP 주소를 비워둘 수 없습니다",
+        "accountIdAndPinRequired": "계정 ID 및 PIN 필요",
+        "accountIdAndPinRequiredHint": "장치 등록에는 계정 ID와 PIN 코드가 필요합니다",
+        "bindSuccess": "바인딩 성공",
+        "bindSuccessHint": "장치가 계정에 성공적으로 바인딩되었습니다",
+        "bindFailed": "바인딩 실패",
+        "bindFailedHint": "나중에 다시 시도해 주세요",
+        "getLoginUrlFailed": "로그인 URL 가져오기 실패",
+        "cannotOpenWindow": "로그인 창을 열 수 없습니다",
+        "cannotOpenWindowHint": "팝업 창을 허용한 후 다시 시도해 주세요",
+        "loginFailed": "로그인 실패",
+        "loginFailedHint": "나중에 다시 시도해 주세요",
+        "getAccountIdFailed": "계정 ID 가져오기 실패",
+        "getAccountIdSuccess": "계정 ID 가져오기 성공",
+        "getAccountIdSuccessHint": "가져온 계정: {name}",
+        "callbackUrlRequired": "콜백 URL 필요",
+        "clipboardInvalid": "클립보드 내용이 잘못되었습니다",
+        "clipboardInvalidHint": "code= 매개변수를 포함하는 콜백 URL을 복사했는지 확인하세요",
+        "clipboardReadFailed": "클립보드를 읽을 수 없습니다",
+        "clipboardReadFailedHint": "URL을 수동으로 붙여넣거나 클립보드 액세스 권한을 부여하세요",
+        "loginHint": "로그인 설명",
+        "loginHintDescription": "팝업 창에서 PSN 로그인을 완료하세요. 로그인 성공 후 계정 ID가 자동으로 가져와집니다"
+      }
+    }
+  },
+  "streaming": {
+    "monitor": {
+      "enable": "모니터링 활성화",
+      "disable": "모니터링 비활성화",
+      "title": "실시간 모니터링",
+      "webrtc": "WebRTC",
+      "labels": {
+        "download": "다운로드 속도",
+        "upload": "업로드 속도",
+        "videoBitrate": "비디오 비트레이트",
+        "resolution": "해상도",
+        "latency": "지연 시간",
+        "fps": "프레임 속도"
+      },
+      "units": {
+        "mbps": "{{value}} Mbps",
+        "kbps": "{{value}} Kbps",
+        "ms": "{{value}} ms",
+        "resolution": "{{width}} × {{height}}",
+        "fps": "{{value}} fps"
+      }
+    },
+    "loading": {
+      "connectingDevice": "장치에 연결 중"
+    },
+    "videoPlayer": {
+      "connecting": "연결 중...",
+      "waiting": "연결 대기 중",
+      "start": "연결 시작"
+    },
+    "header": {
+      "unnamedDevice": "이름 없는 콘솔",
+      "connect": "연결",
+      "gamepadCount_one": "{{count}}개 컨트롤러",
+      "gamepadCount_other": "{{count}}개 컨트롤러"
+    },
+    "connection": {
+      "state": {
+        "disconnected": "연결 해제됨",
+        "fetchingDevice": "장치 정보 가져오는 중...",
+        "checkingStatus": "장치 상태 확인 중...",
+        "wakingUp": "장치가 대기 중, 깨우는 중...",
+        "waitingReady": "장치 준비 대기 중...",
+        "waitingReadyWithTime": "장치 준비 대기 중... ({{seconds}}초)",
+        "connecting": "연결 중...",
+        "creatingSession": "세션 생성 중...",
+        "connected": "연결됨",
+        "failed": "연결 실패"
+      },
+      "toast": {
+        "wakingTitle": "장치 깨우는 중",
+        "wakingDescription": "장치가 대기 중, 깨우는 중...",
+        "prepareFailedTitle": "장치 준비 실패",
+        "connectingTitle": "연결 중",
+        "connectingDescription": "{{name}}에 연결 중...",
+        "connectedTitle": "연결 성공",
+        "connectedDescription": "비디오 스트림이 연결되었습니다",
+        "connectFailedTitle": "연결 실패",
+        "controllerFailedTitle": "컨트롤러 연결 실패",
+        "streamFrozenTitle": "재생 멈춤 감지됨",
+        "streamFrozenDescription": "멈춘 프레임: {{frozen}}, 복구됨: {{recovered}}. 새로운 키프레임을 요청했습니다.",
+        "streamRecoveredTitle": "재생 복구 중",
+        "streamRecoveredDescription": "{{recovered}}개 프레임 복구됨. 비디오가 곧 재개될 것입니다.",
+        "streamRateLimitedTitle": "키프레임 요청 제한됨",
+        "streamRateLimitedDescription": "{{window}}초 내에 {{requested}}개의 IDR 요청이 너무 많습니다. 다시 요청하기 전에 대기 중입니다."
+      },
+      "errors": {
+        "missingDeviceInfo": "장치 정보가 없습니다",
+        "fetchDeviceFailed": "장치 정보 가져오기 실패",
+        "deviceNotFound": "장치 정보를 찾을 수 없습니다",
+        "ipNotSet": "장치 IP 주소가 구성되지 않았습니다",
+        "wakeDeviceFailed": "장치 깨우기 실패",
+        "deviceNotReady": "장치가 준비되지 않았습니다",
+        "deviceReadyTimeout": "장치 준비 시간 초과 ({{seconds}}초)",
+        "connectRemotePlayFailed": "Remote Play 세션에 연결 실패",
+        "sessionCreateFailed": "세션 생성 실패",
+        "sessionDataMissing": "세션 응답에 데이터가 없습니다",
+        "sessionIdMissing": "세션 ID 가져오기 실패",
+        "offerCreateFailed": "WebRTC 오퍼 생성 실패",
+        "offerDataMissing": "오퍼 응답에 데이터가 없습니다",
+        "unknown": "알 수 없는 오류"
+      }
+    }
+  }
+}

@@ -248,6 +248,8 @@
         "icePortMax": "ICE Port Max",
         "icePortMaxPlaceholder": "e.g., 40200",
         "icePortMaxHint": "Ending UDP port value for WebRTC (1024-65535, must be even)",
+        "forceUseTurn": "Force Use TURN Server",
+        "forceUseTurnHint": "When enabled, only TURN relay candidate addresses will be used for testing TURN server configuration. TURN server needs to be configured first.",
         "save": "Save Configuration",
         "saving": "Saving...",
         "reset": "Reset",

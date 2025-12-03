@@ -1,0 +1,556 @@
+{
+  "common": {
+    "loading": "Wird geladen...",
+    "confirm": "Bestätigen",
+    "cancel": "Abbrechen",
+    "submit": "Absenden",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "close": "Schließen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "previous": "Zurück",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "sort": "Sortieren",
+    "refresh": "Aktualisieren",
+    "error": "Fehler",
+    "theme": {
+      "toggle": "Design umschalten",
+      "light": "Hell",
+      "dark": "Dunkel",
+      "system": "System"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Anmelden",
+      "subtitle": "Melden Sie sich bei Ihrem Konto an, um mit dem Spiel-Streaming zu beginnen",
+      "usernameOrEmail": "Benutzername oder E-Mail",
+      "usernameOrEmailPlaceholder": "Benutzername oder name@example.com",
+      "password": "Passwort",
+      "passwordPlaceholder": "••••••••",
+      "loginButton": "Anmelden",
+      "loggingIn": "Wird angemeldet...",
+      "success": "Anmeldung erfolgreich",
+      "successDescription": "Willkommen zurück!",
+      "failure": "Anmeldung fehlgeschlagen",
+      "failureDescription": "Falscher Benutzername oder Passwort",
+      "noAccount": "Haben Sie noch kein Konto?",
+      "registerLink": "Jetzt registrieren"
+    },
+    "register": {
+      "title": "Konto erstellen",
+      "subtitle": "Registrieren Sie ein neues Konto, um Remote Play zu verwenden",
+      "username": "Benutzername",
+      "usernamePlaceholder": "Benutzername",
+      "usernameHint": "Nur Buchstaben, Zahlen und Unterstriche. Mindestens 3 Zeichen.",
+      "email": "E-Mail",
+      "emailPlaceholder": "name@example.com",
+      "password": "Passwort",
+      "passwordPlaceholder": "••••••••",
+      "passwordHint": "Mindestens 8 Zeichen erforderlich",
+      "confirmPassword": "Passwort bestätigen",
+      "confirmPasswordPlaceholder": "••••••••",
+      "registerButton": "Registrieren",
+      "registering": "Wird registriert...",
+      "success": "Registrierung erfolgreich",
+      "successDescription": "Willkommen bei Remote Play!",
+      "failure": "Registrierung fehlgeschlagen",
+      "failureDescription": "Registrierung fehlgeschlagen, bitte versuchen Sie es später erneut",
+      "usernameFormatError": "Ungültiges Benutzernamen-Format",
+      "usernameFormatErrorDescription": "Benutzername darf nur Buchstaben, Zahlen und Unterstriche enthalten",
+      "usernameTooShort": "Benutzername zu kurz",
+      "usernameTooShortDescription": "Benutzername muss mindestens 3 Zeichen lang sein",
+      "passwordMismatch": "Passwörter stimmen nicht überein",
+      "passwordMismatchDescription": "Bitte stellen Sie sicher, dass beide Passwörter übereinstimmen",
+      "passwordTooShort": "Passwort zu kurz",
+      "passwordTooShortDescription": "Passwort muss mindestens 8 Zeichen lang sein",
+      "hasAccount": "Haben Sie bereits ein Konto?",
+      "loginLink": "Jetzt anmelden"
+    },
+    "logout": {
+      "title": "Abgemeldet",
+      "description": "Sie haben sich sicher von Ihrem Konto abgemeldet"
+    }
+  },
+  "devices": {
+    "title": "Spielen Sie Ihre Konsole remote",
+    "header": {
+      "title": "REMOTE PLAY",
+      "myAccount": "Mein Konto",
+      "settings": "Einstellungen",
+      "settingsDescription": "Einstellungsfunktion kommt bald",
+      "controllerMapping": "Controller-Zuordnung",
+      "accountInfo": "Kontoinformationen",
+      "accountInfoDescription": "Kontoinformationsfunktion kommt bald",
+      "logout": "Abmelden",
+      "gamepad": {
+        "menuTitle": "Controller",
+        "notDetected": "Keine Controller erkannt",
+        "enable": "Controller aktivieren",
+        "disable": "Controller deaktivieren",
+        "stats": "{{buttons}} Tasten · {{axes}} Achsen",
+        "disconnectTooltip": "Trennen",
+        "disconnectedToastTitle": "🎮 Controller getrennt",
+        "disconnectedToastDescription": "{{name}} wurde von der App getrennt"
+      }
+    },
+    "console": {
+      "status": {
+        "online": "Online",
+        "offline": "Offline",
+        "standby": "Bereitschaft"
+      },
+      "available": "Verfügbar: Bereitschaft aktiviert",
+      "readyToPlay": "Bereit zum Spielen",
+      "standby": "Bereitschaft",
+      "offline": "Offline",
+      "notRegistered": "Nicht registriert",
+      "connect": "VERBINDEN",
+      "register": "Registrieren",
+      "addConsole": {
+        "title": "Konsole hinzufügen",
+        "description": "Aktivieren Sie Remote-Funktionen auf Ihrer Konsole, um eine Verbindung herzustellen",
+        "button": "HINZUFÜGEN",
+        "toastTitle": "Konsole hinzufügen",
+        "toastDescription": "Bitte aktivieren Sie die Remote-Play-Funktionen auf Ihrer PlayStation-Konsole"
+      },
+      "offlineToastTitle": "Konsole offline",
+      "offlineToastDescription": "Diese Konsole ist derzeit nicht verfügbar",
+      "connectingToastTitle": "Verbinden",
+      "connectingToastDescription": "Verbinden mit {{name}}...",
+      "openSettings": "Einstellungen öffnen",
+      "enableReorder": "Neuordnen aktivieren",
+      "disableReorder": "Neuordnen abgeschlossen",
+      "reorderModeEnabledTitle": "Neuordnungsmodus aktiviert",
+      "reorderModeEnabledDescription": "Ziehen Sie Karten, um sie neu anzuordnen. Klicken Sie erneut auf das Bearbeitungssymbol, wenn Sie fertig sind.",
+      "delete": "Konsole entfernen",
+      "deleteConfirm": "Möchten Sie die gebundene Konsole {{name}} wirklich entfernen? Dies wirkt sich nicht auf die Konsole selbst aus.",
+      "deleteSuccessTitle": "Entfernt",
+      "deleteSuccessDescription": "{{name}} wurde von Ihren gebundenen Geräten entfernt.",
+      "deleteFailedTitle": "Entfernen fehlgeschlagen",
+      "deleteFailedDescription": "Konsole kann derzeit nicht entfernt werden. Bitte versuchen Sie es später erneut.",
+      "deleteInvalidId": "Bindungsinformationen fehlen, Entfernen nicht möglich."
+    },
+    "deviceSettings": {
+      "title": "Geräteeinstellungen",
+      "description": "Streaming-Parameter für {{name}} konfigurieren",
+      "resolution": "Auflösung",
+      "resolutionHint": "Wählen Sie die Auflösung für den Videostream. Höhere Auflösungen erfordern bessere Netzwerkverbindungen.",
+      "frameRate": "Bildrate",
+      "frameRateHint": "Wählen Sie die Bildrate für den Videostream. Höhere Bildraten bieten ein flüssigeres Erlebnis, erfordern aber mehr Bandbreite.",
+      "bitrate": "Bitrate",
+      "bitrateHint": "Wählen Sie die Bitrate für den Videostream. Höhere Bitraten bieten bessere Qualität, erfordern aber schnellere Netzwerkgeschwindigkeiten.",
+      "streamType": "Stream-Codec",
+      "streamTypeHint": "Wählen Sie den für das Streaming verwendeten Codec. HEVC bietet bessere Qualität bei niedrigeren Bitraten, wird aber möglicherweise nicht auf allen Geräten unterstützt.",
+      "saveSuccess": "Einstellungen gespeichert",
+      "saveSuccessDescription": "Geräteeinstellungen wurden erfolgreich gespeichert",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "saveFailedDescription": "Geräteeinstellungen können nicht gespeichert werden, bitte versuchen Sie es später erneut",
+      "loadFailed": "Laden fehlgeschlagen",
+      "loadFailedDescription": "Geräteeinstellungen können nicht geladen werden, bitte versuchen Sie es später erneut",
+      "reset": "Zurücksetzen",
+      "resetDescription": "Einstellungen wurden auf Standardwerte zurückgesetzt",
+      "deleteSection": {
+        "title": "Gerätebindung entfernen",
+        "description": "Entfernen Sie diese Konsole von Ihrem Konto. Die Konsole selbst wird nicht beeinträchtigt.",
+        "action": "Bindung entfernen",
+        "loading": "Wird entfernt..."
+      },
+      "options": {
+        "resolution": {
+          "RES_360P": "360p",
+          "RES_540P": "540p",
+          "RES_720P": "720p",
+          "RES_1080P": "1080p"
+        },
+        "frameRate": {
+          "30FPS": "30 fps",
+          "60FPS": "60 fps"
+        },
+        "bitrate": {
+          "DEFAULT": "Bitrate automatisch anpassen",
+          "VERY_LOW": "Sehr niedrige Qualität (~2 Mbps)",
+          "LOW": "Niedrige Qualität (~4 Mbps)",
+          "MEDIUM": "Mittlere Qualität (~6 Mbps)",
+          "HIGH": "Hohe Qualität (~10 Mbps)",
+          "VERY_HIGH": "Sehr hohe Qualität (~15 Mbps)"
+        },
+        "streamType": {
+          "H264": "H.264-Codec",
+          "HEVC": "HEVC/H.265-Codec",
+          "HEVC_HDR": "HEVC/H.265 HDR-Codec"
+        }
+      }
+    },
+    "settings": {
+      "title": "Einstellungen",
+      "subtitle": "Verwalten Sie Ihre Anwendungseinstellungen und Präferenzen",
+      "tabs": {
+        "controller": {
+          "label": "Controller-Zuordnung",
+          "description": "Konfigurieren Sie die Tastenzuordnung des Gamepads und die Vibrationseinstellungen"
+        },
+        "turnServer": {
+          "label": "TURN-Server",
+          "description": "Konfigurieren Sie WebRTC TURN-Server, um die Netzwerkverbindung zu verbessern"
+        },
+        "webrtc": {
+          "label": "WebRTC-Einstellungen",
+          "description": "WebRTC-Netzwerkparameter konfigurieren"
+        }
+      },
+      "turnServer": {
+        "title": "TURN-Server-Liste",
+        "description": "Fügen Sie TURN-Server hinzu, um WebRTC beim Aufbau von Verbindungen in komplexen Netzwerkumgebungen zu helfen",
+        "empty": "Noch keine TURN-Server-Konfiguration",
+        "emptyHint": "Klicken Sie auf die Schaltfläche unten, um einen Server hinzuzufügen",
+        "addServer": "Server hinzufügen",
+        "serverNumber": "Server #{{number}}",
+        "url": "Server-URL",
+        "urlRequired": "Server-URL *",
+        "urlPlaceholder": "turn:example.com:3478?transport=udp",
+        "urlHint": "Format: turn:host:port?transport=udp oder turn:host:port?transport=tcp",
+        "username": "Benutzername (Optional)",
+        "usernamePlaceholder": "TURN-Server-Benutzername",
+        "credential": "Passwort (Optional)",
+        "credentialPlaceholder": "TURN-Server-Passwort",
+        "save": "Konfiguration speichern",
+        "saving": "Wird gespeichert...",
+        "reset": "Zurücksetzen",
+        "instructions": {
+          "title": "Anleitung zur Verwendung",
+          "point1": "TURN-Server werden verwendet, um WebRTC-Verbindungen in komplexen Netzwerkumgebungen (z. B. symmetrisches NAT) herzustellen",
+          "point2": "Wenn Ihre Netzwerkumgebung gut ist, müssen Sie möglicherweise keine TURN-Server konfigurieren",
+          "point3": "Es wird empfohlen, mehrere TURN-Server zu konfigurieren, um die Verbindungsrate zu verbessern",
+          "point4": "Nach dem Speichern der Konfiguration werden neue WebRTC-Verbindungen diese Server verwenden"
+        },
+        "loading": "Wird geladen...",
+        "loadFailed": "Laden fehlgeschlagen",
+        "loadFailedDescription": "TURN-Server-Konfiguration kann nicht geladen werden",
+        "saveSuccess": "Erfolgreich gespeichert",
+        "saveSuccessDescription": "TURN-Server-Konfiguration wurde gespeichert",
+        "saveFailed": "Speichern fehlgeschlagen",
+        "saveFailedDescription": "TURN-Server-Konfiguration kann nicht gespeichert werden",
+        "saveFailedInvalid": "Bitte geben Sie mindestens eine gültige TURN-Server-URL ein"
+      },
+      "webrtc": {
+        "title": "WebRTC-Konfiguration",
+        "description": "WebRTC-Netzwerkparameter konfigurieren, einschließlich öffentlicher IP und Portbereich",
+        "publicIp": "Öffentliche IP-Adresse",
+        "publicIpPlaceholder": "z. B. 120.196.xxx.xxx",
+        "publicIpHint": "In Container- oder NAT-Umgebungen die öffentliche IP, die verwendet wird, um lokale Kandidatenadressen zu überschreiben",
+        "icePortMin": "ICE-Port Minimum",
+        "icePortMinPlaceholder": "z. B. 40100",
+        "icePortMinHint": "Startwert des UDP-Ports für WebRTC (1024-65535, muss gerade sein)",
+        "icePortMax": "ICE-Port Maximum",
+        "icePortMaxPlaceholder": "z. B. 40200",
+        "icePortMaxHint": "Endwert des UDP-Ports für WebRTC (1024-65535, muss gerade sein)",
+        "forceUseTurn": "TURN-Server erzwingen",
+        "forceUseTurnHint": "Wenn aktiviert, werden nur TURN-Relay-Kandidatenadressen zur Tests der TURN-Serverkonfiguration verwendet. Der TURN-Server muss zuerst konfiguriert werden.",
+        "save": "Konfiguration speichern",
+        "saving": "Wird gespeichert...",
+        "reset": "Zurücksetzen",
+        "loading": "Wird geladen...",
+        "loadFailed": "Laden fehlgeschlagen",
+        "loadFailedDescription": "WebRTC-Konfiguration kann nicht geladen werden",
+        "saveSuccess": "Erfolgreich gespeichert",
+        "saveSuccessDescription": "WebRTC-Konfiguration wurde gespeichert",
+        "saveFailed": "Speichern fehlgeschlagen",
+        "saveFailedDescription": "WebRTC-Konfiguration kann nicht gespeichert werden",
+        "invalidPortRange": "Portbereich muss zwischen 1024-65535 liegen",
+        "portMinGreaterThanMax": "Port-Minimum kann nicht größer als Port-Maximum sein",
+        "instructions": {
+          "title": "Anleitung zur Verwendung",
+          "point1": "Öffentliche IP: In Container- oder NAT-Umgebungen müssen Sie, wenn der Server in einem privaten Netzwerk ist, die öffentliche IP festlegen, damit Clients sich korrekt verbinden können",
+          "point2": "ICE-Portbereich: Geben Sie den von WebRTC verwendeten UDP-Portbereich an. Es wird empfohlen, dass der Bereich nicht zu groß ist (z. B. 100-200 Ports)",
+          "point3": "Nach dem Speichern der Konfiguration werden neue WebRTC-Verbindungen diese Parameter verwenden"
+        }
+      }
+    },
+    "controllerMapping": {
+      "title": "Controller-Zuordnung",
+      "subtitle": "Konfigurieren Sie die Tastenzuordnung von Tastatur und Maus zu Controller-Tasten",
+      "instructions": {
+        "title": "Anleitung",
+        "step1": "Klicken Sie auf eine Taste am Controller oder in der Liste unten, um mit der Zuordnung zu beginnen",
+        "step2": "Drücken Sie die Tastaturtaste oder Maustaste, die Sie zuordnen möchten",
+        "step3": "Klicken Sie auf die Schaltfläche Speichern, um Ihre Zuordnungen nach Abschluss zu speichern"
+      },
+      "gamepad": {
+        "title": "Controller-Layout",
+        "description": "Klicken Sie auf Tasten am Controller, um sie zuzuordnen"
+      },
+      "buttonList": {
+        "title": "Tastenliste",
+        "description": "Sie können auch Tasten aus dieser Liste zuordnen"
+      },
+      "buttons": {
+        "CROSS": "X",
+        "CIRCLE": "O",
+        "TRIANGLE": "△",
+        "SQUARE": "□",
+        "L1": "L1",
+        "R1": "R1",
+        "L2": "L2",
+        "R2": "R2",
+        "L3": "L3",
+        "R3": "R3",
+        "DPAD_UP": "D-Pad Oben",
+        "DPAD_DOWN": "D-Pad Unten",
+        "DPAD_LEFT": "D-Pad Links",
+        "DPAD_RIGHT": "D-Pad Rechts",
+        "OPTIONS": "Optionen",
+        "SHARE": "Teilen",
+        "TOUCHPAD": "Touchpad",
+        "PS": "PS-Taste"
+      },
+      "mouseButtons": {
+        "0": "Linke Maustaste",
+        "1": "Mittlere Maustaste",
+        "2": "Rechte Maustaste"
+      },
+      "leftStick": {
+        "title": "Linker Stick Richtungen",
+        "description": "Passen Sie Tastaturtasten für die vier Richtungen des linken Sticks an.",
+        "directions": {
+          "UP": "Oben",
+          "DOWN": "Unten",
+          "LEFT": "Links",
+          "RIGHT": "Rechts"
+        },
+        "mapHint": "Klicken zum erneuten Zuordnen",
+        "clear": "Löschen",
+        "listening": "Warte auf linken Stick…",
+        "listeningDescription": "Drücken Sie die Taste, die Sie dem linken Stick {{direction}} zuweisen möchten",
+        "mappingSet": "Linke Stick-Zuordnung aktualisiert",
+        "mappingSetDescription": "Linker Stick {{direction}} ist jetzt {{key}} zugeordnet",
+        "mappingCleared": "Linke Stick-Zuordnung gelöscht",
+        "mappingClearedDescription": "Zuordnung für linken Stick {{direction}} wurde gelöscht"
+      },
+      "rightStick": {
+        "title": "Rechter Stick",
+        "description": "Der rechte Stick folgt der Mausbewegung und ist schreibgeschützt.",
+        "axisX": "X-Achse",
+        "axisY": "Y-Achse",
+        "axisXValue": "Mausbewegung horizontal",
+        "axisYValue": "Mausbewegung vertikal"
+      },
+      "tester": {
+        "title": "Controller-Tester",
+        "description": "Überwachen Sie Live-Eingaben von Sticks und Tasten.",
+        "noGamepad": "Kein Controller erkannt. Bitte verbinden Sie einen und versuchen Sie es erneut.",
+        "selectLabel": "Aktiver Controller",
+        "selectPlaceholder": "Wählen Sie einen Controller",
+        "unknownDevice": "Unbekannter Controller",
+        "stickTitle": "Stick-Status",
+        "leftStick": "Linker Stick",
+        "rightStick": "Rechter Stick",
+        "stickAxes": "X: {{x}} / Y: {{y}}",
+        "triggerTitle": "Trigger-Druck",
+        "buttonTitle": "Tasten-Status",
+        "analogValue": "Wert: {{value}}",
+        "genericButton": "Taste {{index}}",
+        "buttonPressed": "Gedrückt",
+        "buttonReleased": "Losgelassen"
+      },
+      "rumble": {
+        "title": "Controller-Vibration",
+        "description": "Vibrationsfeedback von der Konsole mit Ihrem lokalen Controller synchronisieren.",
+        "statusOn": "Vibration ist aktiviert",
+        "statusOff": "Vibration ist deaktiviert",
+        "toggleEnable": "Vibration aktivieren",
+        "toggleDisable": "Vibration deaktivieren",
+        "strengthLabel": "Intensität",
+        "strengthValue": "{{value}}%",
+        "test": "Vibration testen",
+        "notSupported": "Kein vibrationsfähiger Controller erkannt.",
+        "toastTestSuccess": "Vibrationstest gesendet",
+        "toastTestFailed": "Vibration konnte nicht ausgelöst werden",
+        "toastDisabled": "Vibration ist derzeit deaktiviert. Bitte aktivieren Sie sie zuerst."
+      },
+      "mapButton": "Klicken zum Zuordnen",
+      "listening": "Warte...",
+      "listeningDescription": "Bitte drücken Sie die Taste, die Sie {{button}} zuordnen möchten",
+      "mappingSet": "Zuordnung festgelegt",
+      "mappingSetDescription": "{{button}} wurde {{key}} zugeordnet",
+      "mappingCleared": "Zuordnung gelöscht",
+      "mappingClearedDescription": "Zuordnung für {{button}} wurde gelöscht",
+      "saveSuccess": "Erfolgreich gespeichert",
+      "saveSuccessDescription": "Controller-Zuordnungseinstellungen wurden gespeichert",
+      "saveFailed": "Speichern fehlgeschlagen",
+      "saveFailedDescription": "Controller-Zuordnungseinstellungen können nicht gespeichert werden, bitte versuchen Sie es später erneut",
+      "reset": "Zurücksetzen",
+      "resetDescription": "Zuordnungen wurden auf Standardwerte zurückgesetzt",
+      "notMapped": "Nicht zugeordnet"
+    },
+    "bindDevice": {
+      "title": "PS-Konsole binden",
+      "description": {
+        "discover": "Ihre PlayStation-Konsole finden und verbinden",
+        "bind": "Geräteinformationen konfigurieren und Bindung abschließen"
+      },
+      "discover": {
+        "scanning": "Suche nach Geräten im Netzwerk...",
+        "scanningHint": "Bitte warten, dies kann einige Sekunden dauern",
+        "foundDevices": "Gefundene Geräte",
+        "rescan": "Erneut suchen",
+        "noDevices": "Keine Geräte gefunden",
+        "noDevicesHint": "Bitte stellen Sie sicher, dass Ihre PS-Konsole eingeschaltet und mit demselben Netzwerk verbunden ist",
+        "manualIp": "Manuelle IP-Adresse (Optional)",
+        "manualIpPlaceholder": "z. B. 192.168.1.100",
+        "manualIpHint": "Wenn Sie die IP-Adresse des Geräts kennen, können Sie sie direkt eingeben, um eine Verbindung herzustellen",
+        "unknownType": "Unbekannter Typ"
+      },
+      "bind": {
+        "deviceName": "Gerätename",
+        "deviceNamePlaceholder": "Geben Sie Ihrem Gerät einen Namen",
+        "needsRegistration": "Geräteregistrierung erforderlich (für erste Bindung)",
+        "needsRegistrationHint": "Wenn Sie dieses Gerät zum ersten Mal binden, müssen Sie die Konto-ID und PIN für die Registrierung angeben",
+        "accountId": "Konto-ID (Base64)",
+        "accountIdPlaceholder": "Geben Sie die PSN-Konto-ID ein oder klicken Sie auf die Schaltfläche, um sie zu erhalten",
+        "accountIdHint": "Dies ist Ihre PSN-Konto-ID, normalerweise Base64-codierte 8-Byte-Daten. Klicken Sie auf die Schaltfläche \"Über PSN-Anmeldung abrufen\", um sie automatisch zu erhalten.",
+        "getAccountId": "Über PSN-Anmeldung abrufen",
+        "gettingAccountId": "Wird abgerufen...",
+        "gettingAccountIdTitle": "Konto-ID wird abgerufen...",
+        "gettingAccountIdHint": "Bitte schließen Sie die PSN-Anmeldung im Popup-Fenster ab",
+        "pin": "PIN-Code",
+        "pinPlaceholder": "8-stellige PIN eingeben",
+        "pinHint": "Der 8-stellige PIN-Code, der auf Ihrer PS-Konsole angezeigt wird",
+        "completeBind": "Bindung abschließen",
+        "binding": "Wird gebunden..."
+      },
+      "oauth": {
+        "loginTitle": "PSN-Anmeldung",
+        "callbackSteps": {
+          "title": "Anleitung",
+          "step1": "Schließen Sie die PSN-Anmeldung im Popup-Fenster ab",
+          "step2": "Nach erfolgreicher Anmeldung wird die Seite zur Callback-Adresse ({domain}) weitergeleitet",
+          "step3": "Das System versucht automatisch, die Callback-URL abzurufen",
+          "step4": "Wenn der automatische Abruf fehlschlägt, kopieren Sie die vollständige URL aus der Browser-Adressleiste (enthält {codeParam}-Parameter) und fügen Sie sie unten ein",
+          "hint": "Tipp: Sie können {selectKey1} oder {selectKey2} drücken, um die Adressleiste schnell auszuwählen, und dann {copyKey} drücken, um zu kopieren"
+        },
+        "callbackUrlPlaceholder": "Fügen Sie die vollständige URL der PSN-Callback-Seite ein (beginnt mit remoteplay.dl.playstation.net)",
+        "callbackUrlInvalid": "Bitte stellen Sie sicher, dass die URL \"remoteplay.dl.playstation.net\" und den Parameter \"code=\" enthält",
+        "clipboardRead": "URL aus Zwischenablage lesen",
+        "cancelGet": "Abruf abbrechen",
+        "callbackDetected": "✅ Callback-Seite erkannt",
+        "callbackDetectedHint": "Seite wurde weitergeleitet, bitte kopieren Sie die URL aus der Adressleiste (Strg+C), klicken Sie dann auf die 📋 Schaltfläche oder fügen Sie sie in das Eingabefeld ein"
+      },
+      "errors": {
+        "discoverFailed": "Gerätesuche fehlgeschlagen",
+        "discoverFailedHint": "Bitte versuchen Sie es später erneut",
+        "ipRequired": "IP-Adresse erforderlich",
+        "ipRequiredHint": "Bitte geben Sie die IP-Adresse der PS-Konsole ein",
+        "ipInvalid": "IP-Adresse darf nicht leer sein",
+        "accountIdAndPinRequired": "Konto-ID und PIN erforderlich",
+        "accountIdAndPinRequiredHint": "Für die Geräteregistrierung sind Konto-ID und PIN-Code erforderlich",
+        "bindSuccess": "Bindung erfolgreich",
+        "bindSuccessHint": "Gerät wurde erfolgreich an Ihr Konto gebunden",
+        "bindFailed": "Bindung fehlgeschlagen",
+        "bindFailedHint": "Bitte versuchen Sie es später erneut",
+        "getLoginUrlFailed": "Anmelde-URL konnte nicht abgerufen werden",
+        "cannotOpenWindow": "Anmeldefenster kann nicht geöffnet werden",
+        "cannotOpenWindowHint": "Bitte erlauben Sie Popup-Fenster und versuchen Sie es erneut",
+        "loginFailed": "Anmeldung fehlgeschlagen",
+        "loginFailedHint": "Bitte versuchen Sie es später erneut",
+        "getAccountIdFailed": "Konto-ID konnte nicht abgerufen werden",
+        "getAccountIdSuccess": "Konto-ID erfolgreich abgerufen",
+        "getAccountIdSuccessHint": "Konto abgerufen: {name}",
+        "callbackUrlRequired": "Callback-URL erforderlich",
+        "clipboardInvalid": "Ungültiger Zwischenablage-Inhalt",
+        "clipboardInvalidHint": "Bitte stellen Sie sicher, dass Sie die Callback-URL mit dem code=-Parameter kopiert haben",
+        "clipboardReadFailed": "Zwischenablage kann nicht gelesen werden",
+        "clipboardReadFailedHint": "Bitte fügen Sie die URL manuell ein oder gewähren Sie die Zwischenablage-Zugriffsberechtigung",
+        "loginHint": "Anmeldeanleitung",
+        "loginHintDescription": "Bitte schließen Sie die PSN-Anmeldung im Popup-Fenster ab, die Konto-ID wird nach erfolgreicher Anmeldung automatisch abgerufen"
+      }
+    }
+  },
+  "streaming": {
+    "monitor": {
+      "enable": "Überwachung aktivieren",
+      "disable": "Überwachung deaktivieren",
+      "title": "Live-Überwachung",
+      "webrtc": "WebRTC",
+      "labels": {
+        "download": "Download-Rate",
+        "upload": "Upload-Rate",
+        "videoBitrate": "Video-Bitrate",
+        "resolution": "Auflösung",
+        "latency": "Latenz",
+        "fps": "Bildrate"
+      },
+      "units": {
+        "mbps": "{{value}} Mbps",
+        "kbps": "{{value}} Kbps",
+        "ms": "{{value}} ms",
+        "resolution": "{{width}} × {{height}}",
+        "fps": "{{value}} fps"
+      }
+    },
+    "loading": {
+      "connectingDevice": "Verbindung zum Gerät"
+    },
+    "videoPlayer": {
+      "connecting": "Verbinden...",
+      "waiting": "Warte auf Verbindung",
+      "start": "Verbindung starten"
+    },
+    "header": {
+      "unnamedDevice": "Namenlose Konsole",
+      "connect": "Verbinden",
+      "gamepadCount_one": "{{count}} Controller",
+      "gamepadCount_other": "{{count}} Controller"
+    },
+    "connection": {
+      "state": {
+        "disconnected": "Getrennt",
+        "fetchingDevice": "Geräteinformationen werden abgerufen...",
+        "checkingStatus": "Gerätestatus wird überprüft...",
+        "wakingUp": "Gerät im Bereitschaftsmodus, wird aufgeweckt...",
+        "waitingReady": "Warte, bis das Gerät bereit ist...",
+        "waitingReadyWithTime": "Warte, bis das Gerät bereit ist... ({{seconds}}s)",
+        "connecting": "Verbinden...",
+        "creatingSession": "Sitzung wird erstellt...",
+        "connected": "Verbunden",
+        "failed": "Verbindung fehlgeschlagen"
+      },
+      "toast": {
+        "wakingTitle": "Gerät wird aufgeweckt",
+        "wakingDescription": "Das Gerät ist im Bereitschaftsmodus, wird aufgeweckt...",
+        "prepareFailedTitle": "Gerätevorbereitung fehlgeschlagen",
+        "connectingTitle": "Verbinden",
+        "connectingDescription": "Verbinden mit {{name}}...",
+        "connectedTitle": "Verbunden",
+        "connectedDescription": "Videostream verbunden",
+        "connectFailedTitle": "Verbindung fehlgeschlagen",
+        "controllerFailedTitle": "Controller-Verbindung fehlgeschlagen",
+        "streamFrozenTitle": "Wiedergabestopp erkannt",
+        "streamFrozenDescription": "Eingefrorene Bilder: {{frozen}}, wiederhergestellt: {{recovered}}. Neuer Keyframe angefordert.",
+        "streamRecoveredTitle": "Wiedergabe wird wiederhergestellt",
+        "streamRecoveredDescription": "{{recovered}} Bilder wiederhergestellt. Das Video sollte gleich fortgesetzt werden.",
+        "streamRateLimitedTitle": "Keyframe-Anfrage gedrosselt",
+        "streamRateLimitedDescription": "Zu viele IDR-Anfragen in {{window}}s ({{requested}}). Warte, bevor erneut angefragt wird."
+      },
+      "errors": {
+        "missingDeviceInfo": "Geräteinformationen fehlen",
+        "fetchDeviceFailed": "Geräteinformationen konnten nicht abgerufen werden",
+        "deviceNotFound": "Geräteinformationen nicht gefunden",
+        "ipNotSet": "Geräte-IP-Adresse ist nicht konfiguriert",
+        "wakeDeviceFailed": "Gerät konnte nicht aufgeweckt werden",
+        "deviceNotReady": "Gerät ist nicht bereit",
+        "deviceReadyTimeout": "Gerätebereitschafts-Timeout ({{seconds}}s)",
+        "connectRemotePlayFailed": "Verbindung zur Remote-Play-Sitzung fehlgeschlagen",
+        "sessionCreateFailed": "Sitzung konnte nicht erstellt werden",
+        "sessionDataMissing": "Sitzungsantwort enthält keine Daten",
+        "sessionIdMissing": "Sitzungs-ID konnte nicht abgerufen werden",
+        "offerCreateFailed": "WebRTC-Angebot konnte nicht erstellt werden",
+        "offerDataMissing": "Angebotsantwort enthält keine Daten",
+        "unknown": "Unbekannter Fehler"
+      }
+    }
+  }
+}

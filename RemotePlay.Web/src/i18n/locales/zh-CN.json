@@ -248,6 +248,8 @@
         "icePortMax": "ICE 端口最大值",
         "icePortMaxPlaceholder": "例如: 40200",
         "icePortMaxHint": "WebRTC 使用的 UDP 端口结束值（1024-65535，必须为偶数）",
+        "forceUseTurn": "强制使用 TURN 服务器",
+        "forceUseTurnHint": "启用后，仅使用 TURN relay 候选地址，用于测试 TURN 服务器配置。需要先配置 TURN 服务器。",
         "save": "保存配置",
         "saving": "保存中...",
         "reset": "重置",
