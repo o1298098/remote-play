@@ -1153,15 +1153,20 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         const turnConfigResponse = await streamingService.getTurnConfig()
         if (turnConfigResponse.success && turnConfigResponse.data) {
           const turnConfig = turnConfigResponse.data
+          
+          // 调试：打印完整配置
+          console.log('🛰️ 从后端获取到 TURN 配置原始数据:', {
+            count: turnConfig.turnServers?.length || 0,
+            servers: turnConfig.turnServers?.map((s: any) => ({
+              url: s.url,
+              hasUsername: !!s.username,
+              hasCredential: !!s.credential,
+            })) || [],
+            forceUseTurn: turnConfig.forceUseTurn,
+            hasForceUseTurn: 'forceUseTurn' in turnConfig,
+          })
+          
           if (turnConfig.turnServers && turnConfig.turnServers.length > 0) {
-            console.log('🛰️ 从后端获取到 TURN 配置原始数据:', {
-              count: turnConfig.turnServers.length,
-              servers: turnConfig.turnServers.map((s: any) => ({
-                url: s.url,
-                hasUsername: !!s.username,
-                hasCredential: !!s.credential,
-              })),
-            })
             turnServers = turnConfig.turnServers
               .filter((server) => server.url) // 过滤掉没有 URL 的服务器
               .map((server) => {
@@ -1178,14 +1183,17 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               })
             console.log('✅ 加载了用户配置的 TURN 服务器:', turnServers.length, '个')
           }
+          
           // 检查是否强制使用 TURN
-          if (turnConfig.forceUseTurn) {
+          if (turnConfig.forceUseTurn === true) {
             forceUseTurn = true
             if (turnServers.length === 0) {
               console.warn('⚠️ 启用了强制使用 TURN，但未配置 TURN 服务器')
             } else {
               console.log('🔒 强制使用 TURN 服务器（仅 relay 候选地址）')
             }
+          } else {
+            console.log('ℹ️ 未启用强制使用 TURN，将使用所有候选地址类型 (forceUseTurn:', turnConfig.forceUseTurn, ')')
           }
         }
       } catch (error) {

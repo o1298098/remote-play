@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { ArrowLeft, Save, Plus, Trash2, Server } from 'lucide-react'
+import { ArrowLeft, Save, Plus, Trash2, Server, TestTube, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { streamingService, type TurnServerConfig } from '@/service/streaming.service'
+import { testTurnServer, type TurnServerTestResult } from '@/utils/turn-server-test'
 
 export default function TurnServerSettings() {
   const { toast } = useToast()
@@ -16,6 +17,8 @@ export default function TurnServerSettings() {
   const [turnServers, setTurnServers] = useState<TurnServerConfig[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [testingIndex, setTestingIndex] = useState<number | null>(null)
+  const [testResults, setTestResults] = useState<Map<number, TurnServerTestResult>>(new Map())
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -105,6 +108,56 @@ export default function TurnServerSettings() {
     }
   }
 
+  const handleTestServer = async (index: number) => {
+    const server = turnServers[index]
+    if (!server || !server.url || !server.url.trim()) {
+      toast({
+        title: '测试失败',
+        description: '请先填写 TURN 服务器 URL',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setTestingIndex(index)
+    try {
+      const result = await testTurnServer(server, 10000)
+      const newResults = new Map(testResults)
+      newResults.set(index, result)
+      setTestResults(newResults)
+
+      if (result.success) {
+        toast({
+          title: '测试成功',
+          description: `TURN 服务器连接成功${result.latency ? ` (${result.latency}ms)` : ''}`,
+        })
+      } else {
+        toast({
+          title: '测试失败',
+          description: result.error || '无法连接到 TURN 服务器',
+          variant: 'destructive',
+        })
+      }
+    } catch (error) {
+      const errorResult: TurnServerTestResult = {
+        success: false,
+        server,
+        error: error instanceof Error ? error.message : '测试失败',
+      }
+      const newResults = new Map(testResults)
+      newResults.set(index, errorResult)
+      setTestResults(newResults)
+      
+      toast({
+        title: '测试失败',
+        description: error instanceof Error ? error.message : '无法连接到 TURN 服务器',
+        variant: 'destructive',
+      })
+    } finally {
+      setTestingIndex(null)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="container mx-auto p-4">
@@ -159,16 +212,67 @@ export default function TurnServerSettings() {
                 className="border rounded-lg p-4 space-y-3 bg-gray-900/50"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <Label className="text-sm font-medium">服务器 #{index + 1}</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemoveServer(index)}
-                    className="text-red-400 hover:text-red-300"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-medium">服务器 #{index + 1}</Label>
+                    {testResults.has(index) && (
+                      <div className="flex items-center gap-1">
+                        {testResults.get(index)?.success ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-500" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleTestServer(index)}
+                      disabled={testingIndex === index || !server.url || !server.url.trim()}
+                      className="text-green-400 hover:text-green-300"
+                      title="测试服务器"
+                    >
+                      {testingIndex === index ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <TestTube className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveServer(index)}
+                      className="text-red-400 hover:text-red-300"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
+                
+                {testResults.has(index) && (
+                  <div className="text-xs">
+                    {testResults.get(index)?.success ? (
+                      <div className="text-green-400">
+                        测试成功
+                        {testResults.get(index)?.latency && (
+                          <span className="ml-2">
+                            ({testResults.get(index)!.latency}ms)
+                          </span>
+                        )}
+                        {testResults.get(index)?.candidateType && (
+                          <span className="ml-2 text-gray-500">
+                            [{testResults.get(index)!.candidateType}]
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-red-400">
+                        {testResults.get(index)?.error || '测试失败'}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <div>
@@ -224,7 +328,7 @@ export default function TurnServerSettings() {
           <div className="flex gap-2 pt-4">
             <Button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || testingIndex !== null}
               className="flex-1"
             >
               <Save className="mr-2 h-4 w-4" />
@@ -233,7 +337,7 @@ export default function TurnServerSettings() {
             <Button
               variant="outline"
               onClick={loadTurnConfig}
-              disabled={isSaving}
+              disabled={isSaving || testingIndex !== null}
             >
               重置
             </Button>

@@ -234,7 +234,22 @@
         "saveSuccessDescription": "TURN-Server-Konfiguration wurde gespeichert",
         "saveFailed": "Speichern fehlgeschlagen",
         "saveFailedDescription": "TURN-Server-Konfiguration kann nicht gespeichert werden",
-        "saveFailedInvalid": "Bitte geben Sie mindestens eine gültige TURN-Server-URL ein"
+        "saveFailedInvalid": "Bitte geben Sie mindestens eine gültige TURN-Server-URL ein",
+        "test": "Server testen",
+        "testSuccess": "Test erfolgreich",
+        "testSuccessDescription": "TURN-Server-Verbindung erfolgreich{{latency}}",
+        "testFailed": "Test fehlgeschlagen",
+        "testFailedDescription": "Verbindung zum TURN-Server konnte nicht hergestellt werden",
+        "testFailedNoUrl": "Bitte geben Sie zuerst die TURN-Server-URL ein",
+        "testConnection": "Frontend-Backend TURN-Verbindungstest",
+        "testConnectionDescription": "Testen, ob Frontend und Backend eine WebRTC-Verbindung über den TURN-Server herstellen können",
+        "testConnectionButton": "Verbindung testen",
+        "testingConnection": "Wird getestet...",
+        "testConnectionSuccess": "Verbindungstest erfolgreich",
+        "testConnectionSuccessDescription": "Frontend und Backend haben eine Verbindung über den TURN-Server hergestellt{{latency}}{{types}}",
+        "testConnectionFailed": "Verbindungstest fehlgeschlagen",
+        "testConnectionFailedDescription": "Frontend-Backend-Verbindung über den TURN-Server konnte nicht hergestellt werden",
+        "testConnectionNoServers": "Bitte konfigurieren Sie zuerst mindestens einen TURN-Server"
       },
       "webrtc": {
         "title": "WebRTC-Konfiguration",

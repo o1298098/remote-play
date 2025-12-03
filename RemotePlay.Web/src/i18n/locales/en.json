@@ -234,7 +234,22 @@
         "saveSuccessDescription": "TURN server configuration has been saved",
         "saveFailed": "Save Failed",
         "saveFailedDescription": "Unable to save TURN server configuration",
-        "saveFailedInvalid": "Please fill in at least one valid TURN server URL"
+        "saveFailedInvalid": "Please fill in at least one valid TURN server URL",
+        "test": "Test Server",
+        "testSuccess": "Test Successful",
+        "testSuccessDescription": "TURN server connection successful{{latency}}",
+        "testFailed": "Test Failed",
+        "testFailedDescription": "Unable to connect to TURN server",
+        "testFailedNoUrl": "Please fill in TURN server URL first",
+        "testConnection": "Frontend-Backend TURN Connection Test",
+        "testConnectionDescription": "Test whether frontend and backend can establish WebRTC connection through TURN server",
+        "testConnectionButton": "Test Connection",
+        "testingConnection": "Testing...",
+        "testConnectionSuccess": "Connection Test Successful",
+        "testConnectionSuccessDescription": "Frontend and backend have established connection through TURN server{{latency}}{{types}}",
+        "testConnectionFailed": "Connection Test Failed",
+        "testConnectionFailedDescription": "Unable to establish frontend-backend connection through TURN server",
+        "testConnectionNoServers": "Please configure at least one TURN server first"
       },
       "webrtc": {
         "title": "WebRTC Configuration",

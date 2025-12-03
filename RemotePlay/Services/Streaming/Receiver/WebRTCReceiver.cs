@@ -60,6 +60,10 @@ namespace RemotePlay.Services.Streaming.Receiver
         private DateTime _lastVideoPacketTime = DateTime.UtcNow;
         private DateTime _lastAudioPacketTime = DateTime.UtcNow;
         
+        // 日志限流：避免重复警告日志洗版
+        private DateTime _lastVideoPipelineWarningTime = DateTime.MinValue;
+        private const int VIDEO_PIPELINE_WARNING_INTERVAL_SECONDS = 10; // 每 10 秒最多记录一次警告
+        
         // 注意：不再需要等待关键帧，WebRTC 会自动处理关键帧检测
         
         // 视频编码格式
@@ -198,6 +202,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     DetectSelectedAudioCodec();
                     
                     // ✅ 初始化新的模块化视频处理管道（在 SDP 协商完成后）
+                    // 如果已经在 Answer 设置后提前初始化，这里不会重复初始化
                     InitializeVideoPipeline();
                     
                     // ✅ 启动连接保活机制
@@ -553,6 +558,55 @@ namespace RemotePlay.Services.Streaming.Receiver
         /// 初始化新的模块化视频处理管道
         /// 应该在连接建立后、SDP协商完成后调用（确保 payload types 正确）
         /// </summary>
+        /// <summary>
+        /// ✅ 提前初始化视频管道（在 Answer 设置后，不等待连接建立）
+        /// 这对于强制使用 TURN 的场景很重要，因为即使 ICE 连接失败，视频管道也应该初始化
+        /// </summary>
+        public void InitializeVideoPipelineEarly()
+        {
+            if (_videoPipeline != null || _videoTrack == null)
+            {
+                return;
+            }
+            
+            try
+            {
+                // ✅ 在 Answer 设置后，尝试检测协商的 Payload Type
+                // 如果 remote description 已设置，可以提前检测
+                if (_peerConnection?.remoteDescription != null)
+                {
+                    TryDetectNegotiatedVideoPayloadTypes();
+                    DetectSelectedAudioCodec();
+                }
+                
+                // ✅ 初始化视频管道（即使 Payload Type 还未检测到，也可以先初始化）
+                // VideoPipeline 会在后续收到视频数据时使用正确的 Payload Type
+                _videoPipeline = new VideoPipeline(
+                    _logger,
+                    _peerConnection,
+                    _videoTrack,
+                    _videoSsrc,
+                    _detectedVideoFormat,
+                    _negotiatedPtH264,
+                    _negotiatedPtHevc);
+                
+                // 设置统计回调
+                _videoPipeline.SetOnPacketSent(frameIndex => 
+                {
+                    _latencyStats?.RecordPacketSent(_sessionId, "video", frameIndex);
+                });
+                
+                _logger.LogInformation("✅ 模块化视频处理管道已提前初始化 (SSRC={Ssrc}, H264={H264}, HEVC={Hevc})", 
+                    _videoSsrc, _negotiatedPtH264, _negotiatedPtHevc);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ 提前初始化视频处理管道失败，将在连接建立时重试");
+                _videoPipeline?.Dispose();
+                _videoPipeline = null;
+            }
+        }
+        
         private void InitializeVideoPipeline()
         {
             if (_videoPipeline != null || _videoTrack == null)

@@ -353,20 +353,22 @@ namespace RemotePlay.Services.WebRTC
             {
                 try
                 {
-                    var remoteDescription = peerConnection.remoteDescription;
-                    if (remoteDescription?.sdp != null)
+                    // ✅ 重要：后端的 candidate 应该使用后端的 local description (Offer SDP) 的 ufrag
+                    // 因为后端的 candidate 是发送给前端的，应该与后端的 Offer SDP 匹配
+                    var localDescription = peerConnection.localDescription;
+                    if (localDescription?.sdp != null)
                     {
-                        var sdp = remoteDescription.sdp.ToString();
-                        var frontendUfrag = ExtractIceUfragFromSdp(sdp);
-                        if (!string.IsNullOrWhiteSpace(frontendUfrag))
+                        var sdp = localDescription.sdp.ToString();
+                        var backendUfrag = ExtractIceUfragFromSdp(sdp);
+                        if (!string.IsNullOrWhiteSpace(backendUfrag))
                         {
                             var currentUfragMatch = System.Text.RegularExpressions.Regex.Match(candidateStr, @"ufrag\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                             if (currentUfragMatch.Success)
                             {
                                 var currentUfrag = currentUfragMatch.Groups[1].Value;
-                                if (currentUfrag != frontendUfrag)
+                                if (currentUfrag != backendUfrag)
                                 {
-                                    candidateStr = System.Text.RegularExpressions.Regex.Replace(candidateStr, @"ufrag\s+\w+", $"ufrag {frontendUfrag}", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                                    candidateStr = System.Text.RegularExpressions.Regex.Replace(candidateStr, @"ufrag\s+\w+", $"ufrag {backendUfrag}", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                                 }
                             }
                         }
@@ -380,19 +382,23 @@ namespace RemotePlay.Services.WebRTC
             string? ufrag = null;
             try
             {
-                var remoteDescription = peerConnection.remoteDescription;
-                if (remoteDescription?.sdp != null)
+                // ✅ 重要：后端的 candidate 应该使用后端的 local description (Offer SDP) 的 ufrag
+                // 而不是 remote description (Answer SDP) 的 ufrag
+                // 因为后端的 candidate 是发送给前端的，应该与后端的 Offer SDP 匹配
+                var localDescription = peerConnection.localDescription;
+                if (localDescription?.sdp != null)
                 {
-                    var sdp = remoteDescription.sdp.ToString();
+                    var sdp = localDescription.sdp.ToString();
                     ufrag = ExtractIceUfragFromSdp(sdp);
                 }
 
+                // ✅ 如果 local description 没有 ufrag，才尝试从 remote description 获取（作为后备）
                 if (string.IsNullOrWhiteSpace(ufrag))
                 {
-                    var localDescription = peerConnection.localDescription;
-                    if (localDescription?.sdp != null)
+                    var remoteDescription = peerConnection.remoteDescription;
+                    if (remoteDescription?.sdp != null)
                     {
-                        var sdp = localDescription.sdp.ToString();
+                        var sdp = remoteDescription.sdp.ToString();
                         ufrag = ExtractIceUfragFromSdp(sdp);
                     }
                 }
@@ -409,7 +415,6 @@ namespace RemotePlay.Services.WebRTC
                         }
                     }
                     candidateStr += " ufrag " + ufrag;
-                    _logger.LogInformation("✅ 已为 candidate 添加 ufrag: {Ufrag}", ufrag);
                 }
                 else
                 {

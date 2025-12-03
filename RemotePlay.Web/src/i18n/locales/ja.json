@@ -234,7 +234,22 @@
         "saveSuccessDescription": "TURNサーバー設定が保存されました",
         "saveFailed": "保存失敗",
         "saveFailedDescription": "TURNサーバー設定を保存できませんでした",
-        "saveFailedInvalid": "少なくとも1つの有効なTURNサーバーURLを入力してください"
+        "saveFailedInvalid": "少なくとも1つの有効なTURNサーバーURLを入力してください",
+        "test": "サーバーテスト",
+        "testSuccess": "テスト成功",
+        "testSuccessDescription": "TURNサーバー接続成功{{latency}}",
+        "testFailed": "テスト失敗",
+        "testFailedDescription": "TURNサーバーに接続できません",
+        "testFailedNoUrl": "まずTURNサーバーURLを入力してください",
+        "testConnection": "フロントエンド-バックエンド TURN接続テスト",
+        "testConnectionDescription": "フロントエンドとバックエンドがTURNサーバーを通じてWebRTC接続を確立できるかテストします",
+        "testConnectionButton": "接続テスト",
+        "testingConnection": "テスト中...",
+        "testConnectionSuccess": "接続テスト成功",
+        "testConnectionSuccessDescription": "フロントエンドとバックエンドがTURNサーバーを通じて接続を確立しました{{latency}}{{types}}",
+        "testConnectionFailed": "接続テスト失敗",
+        "testConnectionFailedDescription": "TURNサーバーを通じてフロントエンド-バックエンド接続を確立できません",
+        "testConnectionNoServers": "まず少なくとも1つのTURNサーバーを設定してください"
       },
       "webrtc": {
         "title": "WebRTC設定",

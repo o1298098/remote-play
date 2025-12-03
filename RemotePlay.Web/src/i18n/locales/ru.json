@@ -234,7 +234,22 @@
         "saveSuccessDescription": "Конфигурация TURN сервера была сохранена",
         "saveFailed": "Ошибка сохранения",
         "saveFailedDescription": "Невозможно сохранить конфигурацию TURN сервера",
-        "saveFailedInvalid": "Пожалуйста, заполните хотя бы один действительный URL TURN сервера"
+        "saveFailedInvalid": "Пожалуйста, заполните хотя бы один действительный URL TURN сервера",
+        "test": "Тестировать сервер",
+        "testSuccess": "Тест успешен",
+        "testSuccessDescription": "Подключение к TURN серверу успешно{{latency}}",
+        "testFailed": "Тест не удался",
+        "testFailedDescription": "Не удалось подключиться к TURN серверу",
+        "testFailedNoUrl": "Пожалуйста, сначала заполните URL TURN сервера",
+        "testConnection": "Тест подключения TURN Frontend-Backend",
+        "testConnectionDescription": "Проверить, могут ли frontend и backend установить WebRTC соединение через TURN сервер",
+        "testConnectionButton": "Тестировать подключение",
+        "testingConnection": "Тестирование...",
+        "testConnectionSuccess": "Тест подключения успешен",
+        "testConnectionSuccessDescription": "Frontend и backend установили соединение через TURN сервер{{latency}}{{types}}",
+        "testConnectionFailed": "Тест подключения не удался",
+        "testConnectionFailedDescription": "Не удалось установить соединение frontend-backend через TURN сервер",
+        "testConnectionNoServers": "Пожалуйста, сначала настройте хотя бы один TURN сервер"
       },
       "webrtc": {
         "title": "Конфигурация WebRTC",

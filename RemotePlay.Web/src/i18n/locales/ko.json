@@ -234,7 +234,22 @@
         "saveSuccessDescription": "TURN 서버 구성이 저장되었습니다",
         "saveFailed": "저장 실패",
         "saveFailedDescription": "TURN 서버 구성을 저장할 수 없습니다",
-        "saveFailedInvalid": "최소 하나의 유효한 TURN 서버 URL을 입력해 주세요"
+        "saveFailedInvalid": "최소 하나의 유효한 TURN 서버 URL을 입력해 주세요",
+        "test": "서버 테스트",
+        "testSuccess": "테스트 성공",
+        "testSuccessDescription": "TURN 서버 연결 성공{{latency}}",
+        "testFailed": "테스트 실패",
+        "testFailedDescription": "TURN 서버에 연결할 수 없습니다",
+        "testFailedNoUrl": "먼저 TURN 서버 URL을 입력해 주세요",
+        "testConnection": "프론트엔드-백엔드 TURN 연결 테스트",
+        "testConnectionDescription": "프론트엔드와 백엔드가 TURN 서버를 통해 WebRTC 연결을 설정할 수 있는지 테스트합니다",
+        "testConnectionButton": "연결 테스트",
+        "testingConnection": "테스트 중...",
+        "testConnectionSuccess": "연결 테스트 성공",
+        "testConnectionSuccessDescription": "프론트엔드와 백엔드가 TURN 서버를 통해 연결을 설정했습니다{{latency}}{{types}}",
+        "testConnectionFailed": "연결 테스트 실패",
+        "testConnectionFailedDescription": "TURN 서버를 통해 프론트엔드-백엔드 연결을 설정할 수 없습니다",
+        "testConnectionNoServers": "먼저 최소 하나의 TURN 서버를 구성해 주세요"
       },
       "webrtc": {
         "title": "WebRTC 구성",

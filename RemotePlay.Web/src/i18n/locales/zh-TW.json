@@ -234,7 +234,22 @@
         "saveSuccessDescription": "TURN 伺服器設定已儲存",
         "saveFailed": "儲存失敗",
         "saveFailedDescription": "無法儲存 TURN 伺服器設定",
-        "saveFailedInvalid": "请至少填寫一個有效的 TURN 伺服器 URL"
+        "saveFailedInvalid": "請至少填寫一個有效的 TURN 伺服器 URL",
+        "test": "測試伺服器",
+        "testSuccess": "測試成功",
+        "testSuccessDescription": "TURN 伺服器連接成功{{latency}}",
+        "testFailed": "測試失敗",
+        "testFailedDescription": "無法連接到 TURN 伺服器",
+        "testFailedNoUrl": "請先填寫 TURN 伺服器 URL",
+        "testConnection": "前後端 TURN 連接測試",
+        "testConnectionDescription": "測試前後端是否能夠通過 TURN 伺服器建立 WebRTC 連接",
+        "testConnectionButton": "測試連接",
+        "testingConnection": "測試中...",
+        "testConnectionSuccess": "連接測試成功",
+        "testConnectionSuccessDescription": "前後端已通過 TURN 伺服器建立連接{{latency}}{{types}}",
+        "testConnectionFailed": "連接測試失敗",
+        "testConnectionFailedDescription": "無法通過 TURN 伺服器建立前後端連接",
+        "testConnectionNoServers": "請先配置至少一個 TURN 伺服器"
       },
       "webrtc": {
         "title": "WebRTC 設定",

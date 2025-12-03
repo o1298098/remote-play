@@ -213,6 +213,12 @@ namespace RemotePlay.Controllers
                             {
                                 result.TurnServers = turnConfig.TurnServers;
                             }
+                            // 解析 forceUseTurn
+                            var forceUseTurnToken = setting.ValueJson["forceUseTurn"] ?? setting.ValueJson["ForceUseTurn"];
+                            if (forceUseTurnToken != null && forceUseTurnToken.Type == JTokenType.Boolean)
+                            {
+                                result.ForceUseTurn = forceUseTurnToken.Value<bool>();
+                            }
                         }
                         // 如果 ValueJson 为空，尝试从 Value 字段解析 JSON
                         else if (!string.IsNullOrWhiteSpace(setting.Value))
@@ -223,11 +229,72 @@ namespace RemotePlay.Controllers
                             {
                                 result.TurnServers = turnConfig.TurnServers;
                             }
+                            // 解析 forceUseTurn
+                            var forceUseTurnToken = jsonObj["forceUseTurn"] ?? jsonObj["ForceUseTurn"];
+                            if (forceUseTurnToken != null && forceUseTurnToken.Type == JTokenType.Boolean)
+                            {
+                                result.ForceUseTurn = forceUseTurnToken.Value<bool>();
+                            }
                         }
                     }
                     catch (JsonException ex)
                     {
                         _logger.LogWarning(ex, "⚠️ 解析 TURN 配置 JSON 失败，使用空配置");
+                    }
+                }
+
+                // 如果 TURN 配置中没有 forceUseTurn，尝试从完整的 WebRTC 配置中读取
+                // 注意：如果 result.ForceUseTurn 是默认值 false，我们也需要检查 WebRTC 配置
+                // 因为 false 可能是默认值，也可能是用户明确设置的 false
+                // 我们通过检查是否在 TURN 配置中找到了 forceUseTurn 字段来判断
+                bool foundForceUseTurnInTurnConfig = false;
+                if (setting != null)
+                {
+                    try
+                    {
+                        if (setting.ValueJson != null)
+                        {
+                            foundForceUseTurnInTurnConfig = setting.ValueJson["forceUseTurn"] != null || setting.ValueJson["ForceUseTurn"] != null;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(setting.Value))
+                        {
+                            var jsonObj = JObject.Parse(setting.Value);
+                            foundForceUseTurnInTurnConfig = jsonObj["forceUseTurn"] != null || jsonObj["ForceUseTurn"] != null;
+                        }
+                    }
+                    catch
+                    {
+                        // 忽略解析错误
+                    }
+                }
+
+                if (!foundForceUseTurnInTurnConfig)
+                {
+                    var webrtcSetting = await _context.Settings
+                        .AsNoTracking()
+                        .Where(s => s.Key == WebRTCConfigKey)
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    if (webrtcSetting != null)
+                    {
+                        try
+                        {
+                            JObject? jsonObj = webrtcSetting.ValueJson ?? 
+                                (!string.IsNullOrWhiteSpace(webrtcSetting.Value) ? JObject.Parse(webrtcSetting.Value) : null);
+                            
+                            if (jsonObj != null)
+                            {
+                                var forceUseTurnToken = jsonObj["forceUseTurn"] ?? jsonObj["ForceUseTurn"];
+                                if (forceUseTurnToken != null && forceUseTurnToken.Type == JTokenType.Boolean)
+                                {
+                                    result.ForceUseTurn = forceUseTurnToken.Value<bool>();
+                                }
+                            }
+                        }
+                        catch (JsonException ex)
+                        {
+                            _logger.LogWarning(ex, "⚠️ 从 WebRTC 配置读取 forceUseTurn 失败");
+                        }
                     }
                 }
 

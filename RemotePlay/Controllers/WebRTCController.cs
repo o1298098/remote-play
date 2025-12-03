@@ -7,6 +7,7 @@ using RemotePlay.Services.Statistics;
 using RemotePlay.Services.Controller;
 using RemotePlay.Services.Streaming;
 using RemotePlay.Services.Streaming.Launch;
+using SIPSorcery.Net;
 
 namespace RemotePlay.Controllers
 {
@@ -208,8 +209,6 @@ namespace RemotePlay.Controllers
                         // 否则显示前 100 个字符
                         return candidate.Length > 100 ? candidate.Substring(0, 100) + "..." : candidate;
                     });
-                    _logger.LogInformation("📤 待处理的 Candidate 列表: {Candidates}",
-                        string.Join("; ", candidateStrings));
                 }
 
                 var candidateList = candidates.Select(c => new
@@ -648,6 +647,122 @@ namespace RemotePlay.Controllers
                 {
                     Success = false,
                     ErrorMessage = "记录接收时间失败"
+                });
+            }
+        }
+        
+        /// <summary>
+        /// 创建用于测试 TURN 连接的 WebRTC 会话（强制使用 TURN）
+        /// </summary>
+        [HttpPost("test-turn")]
+        public async Task<ActionResult<ResponseModel>> CreateTurnTestSession()
+        {
+            try
+            {
+                // 创建会话时强制使用 TURN
+                var (sessionId, offer) = await _signalingService.CreateSessionAsync(
+                    preferredVideoCodec: null,
+                    preferLanCandidatesOverride: false,
+                    forceUseTurnForTest: true
+                );
+                
+                var session = _signalingService.GetSession(sessionId);
+                if (session == null)
+                {
+                    return StatusCode(500, new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "无法获取创建的会话"
+                    });
+                }
+                
+                // 等待 ICE 收集完成（最多等待 10 秒）
+                var startTime = DateTime.UtcNow;
+                var maxWaitTime = TimeSpan.FromSeconds(10);
+                var hasRelayCandidate = false;
+                var candidateTypes = new List<string>();
+                
+                while (DateTime.UtcNow - startTime < maxWaitTime)
+                {
+                    if (session.PeerConnection.iceGatheringState == RTCIceGatheringState.complete)
+                    {
+                        break;
+                    }
+                    
+                    // 检查是否有 relay 候选地址
+                    // 注意：这里我们无法直接获取候选地址列表，只能通过日志判断
+                    await Task.Delay(100);
+                }
+                
+                _logger.LogInformation("🧪 TURN 测试会话已创建: {SessionId}, ICE状态: {IceState}, 连接状态: {ConnectionState}",
+                    sessionId, session.PeerConnection.iceConnectionState, session.PeerConnection.connectionState);
+                
+                return Ok(new ApiSuccessResponse<object>
+                {
+                    Success = true,
+                    Data = new
+                    {
+                        sessionId = sessionId,
+                        offer = offer,
+                        type = "offer"
+                    },
+                    Message = "TURN 测试会话创建成功"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 创建 TURN 测试会话失败");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "创建 TURN 测试会话失败: " + ex.Message
+                });
+            }
+        }
+        
+        /// <summary>
+        /// 获取 TURN 测试会话的连接信息
+        /// </summary>
+        [HttpGet("test-turn/{sessionId}")]
+        public ActionResult<ResponseModel> GetTurnTestSessionInfo(string sessionId)
+        {
+            try
+            {
+                var session = _signalingService.GetSession(sessionId);
+                if (session == null)
+                {
+                    return NotFound(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "测试会话不存在"
+                    });
+                }
+                
+                var info = new
+                {
+                    sessionId = sessionId,
+                    connectionState = session.PeerConnection.connectionState.ToString(),
+                    iceConnectionState = session.PeerConnection.iceConnectionState.ToString(),
+                    iceGatheringState = session.PeerConnection.iceGatheringState.ToString(),
+                    signalingState = session.PeerConnection.signalingState.ToString(),
+                    createdAt = session.CreatedAt,
+                    age = DateTime.UtcNow - session.CreatedAt
+                };
+                
+                return Ok(new ApiSuccessResponse<object>
+                {
+                    Success = true,
+                    Data = info,
+                    Message = "获取测试会话信息成功"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 获取 TURN 测试会话信息失败");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "获取测试会话信息失败: " + ex.Message
                 });
             }
         }

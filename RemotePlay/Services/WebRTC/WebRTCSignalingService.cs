@@ -75,7 +75,8 @@ namespace RemotePlay.Services.WebRTC
         /// </summary>
         public async Task<(string sessionId, string offer)> CreateSessionAsync(
             string? preferredVideoCodec = null,
-            bool? preferLanCandidatesOverride = null)
+            bool? preferLanCandidatesOverride = null,
+            bool? forceUseTurnForTest = null)
         {
             var sessionId = Guid.NewGuid().ToString("N");
 
@@ -89,12 +90,14 @@ namespace RemotePlay.Services.WebRTC
                 
                 // 确定 ICE 传输策略
                 var iceTransportPolicy = RTCIceTransportPolicy.all;
-                if (webrtcConfig.ForceUseTurn)
+                var shouldForceUseTurn = forceUseTurnForTest ?? webrtcConfig.ForceUseTurn;
+                if (shouldForceUseTurn)
                 {
                     if (turnServers.Count > 0)
                     {
                         iceTransportPolicy = RTCIceTransportPolicy.relay;
-                        _logger.LogWarning("🔒 强制使用 TURN 服务器（仅 relay 候选地址）: SessionId={SessionId}", sessionId);
+                        _logger.LogWarning("🔒 强制使用 TURN 服务器（仅 relay 候选地址）: SessionId={SessionId}, IsTest={IsTest}", 
+                            sessionId, forceUseTurnForTest.HasValue);
                     }
                     else
                     {
@@ -235,7 +238,8 @@ namespace RemotePlay.Services.WebRTC
                 int srflxCandidateCount = 0;
                 int relayCandidateCount = 0;
                 bool gatheringComplete = false;
-                bool hasTurnServers = _config.TurnServers?.Count > 0;
+                bool hasTurnServers = turnServers.Count > 0;
+                bool isForceUseTurn = webrtcConfig.ForceUseTurn && hasTurnServers;
 
                 peerConnection.onicecandidate += (candidate) =>
                 {
@@ -272,8 +276,6 @@ namespace RemotePlay.Services.WebRTC
                                     sdpMid = candidate.sdpMid,
                                     sdpMLineIndex = candidate.sdpMLineIndex
                                 });
-                                _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}",
-                                    sessionId);
                             }
                         }
                         catch (Exception ex)
@@ -290,7 +292,14 @@ namespace RemotePlay.Services.WebRTC
                     }
                 };
 
-                int waitTimeoutMs = hasTurnServers ? 8000 : 2000;
+                // ✅ 强制使用 TURN 时需要更长的等待时间，因为 TURN 服务器连接可能需要更长时间
+                // 对于多个 TURN 服务器，需要等待更长时间，确保所有服务器都响应
+                // 每个 TURN 服务器可能需要 3-5 秒来建立连接并返回候选地址
+                int baseTimeoutMs = isForceUseTurn ? 15000 : (hasTurnServers ? 10000 : 2000);
+                int waitTimeoutMs = baseTimeoutMs + (turnServers.Count * 3000); // 每个 TURN 服务器额外等待 3 秒
+                
+                _logger.LogInformation("⏳ 等待 ICE Gathering 完成: SessionId={SessionId}, 超时={Timeout}ms, TURN服务器数={TurnCount}, 强制TURN={ForceTurn}",
+                    sessionId, waitTimeoutMs, turnServers.Count, isForceUseTurn);
                 
                 await Task.WhenAny(tcs.Task, Task.Delay(waitTimeoutMs));
 
@@ -299,10 +308,57 @@ namespace RemotePlay.Services.WebRTC
                     _logger.LogWarning("⚠️ ICE Gathering 未完成（等待{Timeout}ms），已收集 {Count} 个 candidates (host={Host}, srflx={Srflx}, relay={Relay})", 
                         waitTimeoutMs, candidateCount, hostCandidateCount, srflxCandidateCount, relayCandidateCount);
                     
-                    if (hasTurnServers && relayCandidateCount == 0)
+                    // ✅ 检查是否所有 TURN 服务器都生成了候选地址
+                    if (hasTurnServers)
                     {
-                        _logger.LogWarning("⚠️ 配置了TURN服务器但未收集到relay候选地址");
+                        if (relayCandidateCount == 0)
+                        {
+                            _logger.LogWarning("⚠️ 配置了 {TurnCount} 个 TURN 服务器但未收集到任何 relay 候选地址", turnServers.Count);
+                        }
+                        else if (relayCandidateCount < turnServers.Count)
+                        {
+                            _logger.LogWarning("⚠️ 配置了 {TurnCount} 个 TURN 服务器，但只收集到 {RelayCount} 个 relay 候选地址", 
+                                turnServers.Count, relayCandidateCount);
+                            _logger.LogWarning("   可能的原因：部分 TURN 服务器连接超时或无法访问");
+                        }
+                        
+                        if (isForceUseTurn)
+                        {
+                            if (relayCandidateCount == 0)
+                            {
+                                _logger.LogError("❌ 强制使用 TURN 模式，但未收集到任何 relay 候选地址！这会导致 ICE 连接失败。");
+                                _logger.LogError("   可能的原因：");
+                                _logger.LogError("   1. TURN 服务器 URL 配置错误");
+                                _logger.LogError("   2. TURN 服务器用户名/密码错误");
+                                _logger.LogError("   3. TURN 服务器无法访问（网络问题或防火墙）");
+                                _logger.LogError("   4. TURN 服务器不支持指定的传输协议（UDP/TCP）");
+                                _logger.LogError("   5. 等待时间不足（当前等待 {Timeout}ms，建议至少 {Recommended}ms）", 
+                                    waitTimeoutMs, turnServers.Count * 5000);
+                                _logger.LogError("   已配置的 TURN 服务器数量: {Count}", turnServers.Count);
+                                foreach (var turn in turnServers)
+                                {
+                                    _logger.LogError("   - URL: {Url}, 用户名: {Username}", 
+                                        turn.Url, string.IsNullOrWhiteSpace(turn.Username) ? "无" : "已设置");
+                                }
+                            }
+                            else if (relayCandidateCount < turnServers.Count)
+                            {
+                                _logger.LogWarning("⚠️ 强制使用 TURN 模式，但只收集到 {RelayCount}/{TurnCount} 个 relay 候选地址", 
+                                    relayCandidateCount, turnServers.Count);
+                                _logger.LogWarning("   这可能导致 ICE 连接不稳定，建议检查未响应的 TURN 服务器");
+                            }
+                        }
                     }
+                }
+                else if (isForceUseTurn && relayCandidateCount == 0)
+                {
+                    _logger.LogError("❌ 强制使用 TURN 模式，但 ICE Gathering 完成后仍未收集到任何 relay 候选地址！");
+                    _logger.LogError("   这会导致 ICE 连接失败。请检查 TURN 服务器配置。");
+                }
+                else if (isForceUseTurn && relayCandidateCount < turnServers.Count)
+                {
+                    _logger.LogWarning("⚠️ 强制使用 TURN 模式，ICE Gathering 完成但只收集到 {RelayCount}/{TurnCount} 个 relay 候选地址", 
+                        relayCandidateCount, turnServers.Count);
                 }
 
                 var finalSdp = OptimizeSdpForLowLatency(peerConnection.localDescription.sdp.ToString());
@@ -401,10 +457,24 @@ namespace RemotePlay.Services.WebRTC
                         _logger.LogWarning("⚠️ Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
                     }
                     
+                    // ✅ 在 Answer 设置成功后立即初始化视频管道（不等待连接建立）
+                    // 这对于强制使用 TURN 的场景很重要，因为即使 ICE 连接失败，视频管道也应该初始化
+                    // 这样可以在连接建立后立即开始发送视频数据
+                    try
+                    {
+                        session.Receiver.InitializeVideoPipelineEarly();
+                        _logger.LogInformation("✅ 已在 Answer 设置后提前初始化视频管道: SessionId={SessionId}", sessionId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ 提前初始化视频管道失败，将在连接建立时重试: SessionId={SessionId}", sessionId);
+                    }
+                    
                     session.PeerConnection.onicecandidate += (candidate) =>
                     {
                         if (candidate != null && candidate.candidate != null)
                         {
+                            
                             var candidateWithUfrag = EnsureCandidateHasUfrag(candidate.candidate, session.PeerConnection);
                              
                              session.AddPendingIceCandidate(new RTCIceCandidateInit
@@ -413,9 +483,6 @@ namespace RemotePlay.Services.WebRTC
                                  sdpMid = candidate.sdpMid,
                                  sdpMLineIndex = candidate.sdpMLineIndex
                              });
-                             
-                             _logger.LogInformation("📦 已存储 ICE candidate 供前端获取: SessionId={SessionId}",
-                                 sessionId);
 
                             try
                             {
@@ -423,7 +490,32 @@ namespace RemotePlay.Services.WebRTC
                             }
                             catch { }
                         }
+                        else
+                        {
+                            // ✅ ICE gathering 完成
+                        }
                     };
+                    
+                    // ✅ 如果 Answer 设置时 ICE gathering 还未完成，等待一段时间以收集更多候选地址
+                    // 这对于 TURN 服务器连接可能需要更长时间的情况很重要
+                    if (session.PeerConnection.iceGatheringState != RTCIceGatheringState.complete)
+                    {
+                        // ✅ 异步等待 ICE gathering 完成（最多等待 5 秒）
+                        _ = Task.Run(async () =>
+                        {
+                            var startTime = DateTime.UtcNow;
+                            var maxWaitTime = TimeSpan.FromSeconds(5);
+                            
+                            while (DateTime.UtcNow - startTime < maxWaitTime)
+                            {
+                                if (session.PeerConnection.iceGatheringState == RTCIceGatheringState.complete)
+                                {
+                                    break;
+                                }
+                                await Task.Delay(200);
+                            }
+                        });
+                    }
                     
                     session.PeerConnection.oniceconnectionstatechange += (state) =>
                     {
@@ -440,8 +532,29 @@ namespace RemotePlay.Services.WebRTC
                         }
                         else if (currentIceState == RTCIceConnectionState.failed)
                         {
-                            _logger.LogWarning("❌ ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}",
-                                sessionId, connectionState, signalingState);
+                            // ✅ 添加更详细的诊断信息
+                            var iceGatheringState = session.PeerConnection.iceGatheringState;
+                            var localDescription = session.PeerConnection.localDescription?.sdp?.ToString() ?? "";
+                            var remoteDescription = session.PeerConnection.remoteDescription?.sdp?.ToString() ?? "";
+                            
+                            // 检查是否配置了 TURN 服务器
+                            var config = session.PeerConnection.getConfiguration();
+                            var hasTurnServers = config?.iceServers?.Any(s => 
+                                s.urls != null && s.urls.Contains("turn:", StringComparison.OrdinalIgnoreCase)) ?? false;
+                            
+                            _logger.LogWarning("❌ ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}, IceGatheringState={IceGatheringState}, HasTurnServers={HasTurnServers}",
+                                sessionId, connectionState, signalingState, iceGatheringState, hasTurnServers);
+                            
+                            // ✅ 如果配置了 TURN 服务器但连接失败，提供更详细的诊断信息
+                            if (hasTurnServers)
+                            {
+                                _logger.LogWarning("⚠️ TURN 服务器已配置但 ICE 连接失败，可能的原因：");
+                                _logger.LogWarning("   1. TURN 服务器无法访问（网络问题或防火墙）");
+                                _logger.LogWarning("   2. TURN 服务器用户名/密码错误");
+                                _logger.LogWarning("   3. 前端和后端的 TURN 候选地址不匹配");
+                                _logger.LogWarning("   4. TURN 服务器不支持指定的传输协议（UDP/TCP）");
+                                _logger.LogWarning("   5. 强制使用 TURN 模式时，双方必须都使用 TURN relay 候选地址");
+                            }
                             
                             _ = Task.Run(async () =>
                             {
@@ -634,23 +747,25 @@ namespace RemotePlay.Services.WebRTC
 
             var allCandidates = webrtcSession.GetPendingIceCandidates();
             
-            string? frontendUfrag = null;
+            // ✅ 重要：后端的 candidate 应该使用后端 Offer SDP 的 ufrag，而不是前端 Answer SDP 的 ufrag
+            // 所以我们应该检查 candidate 的 ufrag 是否与后端 Offer SDP 的 ufrag 匹配
+            string? backendUfrag = null;
             try
             {
-                var remoteDescription = webrtcSession.PeerConnection.remoteDescription;
-                if (remoteDescription?.sdp != null)
+                var localDescription = webrtcSession.PeerConnection.localDescription;
+                if (localDescription?.sdp != null)
                 {
-                    var sdp = remoteDescription.sdp.ToString();
-                    frontendUfrag = ExtractIceUfragFromSdp(sdp);
+                    var sdp = localDescription.sdp.ToString();
+                    backendUfrag = ExtractIceUfragFromSdp(sdp);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ 提取前端 ufrag 失败，将返回所有 candidate");
+                _logger.LogWarning(ex, "⚠️ 提取后端 ufrag 失败，将返回所有 candidate");
             }
             
             List<RTCIceCandidateInit> filteredCandidates;
-            if (!string.IsNullOrWhiteSpace(frontendUfrag))
+            if (!string.IsNullOrWhiteSpace(backendUfrag))
             {
                 filteredCandidates = allCandidates.Where(c =>
                 {
@@ -663,23 +778,19 @@ namespace RemotePlay.Services.WebRTC
                     if (match.Success)
                     {
                         var candidateUfrag = match.Groups[1].Value;
-                        return candidateUfrag == frontendUfrag;
+                        return candidateUfrag == backendUfrag;
                     }
                     
+                    // ✅ 如果 candidate 没有 ufrag，也返回（可能是在添加 ufrag 之前存储的）
                     return true;
                 }).ToList();
             }
             else
             {
                 filteredCandidates = allCandidates;
-                _logger.LogWarning("⚠️ 无法提取前端 ufrag，返回所有 {Count} 个 candidate", allCandidates.Count);
+                _logger.LogWarning("⚠️ 无法提取后端 ufrag，返回所有 {Count} 个 candidate", allCandidates.Count);
             }
             
-            if (filteredCandidates.Count > 0)
-            {
-                _logger.LogInformation("📤 返回 {Count} 个待处理的 ICE candidate 给前端: SessionId={SessionId}",
-                    filteredCandidates.Count, sessionId);
-            }
             
             return filteredCandidates;
         }
@@ -697,6 +808,48 @@ namespace RemotePlay.Services.WebRTC
 
             try
             {
+                // ✅ 验证 candidate 格式
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    _logger.LogWarning("⚠️ 收到空的 ICE Candidate: SessionId={SessionId}", sessionId);
+                    return false;
+                }
+                
+                // ✅ 检查 candidate 类型
+                var candidateLower = candidate.ToLowerInvariant();
+                var candidateType = "unknown";
+                if (candidateLower.Contains("typ host"))
+                    candidateType = "host";
+                else if (candidateLower.Contains("typ srflx"))
+                    candidateType = "srflx";
+                else if (candidateLower.Contains("typ relay"))
+                    candidateType = "relay";
+                
+                // ✅ 如果 candidate 包含 ufrag，检查是否与后端的 remote description (Answer) 的 ufrag 匹配
+                // 前端的 candidate 应该使用前端 Answer SDP 中的 ufrag
+                if (candidateLower.Contains("ufrag"))
+                {
+                    var frontendUfragMatch = System.Text.RegularExpressions.Regex.Match(candidate, @"ufrag\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (frontendUfragMatch.Success)
+                    {
+                        var frontendUfrag = frontendUfragMatch.Groups[1].Value;
+                        var answerUfrag = ExtractIceUfragFromSdp(session.PeerConnection.remoteDescription?.sdp?.ToString() ?? "");
+                        
+                        if (!string.IsNullOrWhiteSpace(answerUfrag) && frontendUfrag != answerUfrag)
+                        {
+                            _logger.LogWarning("⚠️ 前端 candidate 的 ufrag ({FrontendUfrag}) 与 Answer SDP 的 ufrag ({AnswerUfrag}) 不匹配，已自动修正",
+                                frontendUfrag, answerUfrag);
+                            
+                            // ✅ 尝试修正 candidate 的 ufrag（使用 Answer SDP 中的 ufrag）
+                            candidate = System.Text.RegularExpressions.Regex.Replace(
+                                candidate, 
+                                @"ufrag\s+\w+", 
+                                $"ufrag {answerUfrag}", 
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        }
+                    }
+                }
+                
                 var iceCandidate = new RTCIceCandidateInit
                 {
                     candidate = candidate,
@@ -706,15 +859,20 @@ namespace RemotePlay.Services.WebRTC
 
                 session.PeerConnection.addIceCandidate(iceCandidate);
                 
-                _logger.LogInformation("✅ ICE Candidate 已添加到 PeerConnection: SessionId={SessionId}",
-                    sessionId);
-                
                 return true;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ 添加 ICE Candidate 失败: SessionId={SessionId}, Candidate={Candidate}", 
-                    sessionId, candidate);
+                    sessionId, candidate?.Length > 200 ? candidate.Substring(0, 200) + "..." : candidate);
+                
+                // ✅ 提供更详细的错误信息
+                if (ex.Message.Contains("InvalidStateError") || ex.Message.Contains("InvalidState"))
+                {
+                    _logger.LogWarning("⚠️ PeerConnection 状态可能不正确: ConnectionState={ConnectionState}, SignalingState={SignalingState}, IceConnectionState={IceConnectionState}",
+                        session.PeerConnection.connectionState, session.PeerConnection.signalingState, session.PeerConnection.iceConnectionState);
+                }
+                
                 return false;
             }
         }

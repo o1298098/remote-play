@@ -263,11 +263,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
                 
-                // ⚠️ 如果管道未初始化，记录警告
-                if (_videoPacketCount % 100 == 0)
-                    {
-                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理IDR帧");
-                    }
+                // ⚠️ 如果管道未初始化，记录警告（限流：每 10 秒最多一次）
+                var now = DateTime.UtcNow;
+                if ((now - _lastVideoPipelineWarningTime).TotalSeconds >= VIDEO_PIPELINE_WARNING_INTERVAL_SECONDS)
+                {
+                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理IDR帧 (已收到 {Count} 个视频包)", _videoPacketCount);
+                    _lastVideoPipelineWarningTime = now;
+                }
             }
             catch (Exception ex)
             {
@@ -308,10 +310,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                     return;
                 }
                 
-                // ⚠️ 如果管道未初始化，记录警告
-                            if (_videoPacketCount % 100 == 0)
-                            {
-                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理普通帧");
+                // ⚠️ 如果管道未初始化，记录警告（限流：每 10 秒最多一次）
+                var now = DateTime.UtcNow;
+                if ((now - _lastVideoPipelineWarningTime).TotalSeconds >= VIDEO_PIPELINE_WARNING_INTERVAL_SECONDS)
+                {
+                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理普通帧 (已收到 {Count} 个视频包)", _videoPacketCount);
+                    _lastVideoPipelineWarningTime = now;
                 }
             }
             catch (Exception ex)
