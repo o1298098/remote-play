@@ -65,15 +65,11 @@ export async function testTurnServer(
     pc = new RTCPeerConnection(rtcConfig)
 
     // 设置超时
-    let timeoutResolved = false
     const timeoutId = setTimeout(() => {
-      timeoutResolved = true
       if (pc) {
         pc.close()
       }
-      if (!result.success && !result.error) {
-        result.error = '测试超时'
-      }
+      result.error = '测试超时'
     }, timeout)
 
     // 监听 ICE 候选地址
@@ -104,36 +100,30 @@ export async function testTurnServer(
         }
       } else {
         // 所有候选地址收集完成
-        if (!timeoutResolved) {
-          clearTimeout(timeoutId)
-        }
+        clearTimeout(timeoutId)
         
-        if (relayCandidateFound && !result.success) {
+        if (relayCandidateFound) {
           result.success = true
           result.connectionType = 'relay'
           const latency = Date.now() - startTime
           result.latency = latency
-        } else if (!result.success && !result.error) {
-          if (candidates.length > 0) {
-            // 有候选地址但不是 relay 类型，说明 TURN 服务器可能不可用
-            result.error = '未找到 TURN relay 候选地址，服务器可能不可用'
-            result.connectionType = connectionType
-          } else {
-            result.error = '未收集到任何 ICE 候选地址'
-          }
+        } else if (candidates.length > 0) {
+          // 有候选地址但不是 relay 类型，说明 TURN 服务器可能不可用
+          result.error = '未找到 TURN relay 候选地址，服务器可能不可用'
+          result.connectionType = connectionType
+        } else {
+          result.error = '未收集到任何 ICE 候选地址'
         }
       }
     }
 
     // 监听 ICE 连接状态
     pc.oniceconnectionstatechange = () => {
-      if (pc && !timeoutResolved) {
+      if (pc) {
         const state = pc.iceConnectionState
         if (state === 'failed' || state === 'disconnected') {
-          if (!timeoutResolved) {
-            clearTimeout(timeoutId)
-          }
-          if (!result.success && !result.error) {
+          clearTimeout(timeoutId)
+          if (!result.error) {
             result.error = `ICE 连接状态: ${state}`
           }
         }
@@ -142,10 +132,8 @@ export async function testTurnServer(
 
     // 监听 ICE 收集状态
     pc.onicegatheringstatechange = () => {
-      if (pc && pc.iceGatheringState === 'complete' && !timeoutResolved) {
-        if (!timeoutResolved) {
-          clearTimeout(timeoutId)
-        }
+      if (pc && pc.iceGatheringState === 'complete') {
+        clearTimeout(timeoutId)
         
         // 如果还没有设置结果，检查是否有 relay 候选地址
         if (!result.success && !result.error) {
@@ -164,7 +152,10 @@ export async function testTurnServer(
       }
     }
 
-    // 创建 offer（这会触发 ICE 收集）
+    // 创建一个数据通道以触发 ICE 收集
+    pc.createDataChannel('test')
+    
+    // 创建 offer
     const offer = await pc.createOffer({
       offerToReceiveAudio: false,
       offerToReceiveVideo: false,
@@ -253,4 +244,3 @@ export async function testTurnServers(
   
   return results
 }
-

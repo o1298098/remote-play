@@ -5,10 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Save, Plus, Trash2, Server, Edit2, X, TestTube, CheckCircle2, XCircle, Loader2, Network } from 'lucide-react'
+import { Save, Plus, Trash2, Server, Edit2, X, TestTube, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { streamingService, type TurnServerConfig } from '@/service/streaming.service'
 import { testTurnServer, type TurnServerTestResult } from '@/utils/turn-server-test'
-import { testTurnConnection, type TurnConnectionTestResult } from '@/utils/turn-connection-test'
 
 export default function TurnServerSettingsTab() {
   const { t } = useTranslation()
@@ -20,8 +19,6 @@ export default function TurnServerSettingsTab() {
   const [editingServer, setEditingServer] = useState<TurnServerConfig | null>(null)
   const [testingIndex, setTestingIndex] = useState<number | null>(null)
   const [testResults, setTestResults] = useState<Map<number, TurnServerTestResult>>(new Map())
-  const [isTestingConnection, setIsTestingConnection] = useState(false)
-  const [connectionTestResult, setConnectionTestResult] = useState<TurnConnectionTestResult | null>(null)
 
   useEffect(() => {
     loadTurnConfig()
@@ -189,59 +186,6 @@ export default function TurnServerSettingsTab() {
     }
   }
 
-  const handleTestConnection = async () => {
-    // 验证是否有配置的 TURN 服务器
-    const validServers = turnServers.filter(
-      (server) => server.url && server.url.trim().length > 0
-    )
-
-    if (validServers.length === 0) {
-      toast({
-        title: t('devices.settings.turnServer.testFailed'),
-        description: t('devices.settings.turnServer.testConnectionNoServers'),
-        variant: 'destructive',
-      })
-      return
-    }
-
-    setIsTestingConnection(true)
-    setConnectionTestResult(null)
-
-    try {
-      const result = await testTurnConnection(15000)
-      setConnectionTestResult(result)
-
-      if (result.success) {
-        toast({
-          title: t('devices.settings.turnServer.testConnectionSuccess'),
-          description: t('devices.settings.turnServer.testConnectionSuccessDescription', {
-            latency: result.latency ? `${result.latency}ms` : '',
-            types: result.candidateTypes?.join(', ') || '',
-          }),
-        })
-      } else {
-        toast({
-          title: t('devices.settings.turnServer.testConnectionFailed'),
-          description: result.error || t('devices.settings.turnServer.testConnectionFailedDescription'),
-          variant: 'destructive',
-        })
-      }
-    } catch (error) {
-      const errorResult: TurnConnectionTestResult = {
-        success: false,
-        error: error instanceof Error ? error.message : t('devices.settings.turnServer.testConnectionFailedDescription'),
-      }
-      setConnectionTestResult(errorResult)
-
-      toast({
-        title: t('devices.settings.turnServer.testConnectionFailed'),
-        description: error instanceof Error ? error.message : t('devices.settings.turnServer.testConnectionFailedDescription'),
-        variant: 'destructive',
-      })
-    } finally {
-      setIsTestingConnection(false)
-    }
-  }
 
   if (isLoading) {
     return (
@@ -450,7 +394,7 @@ export default function TurnServerSettingsTab() {
           <div className="flex gap-2 pt-4">
             <Button
               onClick={handleSave}
-              disabled={isSaving || testingIndex !== null || isTestingConnection}
+              disabled={isSaving || testingIndex !== null}
               className="flex-1"
             >
               <Save className="mr-2 h-4 w-4" />
@@ -459,93 +403,10 @@ export default function TurnServerSettingsTab() {
             <Button
               variant="outline"
               onClick={loadTurnConfig}
-              disabled={isSaving || testingIndex !== null || isTestingConnection}
+              disabled={isSaving || testingIndex !== null}
             >
               {t('devices.settings.turnServer.reset')}
             </Button>
-          </div>
-
-          {/* TURN 连接测试 */}
-          <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <Label className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  {t('devices.settings.turnServer.testConnection')}
-                </Label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  {t('devices.settings.turnServer.testConnectionDescription')}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                onClick={handleTestConnection}
-                disabled={isTestingConnection || isSaving || testingIndex !== null || turnServers.length === 0}
-                className="flex items-center gap-2"
-              >
-                {isTestingConnection ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {t('devices.settings.turnServer.testingConnection')}
-                  </>
-                ) : (
-                  <>
-                    <Network className="h-4 w-4" />
-                    {t('devices.settings.turnServer.testConnectionButton')}
-                  </>
-                )}
-              </Button>
-            </div>
-
-            {connectionTestResult && (
-              <div className={`mt-3 p-3 rounded-lg text-sm ${
-                connectionTestResult.success
-                  ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
-                  : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-              }`}>
-                <div className="flex items-start gap-2">
-                  {connectionTestResult.success ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5" />
-                  ) : (
-                    <XCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5" />
-                  )}
-                  <div className="flex-1">
-                    <div className={`font-medium ${
-                      connectionTestResult.success
-                        ? 'text-green-900 dark:text-green-100'
-                        : 'text-red-900 dark:text-red-100'
-                    }`}>
-                      {connectionTestResult.success
-                        ? t('devices.settings.turnServer.testConnectionSuccess')
-                        : t('devices.settings.turnServer.testConnectionFailed')}
-                    </div>
-                    {connectionTestResult.success && (
-                      <div className="mt-1 text-green-700 dark:text-green-300 space-y-1">
-                        {connectionTestResult.latency && (
-                          <div>延迟: {connectionTestResult.latency}ms</div>
-                        )}
-                        {connectionTestResult.candidateTypes && connectionTestResult.candidateTypes.length > 0 && (
-                          <div>候选类型: {connectionTestResult.candidateTypes.join(', ')}</div>
-                        )}
-                        {connectionTestResult.hasRelayCandidate && (
-                          <div className="font-semibold">✓ 已使用 TURN relay 连接</div>
-                        )}
-                        {connectionTestResult.connectionState && (
-                          <div>连接状态: {connectionTestResult.connectionState}</div>
-                        )}
-                        {connectionTestResult.iceConnectionState && (
-                          <div>ICE 状态: {connectionTestResult.iceConnectionState}</div>
-                        )}
-                      </div>
-                    )}
-                    {!connectionTestResult.success && connectionTestResult.error && (
-                      <div className="mt-1 text-red-700 dark:text-red-300">
-                        {connectionTestResult.error}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>

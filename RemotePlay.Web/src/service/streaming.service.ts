@@ -234,21 +234,4 @@ export const streamingService = {
     })
   },
 
-  /**
-   * 创建用于测试 TURN 连接的 WebRTC 会话（强制使用 TURN）
-   */
-  createTurnTestSession: async (): Promise<ApiResponse<WebRTCOfferResponse>> => {
-    return apiRequest<WebRTCOfferResponse>('/webrtc/test-turn', {
-      method: 'POST',
-    })
-  },
-
-  /**
-   * 获取 TURN 测试会话的连接信息
-   */
-  getTurnTestSessionInfo: async (sessionId: string): Promise<ApiResponse<any>> => {
-    return apiRequest(`/webrtc/test-turn/${encodeURIComponent(sessionId)}`, {
-      method: 'GET',
-    })
-  },
 }
