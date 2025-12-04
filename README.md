@@ -132,7 +132,8 @@ volumes:
    - Modify the `lan` network settings to match your network interface (replace `eth0` with your actual network interface)
    - Update subnet and gateway if needed
    - (Optional) Set JWT secret for production use
-   - **Note**: WebRTC and TURN server settings can be configured in the web interface after deployment (Settings → WebRTC Settings / TURN Server Settings)
+   - **Important for container deployments**: after services start, open the web interface and go to **Settings → WebRTC Settings**, then set **Public IP** to an address reachable from the browser (typically the host machine's LAN IP in a home network, or the server's public IP when exposing PSRP over the Internet).
+   - **Note**: Other WebRTC and TURN server settings can also be configured in the web interface after deployment (Settings → WebRTC Settings / TURN Server Settings)
 
 2. **Start the services**:
    ```bash
@@ -158,6 +159,7 @@ volumes:
 
 - Ensure the `lan` network interface matches your physical network adapter
 - The backend needs to be on the same network as your PlayStation console
+- When running in containers, **`PublicIp` must be set to an address reachable by the browser** (host LAN IP or server public IP); otherwise WebRTC candidates from the backend may not be usable.
 - WebRTC and TURN server settings are now configured through the web interface (Settings page)
 - For remote access, configure port forwarding and TURN servers via the web interface
 - Change the default JWT secret before production deployment
