@@ -87,7 +87,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "设备发现失败: " + ex.Message
+                    ErrorMessage = "设备发现失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceDiscoveryFailed
                 });
             }
         }
@@ -108,7 +109,8 @@ namespace RemotePlay.Controllers
                 return NotFound(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = $"未找到主机: {hostIp}"
+                    ErrorMessage = $"未找到主机: {hostIp}", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceNotFound
                 });
             }
 
@@ -136,25 +138,29 @@ namespace RemotePlay.Controllers
                 return NotFound(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "设备未找到"
+                    ErrorMessage = "设备未找到", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceNotFound
                 });
             if (_device.IpAddress == null)
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "ip address is empty"
+                    ErrorMessage = "ip address is empty", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.HostIpRequired
                 });
             if (_device.RegistKey == null)
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "regist_key is empty"
+                    ErrorMessage = "regist_key is empty", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InvalidRequest
                 });
             if (_device.HostType == null)
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "host_type is empty"
+                    ErrorMessage = "host_type is empty", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InvalidRequest
                 });
             var _result = await _remotePlayService.WakeUpDeviceAsync(
                 _device.IpAddress,
@@ -184,7 +190,8 @@ namespace RemotePlay.Controllers
                     return Unauthorized(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "未授权"
+                        ErrorMessage = "未授权", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.Unauthorized
                     });
                 }
 
@@ -212,7 +219,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "加载设备设置失败: " + ex.Message
+                    ErrorMessage = "加载设备设置失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceSettingsLoadFailed
                 });
             }
         }
@@ -229,7 +237,8 @@ namespace RemotePlay.Controllers
                 return BadRequest(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "请求体不能为空"
+                    ErrorMessage = "请求体不能为空", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InvalidRequest
                 });
             }
 
@@ -241,7 +250,8 @@ namespace RemotePlay.Controllers
                     return Unauthorized(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "未授权"
+                        ErrorMessage = "未授权", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.Unauthorized
                     });
                 }
 
@@ -269,7 +279,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "保存设备设置失败: " + ex.Message
+                    ErrorMessage = "保存设备设置失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceSettingsSaveFailed
                 });
             }
         }
@@ -289,7 +300,8 @@ namespace RemotePlay.Controllers
                 return Unauthorized(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "未授权"
+                    ErrorMessage = "未授权", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.Unauthorized
                 });
             }
 
@@ -301,19 +313,22 @@ namespace RemotePlay.Controllers
                 return NotFound(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "设备未找到"
+                    ErrorMessage = "设备未找到", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceNotFound
                 });
             if (_device.IpAddress == null)
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "ip address is empty"
+                    ErrorMessage = "ip address is empty", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.HostIpRequired
                 });
             if (_device.HostType == null)
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "host_type is empty"
+                    ErrorMessage = "host_type is empty", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InvalidRequest
                 });
 
             // 先检查是否已存在活跃的 session
@@ -545,7 +560,8 @@ namespace RemotePlay.Controllers
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "绑定 HLS 接收器失败，请确认流已启动或稍后重试"
+                    ErrorMessage = "绑定 HLS 接收器失败，请确认流已启动或稍后重试", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.StreamNotFound
                 });
             }
 
@@ -591,21 +607,24 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "主机IP不能为空"
+                        ErrorMessage = "主机IP不能为空", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.HostIpRequired
                     });
 
                 if (string.IsNullOrEmpty(request.AccountId))
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "账户ID不能为空"
+                        ErrorMessage = "账户ID不能为空", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.AccountIdRequired
                     });
 
                 if (string.IsNullOrEmpty(request.Pin))
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "PIN不能为空"
+                        ErrorMessage = "PIN不能为空", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.PinRequired
                     });
 
                 _logger.LogInformation("开始设备注册 - 主机: {HostIp}, 账户: {AccountId}", request.HostIp, request.AccountId);
@@ -636,7 +655,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "设备注册失败: " + ex.Message
+                    ErrorMessage = "设备注册失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceRegistrationFailed
                 });
             }
         }
@@ -655,7 +675,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "凭据不能为空"
+                        ErrorMessage = "凭据不能为空", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.CredentialRequired
                     });
 
                 _logger.LogInformation("验证设备凭据 - 主机: {HostName}", credentials.HostName);
@@ -675,7 +696,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "验证凭据失败: " + ex.Message
+                    ErrorMessage = "验证凭据失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InternalServerError
                 });
             }
         }
@@ -850,7 +872,8 @@ namespace RemotePlay.Controllers
                 return BadRequest(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "必须至少提供 L2 或 R2 的数值"
+                    ErrorMessage = "必须至少提供 L2 或 R2 的数值", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.TriggerValueRequired
                 });
             }
 
@@ -876,7 +899,8 @@ namespace RemotePlay.Controllers
                 return NotFound(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "控制器未连接"
+                    ErrorMessage = "控制器未连接", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.ControllerNotConnected
                 });
             }
 
@@ -950,7 +974,8 @@ namespace RemotePlay.Controllers
                     return Unauthorized(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "未授权"
+                        ErrorMessage = "未授权", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.Unauthorized
                     });
                 }
 
@@ -959,7 +984,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "主机IP不能为空"
+                        ErrorMessage = "主机IP不能为空", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.HostIpRequired
                     });
 
                 // 如果提供了账户ID和PIN，则进行注册
@@ -974,7 +1000,8 @@ namespace RemotePlay.Controllers
                         return Ok(new ApiErrorResponse
                         {
                             Success = false,
-                            ErrorMessage = "设备注册失败: " + registerResult.ErrorMessage
+                            ErrorMessage = "设备注册失败: " + registerResult.ErrorMessage, // 保留中文消息作为fallback
+                            ErrorCode = ErrorCode.DeviceRegistrationFailed
                         });
                     }
                 }
@@ -987,7 +1014,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "无法发现设备，请确保设备已开机并连接到同一网络"
+                        ErrorMessage = "无法发现设备，请确保设备已开机并连接到同一网络", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.DeviceDiscoveryFailed
                     });
                 }
 
@@ -1099,7 +1127,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "设备绑定失败: " + ex.Message
+                    ErrorMessage = "设备绑定失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.DeviceBindingFailed
                 });
             }
         }
@@ -1140,7 +1169,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取设备列表失败: " + ex.Message
+                    ErrorMessage = "获取设备列表失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InternalServerError
                 });
             }
         }
@@ -1162,7 +1192,8 @@ namespace RemotePlay.Controllers
                     return Unauthorized(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "未授权"
+                        ErrorMessage = "未授权", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.Unauthorized
                     });
                 }
 
@@ -1174,7 +1205,8 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "未找到该设备绑定"
+                        ErrorMessage = "未找到该设备绑定", // 保留中文消息作为fallback
+                        ErrorCode = ErrorCode.NotFound
                     });
                 }
 
@@ -1195,7 +1227,8 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "设备解绑失败: " + ex.Message
+                    ErrorMessage = "设备解绑失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InternalServerError
                 });
             }
         }

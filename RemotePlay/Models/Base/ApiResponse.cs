@@ -18,6 +18,10 @@ namespace RemotePlay.Models.Base
     {
         public bool Success { get; set; } = false;
         public string ErrorMessage { get; set; } = string.Empty;
+        /// <summary>
+        /// 错误码，前端根据此错误码在 i18n 文件中查找对应的翻译
+        /// </summary>
+        public ErrorCode? ErrorCode { get; set; }
     }
 }
 

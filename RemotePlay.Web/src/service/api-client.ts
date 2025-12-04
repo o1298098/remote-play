@@ -1,4 +1,5 @@
 import { invalidateAuth, isAuthErrorMessage } from '@/utils/auth-invalidation'
+import { getTranslatedErrorMessage } from '@/utils/error-code-translator'
 
 // API 基础配置
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -6,12 +7,13 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 // API 响应类型
 // 新的后端格式：
 // 成功: { success: true, data: object, message: "" }
-// 失败: { success: false, errorMessage: "" }
+// 失败: { success: false, errorMessage: "", errorCode?: number }
 export interface ApiResponse<T = any> {
   success: boolean
   data?: T  // 成功时的数据
   message?: string  // 成功时的消息（可选）
   errorMessage?: string  // 失败时的错误消息
+  errorCode?: number | string  // 错误码，前端根据此码在 i18n 中查找翻译
   // 为了向后兼容，保留 result 字段（从 data 映射）
   result?: T
 }
@@ -94,9 +96,12 @@ export async function apiRequest<T>(
 
     // 处理新的响应格式
     if (!response.ok) {
-      // 失败时，使用 errorMessage 字段
-      const errorMsg =
-        (data as any)?.errorMessage || (data as any)?.message || `请求失败: ${response.status}`
+      // 失败时，优先使用错误码翻译，否则使用 errorMessage 字段
+      const errorResponse = data as any
+      const errorMsg = getTranslatedErrorMessage({
+        errorCode: errorResponse?.errorCode,
+        errorMessage: errorResponse?.errorMessage || errorResponse?.message || `请求失败: ${response.status}`
+      })
 
       if (unauthorizedStatus || isAuthErrorMessage(errorMsg)) {
         invalidateAuth(errorMsg || `接口 ${endpoint} 返回未授权`)
@@ -124,12 +129,18 @@ export async function apiRequest<T>(
       
       // 如果响应包含 errorMessage，说明是失败响应
       if ('errorMessage' in responseData && !responseData.success) {
-        if (isAuthErrorMessage(responseData.errorMessage)) {
-          invalidateAuth(responseData.errorMessage || `接口 ${endpoint} 返回认证失败`)
+        const translatedError = getTranslatedErrorMessage({
+          errorCode: responseData.errorCode,
+          errorMessage: responseData.errorMessage
+        })
+        
+        if (isAuthErrorMessage(translatedError)) {
+          invalidateAuth(translatedError || `接口 ${endpoint} 返回认证失败`)
         }
         return {
           success: false,
-          errorMessage: responseData.errorMessage,
+          errorMessage: translatedError,
+          errorCode: responseData.errorCode,
           result: undefined,
         } as ApiResponse<T>
       }

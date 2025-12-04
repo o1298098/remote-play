@@ -89,7 +89,8 @@ namespace RemotePlay.Controllers
             {
                 return BadRequest(new ApiErrorResponse
                 {
-                    ErrorMessage = "枚举类型不能为空。"
+                    ErrorMessage = "枚举类型不能为空。", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.InvalidRequest
                 });
             }
 
@@ -107,7 +108,8 @@ namespace RemotePlay.Controllers
                 _logger.LogWarning("未找到枚举类型 {EnumType}", enumType);
                 return NotFound(new ApiErrorResponse
                 {
-                    ErrorMessage = $"未找到枚举类型: {enumType}"
+                    ErrorMessage = $"未找到枚举类型: {enumType}", // 保留中文消息作为fallback
+                    ErrorCode = ErrorCode.NotFound
                 });
             }
 

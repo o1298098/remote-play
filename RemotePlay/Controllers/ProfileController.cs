@@ -111,7 +111,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Redirect URL is required"
+                        ErrorMessage = "Redirect URL is required", // 保留英文消息作为fallback
+                        ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
 
@@ -123,7 +124,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Failed to create user profile"
+                        ErrorMessage = "Failed to create user profile", // 保留英文消息作为fallback
+                        ErrorCode = ErrorCode.InternalServerError
                     });
                 }
 
@@ -171,7 +173,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Username is required"
+                        ErrorMessage = "Username is required", // 保留英文消息作为fallback
+                        ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
 
@@ -233,7 +236,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Device ID is required"
+                        ErrorMessage = "Device ID is required", // 保留英文消息作为fallback
+                        ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
 
@@ -274,7 +278,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Username is required"
+                        ErrorMessage = "Username is required", // 保留英文消息作为fallback
+                        ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
 
@@ -394,7 +399,8 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Path is required"
+                        ErrorMessage = "Path is required", // 保留英文消息作为fallback
+                        ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
 
