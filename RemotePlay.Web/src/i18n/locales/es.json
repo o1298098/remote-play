@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "El frontend y el backend han establecido una conexión a través del servidor TURN{{latency}}{{types}}",
         "testConnectionFailed": "Prueba de conexión fallida",
         "testConnectionFailedDescription": "No se puede establecer una conexión frontend-backend a través del servidor TURN",
-        "testConnectionNoServers": "Por favor, configure al menos un servidor TURN primero"
+        "testConnectionNoServers": "Por favor, configure al menos un servidor TURN primero",
+        "testingBandwidth": "Probando ancho de banda",
+        "testingBandwidthDescription": "Probando velocidad de ancho de banda del servidor TURN, aprox. 5 segundos..."
       },
       "webrtc": {
         "title": "Configuración WebRTC",
@@ -335,6 +337,33 @@
           "point1": "IP pública: En entornos de contenedor o NAT, si el servidor está en una red privada, necesita establecer la IP pública para asegurarse de que los clientes puedan conectarse correctamente",
           "point2": "Rango de puertos ICE: Especifique el rango de puertos UDP utilizado por WebRTC. Se recomienda que el rango no sea demasiado grande (ej. 100-200 puertos)",
           "point3": "Después de guardar la configuración, las nuevas conexiones WebRTC usarán estos parámetros"
+        },
+        "test": {
+          "testButton": "Prueba rápida de latencia",
+          "testBandwidthButton": "Probar velocidad de ancho de banda",
+          "testing": "Probando...",
+          "results": "Resultados de la prueba",
+          "success": "Éxito",
+          "failed": "Fallido",
+          "latency": "Latencia",
+          "avgBandwidth": "Ancho de banda prom.",
+          "uploadSpeed": "Velocidad de subida",
+          "downloadSpeed": "Velocidad de descarga",
+          "noServers": "No hay servidores para probar",
+          "noServersDescription": "Por favor, configure al menos un servidor TURN primero",
+          "testingDescription": "Probando latencia de conexión del servidor TURN...",
+          "testingBandwidth": "Probando ancho de banda",
+          "testingBandwidthDescription": "Probando velocidad de ancho de banda del servidor TURN, ~5 segundos por servidor...",
+          "testComplete": "Prueba de latencia completada",
+          "testCompleteDescription": "Éxito: {{success}} | Fallido: {{failed}} | Tiempo agotado: {{timeout}}",
+          "bandwidthTestComplete": "Prueba de ancho de banda completada",
+          "bandwidthTestCompleteDescription": "{{success}} servidor(es) probado(s) con éxito, ancho de banda promedio: {{avgBandwidth}} Mbps",
+          "testFailed": "Prueba fallida",
+          "testFailedDescription": "No se pueden probar los servidores TURN, por favor intente más tarde",
+          "latencyMode": "Modo rápido",
+          "latencyModeHint": "Probar solo latencia de conexión (~10 segundos)",
+          "bandwidthMode": "Modo de ancho de banda",
+          "bandwidthModeHint": "Probar velocidad de transferencia real (~5-10 segundos por servidor)"
         }
       }
     },

@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "前後端已通過 TURN 伺服器建立連接{{latency}}{{types}}",
         "testConnectionFailed": "連接測試失敗",
         "testConnectionFailedDescription": "無法通過 TURN 伺服器建立前後端連接",
-        "testConnectionNoServers": "請先配置至少一個 TURN 伺服器"
+        "testConnectionNoServers": "請先配置至少一個 TURN 伺服器",
+        "testingBandwidth": "正在測試頻寬",
+        "testingBandwidthDescription": "正在測試 TURN 伺服器的頻寬速度，約需 5 秒..."
       },
       "webrtc": {
         "title": "WebRTC 設定",
@@ -335,6 +337,33 @@
           "point1": "公網 IP：在容器或 NAT 環境下，如果伺服器在私有網路中，需要設定公網 IP 以確保用戶端能正確連線",
           "point2": "ICE 連接埠範圍：指定 WebRTC 使用的 UDP 連接埠範圍，建議範圍不要太大（如 100-200 個連接埠）",
           "point3": "設定儲存後，新的 WebRTC 連線將使用這些參數"
+        },
+        "test": {
+          "testButton": "快速測試延遲",
+          "testBandwidthButton": "測試頻寬速度",
+          "testing": "正在測試...",
+          "results": "測試結果",
+          "success": "成功",
+          "failed": "失敗",
+          "latency": "延遲",
+          "avgBandwidth": "平均頻寬",
+          "uploadSpeed": "上傳速度",
+          "downloadSpeed": "下載速度",
+          "noServers": "沒有可測試的伺服器",
+          "noServersDescription": "請先配置至少一個 TURN 伺服器",
+          "testingDescription": "正在測試 TURN 伺服器的連線延遲...",
+          "testingBandwidth": "正在測試頻寬",
+          "testingBandwidthDescription": "正在測試 TURN 伺服器的頻寬速度，每個伺服器約需 5 秒...",
+          "testComplete": "延遲測試完成",
+          "testCompleteDescription": "成功: {{success}} | 失敗: {{failed}} | 逾時: {{timeout}}",
+          "bandwidthTestComplete": "頻寬測試完成",
+          "bandwidthTestCompleteDescription": "成功測試 {{success}} 個伺服器，平均頻寬: {{avgBandwidth}} Mbps",
+          "testFailed": "測試失敗",
+          "testFailedDescription": "無法測試 TURN 伺服器，請稍後再試",
+          "latencyMode": "快速模式",
+          "latencyModeHint": "僅測試連線延遲（約 10 秒）",
+          "bandwidthMode": "頻寬模式",
+          "bandwidthModeHint": "測試實際傳輸速度（每個伺服器約 5-10 秒）"
         }
       }
     },

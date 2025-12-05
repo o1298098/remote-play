@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "Frontend und Backend haben eine Verbindung über den TURN-Server hergestellt{{latency}}{{types}}",
         "testConnectionFailed": "Verbindungstest fehlgeschlagen",
         "testConnectionFailedDescription": "Frontend-Backend-Verbindung über den TURN-Server konnte nicht hergestellt werden",
-        "testConnectionNoServers": "Bitte konfigurieren Sie zuerst mindestens einen TURN-Server"
+        "testConnectionNoServers": "Bitte konfigurieren Sie zuerst mindestens einen TURN-Server",
+        "testingBandwidth": "Bandbreite wird getestet",
+        "testingBandwidthDescription": "TURN-Server-Bandbreitengeschwindigkeit wird getestet, ca. 5 Sekunden..."
       },
       "webrtc": {
         "title": "WebRTC-Konfiguration",
@@ -335,6 +337,33 @@
           "point1": "Öffentliche IP: In Container- oder NAT-Umgebungen müssen Sie, wenn der Server in einem privaten Netzwerk ist, die öffentliche IP festlegen, damit Clients sich korrekt verbinden können",
           "point2": "ICE-Portbereich: Geben Sie den von WebRTC verwendeten UDP-Portbereich an. Es wird empfohlen, dass der Bereich nicht zu groß ist (z. B. 100-200 Ports)",
           "point3": "Nach dem Speichern der Konfiguration werden neue WebRTC-Verbindungen diese Parameter verwenden"
+        },
+        "test": {
+          "testButton": "Schneller Latenztest",
+          "testBandwidthButton": "Bandbreitengeschwindigkeit testen",
+          "testing": "Wird getestet...",
+          "results": "Testergebnisse",
+          "success": "Erfolgreich",
+          "failed": "Fehlgeschlagen",
+          "latency": "Latenz",
+          "avgBandwidth": "Durchschn. Bandbreite",
+          "uploadSpeed": "Upload-Geschw.",
+          "downloadSpeed": "Download-Geschw.",
+          "noServers": "Keine Server zum Testen",
+          "noServersDescription": "Bitte konfigurieren Sie zuerst mindestens einen TURN-Server",
+          "testingDescription": "TURN-Server-Verbindungslatenz wird getestet...",
+          "testingBandwidth": "Bandbreite wird getestet",
+          "testingBandwidthDescription": "TURN-Server-Bandbreitengeschwindigkeit wird getestet, ~5 Sekunden pro Server...",
+          "testComplete": "Latenztest abgeschlossen",
+          "testCompleteDescription": "Erfolgreich: {{success}} | Fehlgeschlagen: {{failed}} | Zeitüberschreitung: {{timeout}}",
+          "bandwidthTestComplete": "Bandbreitentest abgeschlossen",
+          "bandwidthTestCompleteDescription": "{{success}} Server erfolgreich getestet, durchschnittliche Bandbreite: {{avgBandwidth}} Mbps",
+          "testFailed": "Test fehlgeschlagen",
+          "testFailedDescription": "TURN-Server können nicht getestet werden, bitte versuchen Sie es später erneut",
+          "latencyMode": "Schnellmodus",
+          "latencyModeHint": "Nur Verbindungslatenz testen (~10 Sekunden)",
+          "bandwidthMode": "Bandbreitenmodus",
+          "bandwidthModeHint": "Tatsächliche Übertragungsgeschwindigkeit testen (~5-10 Sekunden pro Server)"
         }
       }
     },

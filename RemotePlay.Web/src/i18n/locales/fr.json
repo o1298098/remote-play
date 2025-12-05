@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "Le frontend et le backend ont établi une connexion via le serveur TURN{{latency}}{{types}}",
         "testConnectionFailed": "Test de connexion échoué",
         "testConnectionFailedDescription": "Impossible d'établir une connexion frontend-backend via le serveur TURN",
-        "testConnectionNoServers": "Veuillez d'abord configurer au moins un serveur TURN"
+        "testConnectionNoServers": "Veuillez d'abord configurer au moins un serveur TURN",
+        "testingBandwidth": "Test de bande passante",
+        "testingBandwidthDescription": "Test de la vitesse de bande passante du serveur TURN, environ 5 secondes..."
       },
       "webrtc": {
         "title": "Configuration WebRTC",
@@ -335,6 +337,33 @@
           "point1": "IP publique : Dans les environnements conteneur ou NAT, si le serveur est dans un réseau privé, vous devez définir l'IP publique pour vous assurer que les clients peuvent se connecter correctement",
           "point2": "Plage de ports ICE : Spécifiez la plage de ports UDP utilisée par WebRTC. Il est recommandé que la plage ne soit pas trop large (par ex. 100-200 ports)",
           "point3": "Après avoir enregistré la configuration, les nouvelles connexions WebRTC utiliseront ces paramètres"
+        },
+        "test": {
+          "testButton": "Test rapide de latence",
+          "testBandwidthButton": "Tester la vitesse de bande passante",
+          "testing": "Test en cours...",
+          "results": "Résultats du test",
+          "success": "Succès",
+          "failed": "Échoué",
+          "latency": "Latence",
+          "avgBandwidth": "Bande passante moy.",
+          "uploadSpeed": "Vitesse d'envoi",
+          "downloadSpeed": "Vitesse de téléchargement",
+          "noServers": "Aucun serveur à tester",
+          "noServersDescription": "Veuillez d'abord configurer au moins un serveur TURN",
+          "testingDescription": "Test de latence de connexion du serveur TURN...",
+          "testingBandwidth": "Test de bande passante",
+          "testingBandwidthDescription": "Test de vitesse de bande passante du serveur TURN, ~5 secondes par serveur...",
+          "testComplete": "Test de latence terminé",
+          "testCompleteDescription": "Succès : {{success}} | Échoué : {{failed}} | Délai dépassé : {{timeout}}",
+          "bandwidthTestComplete": "Test de bande passante terminé",
+          "bandwidthTestCompleteDescription": "{{success}} serveur(s) testé(s) avec succès, bande passante moyenne : {{avgBandwidth}} Mbps",
+          "testFailed": "Test échoué",
+          "testFailedDescription": "Impossible de tester les serveurs TURN, veuillez réessayer plus tard",
+          "latencyMode": "Mode rapide",
+          "latencyModeHint": "Tester uniquement la latence de connexion (~10 secondes)",
+          "bandwidthMode": "Mode bande passante",
+          "bandwidthModeHint": "Tester la vitesse de transfert réelle (~5-10 secondes par serveur)"
         }
       }
     },

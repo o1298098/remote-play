@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Save, Plus, Trash2, Server, Edit2, X, TestTube, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
+import { Save, Plus, Trash2, Server, Edit2, X, TestTube, CheckCircle2, XCircle, Loader2, Activity, Zap } from 'lucide-react'
 import { streamingService, type TurnServerConfig } from '@/service/streaming.service'
-import { testTurnServer, type TurnServerTestResult } from '@/utils/turn-server-test'
+import { testTurnServer, testTurnServerBandwidth, type TurnServerTestResult } from '@/utils/turn-test'
 
 export default function TurnServerSettingsTab() {
   const { t } = useTranslation()
@@ -19,6 +19,7 @@ export default function TurnServerSettingsTab() {
   const [editingServer, setEditingServer] = useState<TurnServerConfig | null>(null)
   const [testingIndex, setTestingIndex] = useState<number | null>(null)
   const [testResults, setTestResults] = useState<Map<number, TurnServerTestResult>>(new Map())
+  const [bandwidthTestMode, setBandwidthTestMode] = useState(false)
 
   useEffect(() => {
     loadTurnConfig()
@@ -147,30 +148,50 @@ export default function TurnServerSettingsTab() {
 
     setTestingIndex(index)
     try {
-      const result = await testTurnServer(server, 10000)
+      let result: TurnServerTestResult
+      
+      if (bandwidthTestMode) {
+        // 带宽测试模式
+        toast({
+          title: t('devices.settings.turnServer.testingBandwidth'),
+          description: t('devices.settings.turnServer.testingBandwidthDescription'),
+        })
+        result = await testTurnServerBandwidth(server, 5, 30000)
+      } else {
+        // 快速延迟测试模式
+        result = await testTurnServer(server, 10000)
+      }
+
       const newResults = new Map(testResults)
       newResults.set(index, result)
       setTestResults(newResults)
 
-      if (result.success) {
+      if (result.status === 'success') {
+        let description = ''
+        if (result.latency) {
+          description += `${t('devices.settings.webrtc.test.latency')}: ${result.latency}ms`
+        }
+        if (result.bandwidth) {
+          if (description) description += ' | '
+          description += `${t('devices.settings.webrtc.test.avgBandwidth')}: ${result.bandwidth} Mbps`
+        }
+        
         toast({
           title: t('devices.settings.turnServer.testSuccess'),
-          description: t('devices.settings.turnServer.testSuccessDescription', {
-            latency: result.latency ? `${result.latency}ms` : '',
-          }),
+          description: description || t('devices.settings.turnServer.testSuccessDescription', { latency: '' }),
         })
       } else {
         toast({
           title: t('devices.settings.turnServer.testFailed'),
-          description: result.error || t('devices.settings.turnServer.testFailedDescription'),
+          description: result.errorMessage || t('devices.settings.turnServer.testFailedDescription'),
           variant: 'destructive',
         })
       }
     } catch (error) {
       const errorResult: TurnServerTestResult = {
-        success: false,
-        server,
-        error: error instanceof Error ? error.message : t('devices.settings.turnServer.testFailedDescription'),
+        url: server.url || 'unknown',
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : t('devices.settings.turnServer.testFailedDescription'),
       }
       const newResults = new Map(testResults)
       newResults.set(index, errorResult)
@@ -211,6 +232,38 @@ export default function TurnServerSettingsTab() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 测试模式切换 */}
+          {turnServers.length > 0 && (
+            <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center gap-2">
+                {bandwidthTestMode ? (
+                  <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                ) : (
+                  <Zap className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+                )}
+                <div>
+                  <div className="text-sm font-medium">
+                    {bandwidthTestMode
+                      ? t('devices.settings.webrtc.test.bandwidthMode')
+                      : t('devices.settings.webrtc.test.latencyMode')}
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
+                    {bandwidthTestMode
+                      ? t('devices.settings.webrtc.test.bandwidthModeHint')
+                      : t('devices.settings.webrtc.test.latencyModeHint')}
+                  </div>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={bandwidthTestMode}
+                onChange={(e) => setBandwidthTestMode(e.target.checked)}
+                disabled={testingIndex !== null}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
           {turnServers.length === 0 ? (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <p className="text-gray-700 dark:text-gray-300">{t('devices.settings.turnServer.empty')}</p>
@@ -302,7 +355,7 @@ export default function TurnServerSettingsTab() {
                             </Label>
                             {testResults.has(index) && (
                               <div className="flex items-center gap-1">
-                                {testResults.get(index)?.success ? (
+                                {testResults.get(index)?.status === 'success' ? (
                                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                                 ) : (
                                   <XCircle className="h-4 w-4 text-red-500" />
@@ -319,24 +372,41 @@ export default function TurnServerSettingsTab() {
                             </div>
                           )}
                           {testResults.has(index) && (
-                            <div className="mt-2 text-xs">
-                              {testResults.get(index)?.success ? (
-                                <div className="text-green-600 dark:text-green-400">
-                                  {t('devices.settings.turnServer.testSuccess')}
+                            <div className="mt-2 text-xs space-y-1">
+                              {testResults.get(index)?.status === 'success' ? (
+                                <div className="space-y-1">
+                                  <div className="text-green-600 dark:text-green-400">
+                                    ✓ {t('devices.settings.webrtc.test.success')}
+                                    {testResults.get(index)?.type && (
+                                      <span className="ml-2 text-gray-500 dark:text-gray-400">
+                                        ({testResults.get(index)!.type})
+                                      </span>
+                                    )}
+                                  </div>
                                   {testResults.get(index)?.latency && (
-                                    <span className="ml-2">
-                                      ({testResults.get(index)!.latency}ms)
-                                    </span>
+                                    <div className="text-gray-600 dark:text-gray-400">
+                                      ⏱️ {t('devices.settings.webrtc.test.latency')}: <span className="font-semibold">{testResults.get(index)!.latency}ms</span>
+                                    </div>
                                   )}
-                                  {testResults.get(index)?.candidateType && (
-                                    <span className="ml-2 text-gray-500 dark:text-gray-400">
-                                      [{testResults.get(index)!.candidateType}]
-                                    </span>
+                                  {testResults.get(index)?.bandwidth && (
+                                    <div className="text-blue-600 dark:text-blue-400">
+                                      📊 {t('devices.settings.webrtc.test.avgBandwidth')}: <span className="font-semibold">{testResults.get(index)!.bandwidth} Mbps</span>
+                                    </div>
+                                  )}
+                                  {testResults.get(index)?.uploadSpeed !== undefined && (
+                                    <div className="text-gray-600 dark:text-gray-400">
+                                      ↑ {t('devices.settings.webrtc.test.uploadSpeed')}: <span className="font-semibold">{testResults.get(index)!.uploadSpeed} Mbps</span>
+                                    </div>
+                                  )}
+                                  {testResults.get(index)?.downloadSpeed !== undefined && (
+                                    <div className="text-gray-600 dark:text-gray-400">
+                                      ↓ {t('devices.settings.webrtc.test.downloadSpeed')}: <span className="font-semibold">{testResults.get(index)!.downloadSpeed} Mbps</span>
+                                    </div>
                                   )}
                                 </div>
                               ) : (
                                 <div className="text-red-600 dark:text-red-400">
-                                  {testResults.get(index)?.error || t('devices.settings.turnServer.testFailed')}
+                                  ✗ {testResults.get(index)?.errorMessage || t('devices.settings.turnServer.testFailed')}
                                 </div>
                               )}
                             </div>

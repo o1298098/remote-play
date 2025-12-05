@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "프론트엔드와 백엔드가 TURN 서버를 통해 연결을 설정했습니다{{latency}}{{types}}",
         "testConnectionFailed": "연결 테스트 실패",
         "testConnectionFailedDescription": "TURN 서버를 통해 프론트엔드-백엔드 연결을 설정할 수 없습니다",
-        "testConnectionNoServers": "먼저 최소 하나의 TURN 서버를 구성해 주세요"
+        "testConnectionNoServers": "먼저 최소 하나의 TURN 서버를 구성해 주세요",
+        "testingBandwidth": "대역폭 테스트 중",
+        "testingBandwidthDescription": "TURN 서버 대역폭 속도 테스트 중, 약 5초..."
       },
       "webrtc": {
         "title": "WebRTC 구성",
@@ -335,6 +337,33 @@
           "point1": "공용 IP: 컨테이너 또는 NAT 환경에서 서버가 사설 네트워크에 있는 경우 클라이언트가 올바르게 연결할 수 있도록 공용 IP를 설정해야 합니다",
           "point2": "ICE 포트 범위: WebRTC에서 사용하는 UDP 포트 범위를 지정합니다. 범위가 너무 크지 않은 것이 좋습니다 (예: 100-200 포트)",
           "point3": "구성을 저장하면 새로운 WebRTC 연결이 이러한 매개변수를 사용합니다"
+        },
+        "test": {
+          "testButton": "빠른 지연 시간 테스트",
+          "testBandwidthButton": "대역폭 속도 테스트",
+          "testing": "테스트 중...",
+          "results": "테스트 결과",
+          "success": "성공",
+          "failed": "실패",
+          "latency": "지연 시간",
+          "avgBandwidth": "평균 대역폭",
+          "uploadSpeed": "업로드 속도",
+          "downloadSpeed": "다운로드 속도",
+          "noServers": "테스트할 서버 없음",
+          "noServersDescription": "먼저 최소 하나의 TURN 서버를 구성해 주세요",
+          "testingDescription": "TURN 서버 연결 지연 시간 테스트 중...",
+          "testingBandwidth": "대역폭 테스트 중",
+          "testingBandwidthDescription": "TURN 서버 대역폭 속도 테스트 중, 서버당 약 5초...",
+          "testComplete": "지연 시간 테스트 완료",
+          "testCompleteDescription": "성공: {{success}} | 실패: {{failed}} | 시간 초과: {{timeout}}",
+          "bandwidthTestComplete": "대역폭 테스트 완료",
+          "bandwidthTestCompleteDescription": "{{success}}개 서버를 성공적으로 테스트, 평균 대역폭: {{avgBandwidth}} Mbps",
+          "testFailed": "테스트 실패",
+          "testFailedDescription": "TURN 서버를 테스트할 수 없습니다, 나중에 다시 시도해 주세요",
+          "latencyMode": "빠른 모드",
+          "latencyModeHint": "연결 지연 시간만 테스트 (~10초)",
+          "bandwidthMode": "대역폭 모드",
+          "bandwidthModeHint": "실제 전송 속도 테스트 (서버당 ~5-10초)"
         }
       }
     },

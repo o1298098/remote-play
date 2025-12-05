@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "フロントエンドとバックエンドがTURNサーバーを通じて接続を確立しました{{latency}}{{types}}",
         "testConnectionFailed": "接続テスト失敗",
         "testConnectionFailedDescription": "TURNサーバーを通じてフロントエンド-バックエンド接続を確立できません",
-        "testConnectionNoServers": "まず少なくとも1つのTURNサーバーを設定してください"
+        "testConnectionNoServers": "まず少なくとも1つのTURNサーバーを設定してください",
+        "testingBandwidth": "帯域幅をテスト中",
+        "testingBandwidthDescription": "TURNサーバーの帯域幅速度をテスト中、約5秒..."
       },
       "webrtc": {
         "title": "WebRTC設定",
@@ -335,6 +337,33 @@
           "point1": "パブリックIP：コンテナまたはNAT環境では、サーバーがプライベートネットワークにある場合、クライアントが正しく接続できるようにパブリックIPを設定する必要があります",
           "point2": "ICEポート範囲：WebRTCが使用するUDPポート範囲を指定します。範囲が大きすぎないことをお勧めします（例：100-200ポート）",
           "point3": "設定を保存すると、新しいWebRTC接続がこれらのパラメータを使用します"
+        },
+        "test": {
+          "testButton": "クイックレイテンシーテスト",
+          "testBandwidthButton": "帯域幅速度をテスト",
+          "testing": "テスト中...",
+          "results": "テスト結果",
+          "success": "成功",
+          "failed": "失敗",
+          "latency": "レイテンシー",
+          "avgBandwidth": "平均帯域幅",
+          "uploadSpeed": "アップロード速度",
+          "downloadSpeed": "ダウンロード速度",
+          "noServers": "テストするサーバーがありません",
+          "noServersDescription": "まず少なくとも1つのTURNサーバーを設定してください",
+          "testingDescription": "TURNサーバー接続レイテンシーをテスト中...",
+          "testingBandwidth": "帯域幅をテスト中",
+          "testingBandwidthDescription": "TURNサーバー帯域幅速度をテスト中、サーバーあたり約5秒...",
+          "testComplete": "レイテンシーテスト完了",
+          "testCompleteDescription": "成功: {{success}} | 失敗: {{failed}} | タイムアウト: {{timeout}}",
+          "bandwidthTestComplete": "帯域幅テスト完了",
+          "bandwidthTestCompleteDescription": "{{success}}台のサーバーを正常にテスト、平均帯域幅: {{avgBandwidth}} Mbps",
+          "testFailed": "テスト失敗",
+          "testFailedDescription": "TURNサーバーをテストできません、後でもう一度お試しください",
+          "latencyMode": "クイックモード",
+          "latencyModeHint": "接続レイテンシーのみテスト（約10秒）",
+          "bandwidthMode": "帯域幅モード",
+          "bandwidthModeHint": "実際の転送速度をテスト（サーバーあたり約5-10秒）"
         }
       }
     },

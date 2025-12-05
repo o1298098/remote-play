@@ -302,7 +302,9 @@
         "testConnectionSuccessDescription": "Frontend and backend have established connection through TURN server{{latency}}{{types}}",
         "testConnectionFailed": "Connection Test Failed",
         "testConnectionFailedDescription": "Unable to establish frontend-backend connection through TURN server",
-        "testConnectionNoServers": "Please configure at least one TURN server first"
+        "testConnectionNoServers": "Please configure at least one TURN server first",
+        "testingBandwidth": "Testing Bandwidth",
+        "testingBandwidthDescription": "Testing TURN server bandwidth speed, ~5 seconds..."
       },
       "webrtc": {
         "title": "WebRTC Configuration",
@@ -335,6 +337,33 @@
           "point1": "Public IP: In container or NAT environments, if the server is in a private network, you need to set the public IP to ensure clients can connect correctly",
           "point2": "ICE Port Range: Specify the UDP port range used by WebRTC. It is recommended that the range not be too large (e.g., 100-200 ports)",
           "point3": "After saving the configuration, new WebRTC connections will use these parameters"
+        },
+        "test": {
+          "testButton": "Quick Latency Test",
+          "testBandwidthButton": "Test Bandwidth Speed",
+          "testing": "Testing...",
+          "results": "Test Results",
+          "success": "Success",
+          "failed": "Failed",
+          "latency": "Latency",
+          "avgBandwidth": "Avg Bandwidth",
+          "uploadSpeed": "Upload Speed",
+          "downloadSpeed": "Download Speed",
+          "noServers": "No servers to test",
+          "noServersDescription": "Please configure at least one TURN server first",
+          "testingDescription": "Testing TURN server connection latency...",
+          "testingBandwidth": "Testing Bandwidth",
+          "testingBandwidthDescription": "Testing TURN server bandwidth speed, ~5 seconds per server...",
+          "testComplete": "Latency Test Complete",
+          "testCompleteDescription": "Success: {{success}} | Failed: {{failed}} | Timeout: {{timeout}}",
+          "bandwidthTestComplete": "Bandwidth Test Complete",
+          "bandwidthTestCompleteDescription": "Successfully tested {{success}} server(s), average bandwidth: {{avgBandwidth}} Mbps",
+          "testFailed": "Test Failed",
+          "testFailedDescription": "Unable to test TURN servers, please try again later",
+          "latencyMode": "Quick Mode",
+          "latencyModeHint": "Test connection latency only (~10 seconds)",
+          "bandwidthMode": "Bandwidth Mode",
+          "bandwidthModeHint": "Test actual transfer speed (~5-10 seconds per server)"
         }
       }
     },
