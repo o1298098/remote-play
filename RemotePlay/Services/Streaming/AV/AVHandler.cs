@@ -873,6 +873,46 @@ namespace RemotePlay.Services.Streaming.AV
             };
         }
 
+        /// <summary>
+        /// 强制重置 ReorderQueue（用户主动触发，解决画面冻结）
+        /// ✅ 公共方法：允许外部主动重置队列以恢复卡顿的视频流
+        /// </summary>
+        public void ForceResetReorderQueue()
+        {
+            _logger.LogWarning("🔄 用户主动触发重置 ReorderQueue");
+            
+            var statsBeforeReset = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
+            _logger.LogWarning("重置前ReorderQueue统计: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
+                statsBeforeReset.processed, statsBeforeReset.dropped, statsBeforeReset.timeoutDropped, statsBeforeReset.bufferSize);
+            
+            // 重置队列
+            ResetVideoReorderQueue();
+            
+            // 重置相关计数器
+            _consecutiveDrops = 0;
+            _lastDropTime = DateTime.MinValue;
+            _firstDropTime = DateTime.MinValue;
+            _consecutiveTimeouts = 0;
+            _lastTimeoutTime = DateTime.MinValue;
+            
+            // 请求关键帧以恢复视频流
+            if (_requestKeyframeCallback != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _requestKeyframeCallback();
+                        _logger.LogInformation("✅ 重置后已请求关键帧恢复视频流");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ 重置后请求关键帧失败");
+                    }
+                });
+            }
+        }
+
         private void RecordFrameStatus(FrameProcessStatus status, DateTime timestamp)
         {
             lock (_healthLock)

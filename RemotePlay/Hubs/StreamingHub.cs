@@ -155,6 +155,57 @@ namespace RemotePlay.Hubs
                 return null;
             }
         }
+
+        /// <summary>
+        /// 强制重置 ReorderQueue（用户主动触发，解决画面冻结）
+        /// </summary>
+        public async Task ForceResetReorderQueue(string sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+            {
+                await Clients.Caller.SendAsync("ReorderQueueResetResult", false);
+                await Clients.Caller.SendAsync("Error", "SessionId 不能为空");
+                return;
+            }
+
+            try
+            {
+                var session = _signalingService.GetSession(sessionId);
+                if (session == null)
+                {
+                    await Clients.Caller.SendAsync("ReorderQueueResetResult", false);
+                    await Clients.Caller.SendAsync("Error", "WebRTC 会话不存在");
+                    return;
+                }
+
+                if (!session.StreamingSessionId.HasValue)
+                {
+                    await Clients.Caller.SendAsync("ReorderQueueResetResult", false);
+                    await Clients.Caller.SendAsync("Error", "会话尚未绑定流，无法重置队列");
+                    return;
+                }
+
+                var success = await _streamingService.ForceResetReorderQueueAsync(session.StreamingSessionId.Value);
+                if (success)
+                {
+                    _logger.LogInformation("🔄 SignalR 强制重置 ReorderQueue 成功: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
+                        sessionId, session.StreamingSessionId, Context.ConnectionId);
+
+                    await Clients.Caller.SendAsync("ReorderQueueResetResult", true);
+                }
+                else
+                {
+                    await Clients.Caller.SendAsync("ReorderQueueResetResult", false);
+                    await Clients.Caller.SendAsync("Error", "流不存在或已结束");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ SignalR 强制重置 ReorderQueue 失败: SessionId={SessionId}, ConnectionId={ConnectionId}", sessionId, Context.ConnectionId);
+                await Clients.Caller.SendAsync("ReorderQueueResetResult", false);
+                await Clients.Caller.SendAsync("Error", "重置队列失败");
+            }
+        }
     }
 }
 

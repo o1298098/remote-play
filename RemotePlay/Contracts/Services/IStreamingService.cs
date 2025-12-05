@@ -12,6 +12,7 @@ namespace RemotePlay.Contracts.Services
         Task<RPStreamV2?> GetStreamAsync(Guid sessionId);
         Task<RemoteSession?> GetSessionAsync(Guid sessionId);
         Task<bool> IsStreamRunningAsync(Guid sessionId);
+        Task<bool> ForceResetReorderQueueAsync(Guid sessionId);
     }
 }
 

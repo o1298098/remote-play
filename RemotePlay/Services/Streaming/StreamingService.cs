@@ -293,6 +293,16 @@ namespace RemotePlay.Services.Streaming
         {
             return Task.FromResult(_streams.ContainsKey(sessionId));
         }
+
+        public Task<bool> ForceResetReorderQueueAsync(Guid sessionId)
+        {
+            if (_streams.TryGetValue(sessionId, out var stream))
+            {
+                stream.ForceResetReorderQueue();
+                return Task.FromResult(true);
+            }
+            return Task.FromResult(false);
+        }
     }
 }
 

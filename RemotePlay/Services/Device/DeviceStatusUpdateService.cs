@@ -23,6 +23,13 @@ namespace RemotePlay.Services.Device
         private readonly TimeSpan _updateInterval;
         private readonly int _discoveryTimeoutMs;
         private readonly int _batchSize;
+        private readonly int _maxMissedScans;
+        private readonly int _retryAttempts;
+        private readonly int _retryDelayMs;
+        
+        // 记录设备连续未发现的次数：Dictionary<DeviceId, MissedCount>
+        private readonly Dictionary<string, int> _missedScans = new();
+        private readonly object _missedScansLock = new();
 
         public DeviceStatusUpdateService(
             ILogger<DeviceStatusUpdateService> logger,
@@ -34,6 +41,9 @@ namespace RemotePlay.Services.Device
             _updateInterval = TimeSpan.FromSeconds(config.Value.UpdateIntervalSeconds);
             _discoveryTimeoutMs = config.Value.DiscoveryTimeoutMs;
             _batchSize = config.Value.BatchSize;
+            _maxMissedScans = config.Value.MaxMissedScansBeforeOffline;
+            _retryAttempts = config.Value.RetryAttempts;
+            _retryDelayMs = config.Value.RetryDelayMs;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -121,6 +131,7 @@ namespace RemotePlay.Services.Device
                             device,
                             discoveredDevicesMap,
                             context,
+                            discoveryService,
                             cancellationToken);
 
                         updatedCount++;
@@ -249,6 +260,7 @@ namespace RemotePlay.Services.Device
             Models.DB.PlayStation.Device device,
             Dictionary<string, ConsoleInfo> discoveredDevicesMap,
             RPContext context,
+            IDeviceDiscoveryService discoveryService,
             CancellationToken cancellationToken)
         {
             try
@@ -259,16 +271,72 @@ namespace RemotePlay.Services.Device
                     return new UpdateResult { HasError = true };
                 }
 
-                // 通过 hostid 在发现的设备中查找匹配的设备
-                if (discoveredDevicesMap.TryGetValue(device.HostId, out var consoleInfo))
+                ConsoleInfo? consoleInfo = null;
+                
+                // 首先在广播扫描结果中查找
+                if (discoveredDevicesMap.TryGetValue(device.HostId, out consoleInfo))
                 {
-                    // 设备在线，更新信息
-                    // 标准化状态值：OK、STANDBY、OFFLINE
+                    // 设备在广播扫描中被发现
+                    _logger.LogDebug("设备 {DeviceId} (HostId: {HostId}) 在广播扫描中被发现", device.Id, device.HostId);
+                }
+                else
+                {
+                    // 如果广播扫描未发现，且设备有IP地址，进行重试
+                    if (!string.IsNullOrEmpty(device.IpAddress) && _retryAttempts > 0)
+                    {
+                        _logger.LogDebug(
+                            "设备 {DeviceId} (HostId: {HostId}, IP: {IpAddress}) 未在广播扫描中发现，开始单独重试",
+                            device.Id, device.HostId, device.IpAddress);
+
+                        // 对特定IP进行重试
+                        for (int attempt = 1; attempt <= _retryAttempts; attempt++)
+                        {
+                            try
+                            {
+                                if (attempt > 1 && _retryDelayMs > 0)
+                                {
+                                    await Task.Delay(_retryDelayMs, cancellationToken);
+                                }
+
+                                consoleInfo = await discoveryService.DiscoverDeviceAsync(
+                                    device.IpAddress,
+                                    _discoveryTimeoutMs,
+                                    cancellationToken);
+
+                                if (consoleInfo != null && consoleInfo.Uuid == device.HostId)
+                                {
+                                    _logger.LogInformation(
+                                        "设备 {DeviceId} (HostId: {HostId}) 在第 {Attempt} 次重试中被发现",
+                                        device.Id, device.HostId, attempt);
+                                    break;
+                                }
+                            }
+                            catch (Exception retryEx)
+                            {
+                                _logger.LogDebug(retryEx, 
+                                    "设备 {DeviceId} (HostId: {HostId}) 第 {Attempt} 次重试失败",
+                                    device.Id, device.HostId, attempt);
+                            }
+                        }
+                    }
+                }
+
+                // 处理发现结果
+                if (consoleInfo != null)
+                {
+                    // 设备在线，重置错过计数
+                    lock (_missedScansLock)
+                    {
+                        _missedScans[device.Id] = 0;
+                    }
+
+                    // 更新设备信息
                     device.Status = NormalizeDeviceStatus(consoleInfo.status);
                     device.HostName = consoleInfo.Name;
                     device.HostType = consoleInfo.HostType ?? device.HostType;
                     device.SystemVersion = consoleInfo.SystemVerion ?? device.SystemVersion;
                     device.DiscoverProtocolVersion = consoleInfo.DeviceDiscoverPotocolVersion ?? device.DiscoverProtocolVersion;
+                    device.LastSeenAt = DateTime.UtcNow;
 
                     // 更新IP地址（IP地址可能已变化）
                     if (consoleInfo.Ip != device.IpAddress)
@@ -283,8 +351,36 @@ namespace RemotePlay.Services.Device
                 }
                 else
                 {
-                    // 设备不在发现的设备列表中，标记为离线
-                    device.Status = "OFFLINE";
+                    // 设备未发现，增加错过计数
+                    int missedCount;
+                    lock (_missedScansLock)
+                    {
+                        if (!_missedScans.ContainsKey(device.Id))
+                        {
+                            _missedScans[device.Id] = 0;
+                        }
+                        _missedScans[device.Id]++;
+                        missedCount = _missedScans[device.Id];
+                    }
+
+                    // 只有连续错过次数超过阈值才标记为离线
+                    if (missedCount >= _maxMissedScans)
+                    {
+                        if (device.Status != "OFFLINE")
+                        {
+                            _logger.LogWarning(
+                                "设备 {DeviceId} (HostId: {HostId}, IP: {IpAddress}) 连续 {MissedCount} 次扫描未发现，标记为离线",
+                                device.Id, device.HostId, device.IpAddress, missedCount);
+                            device.Status = "OFFLINE";
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogDebug(
+                            "设备 {DeviceId} (HostId: {HostId}) 本次未发现，但在宽限期内 ({MissedCount}/{MaxMissed})，保持当前状态: {Status}",
+                            device.Id, device.HostId, missedCount, _maxMissedScans, device.Status);
+                    }
+
                     return new UpdateResult { IsOnline = false };
                 }
             }
@@ -400,6 +496,22 @@ namespace RemotePlay.Services.Device
         /// 批处理大小
         /// </summary>
         public int BatchSize { get; set; } = 10;
+
+        /// <summary>
+        /// 连续多少次扫描未发现设备后才标记为离线
+        /// 这提供了一个"宽限期"，避免因网络波动导致的误判
+        /// </summary>
+        public int MaxMissedScansBeforeOffline { get; set; } = 3; // 默认连续3次未发现才离线
+
+        /// <summary>
+        /// 对未在广播扫描中发现的设备进行单独重试的次数
+        /// </summary>
+        public int RetryAttempts { get; set; } = 2; // 默认重试2次
+
+        /// <summary>
+        /// 重试之间的延迟时间（毫秒）
+        /// </summary>
+        public int RetryDelayMs { get; set; } = 500; // 默认500ms
     }
 }
 

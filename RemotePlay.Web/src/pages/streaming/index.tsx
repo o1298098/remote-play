@@ -78,6 +78,7 @@ export default function Streaming() {
     isStatsMonitoringEnabled,
     setStatsMonitoring,
     refreshStream,
+    forceResetReorderQueue,
     webrtcSessionId,
     isStalling,
   } = useStreamingConnection({
@@ -416,6 +417,7 @@ export default function Streaming() {
           onBack={handleBack}
           isStatsEnabled={isStatsMonitoringEnabled}
           onRefresh={isConnected ? () => { refreshStream() } : undefined}
+          onForceResetQueue={isConnected ? () => { forceResetReorderQueue() } : undefined}
         />
         <StreamingLoading />
       </div>
@@ -447,6 +449,7 @@ export default function Streaming() {
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
           onRefresh={isConnected ? () => { refreshStream() } : undefined}
+          onForceResetQueue={isConnected ? () => { forceResetReorderQueue() } : undefined}
         />
       )}
 

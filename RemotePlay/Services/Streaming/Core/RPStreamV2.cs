@@ -1594,6 +1594,16 @@ namespace RemotePlay.Services.Streaming.Core
             
             await SendIdrRequestAsync();
         }
+
+        /// <summary>
+        /// 强制重置 ReorderQueue（用户主动触发，解决画面冻结）
+        /// ✅ 公共方法：允许外部主动重置队列以恢复卡顿的视频流
+        /// </summary>
+        public void ForceResetReorderQueue()
+        {
+            _logger.LogWarning("🔄 用户主动触发重置视频流 ReorderQueue");
+            _avHandler?.ForceResetReorderQueue();
+        }
         
         /// <summary>
         /// 发送 IDR 请求（请求 PS5 发送关键帧）

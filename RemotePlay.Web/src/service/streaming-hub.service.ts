@@ -17,6 +17,7 @@ export class StreamingHubService {
   private connection: signalR.HubConnection | null = null
   private connectingPromise: Promise<signalR.HubConnection> | null = null
   private pendingKeyframeResolvers: Array<(success: boolean) => void> = []
+  private pendingReorderQueueResetResolvers: Array<(success: boolean) => void> = []
   
   // ✅ ICE Restart 事件回调
   public onIceRestartOffer?: (offerSdp: string) => void
@@ -55,6 +56,15 @@ export class StreamingHubService {
       }
     })
 
+    connection.on('ReorderQueueResetResult', (success: boolean) => {
+      const resolver = this.pendingReorderQueueResetResolvers.shift()
+      if (resolver) {
+        resolver(success)
+      } else {
+        console.debug('收到 ReorderQueueResetResult 事件，但没有待处理请求', success)
+      }
+    })
+
     // ✅ 监听 ICE Restart Offer 事件
     connection.on('IceRestartOffer', (offerSdp: string) => {
       console.log('🔄 收到 ICE Restart Offer，触发重新协商')
@@ -84,6 +94,7 @@ export class StreamingHubService {
       this.connection = null
       this.connectingPromise = null
       this.pendingKeyframeResolvers.splice(0, this.pendingKeyframeResolvers.length)
+      this.pendingReorderQueueResetResolvers.splice(0, this.pendingReorderQueueResetResolvers.length)
     })
 
     connection.onreconnecting((error) => {
@@ -106,6 +117,7 @@ export class StreamingHubService {
         this.connection = null
         this.connectingPromise = null
         this.pendingKeyframeResolvers.splice(0, this.pendingKeyframeResolvers.length)
+        this.pendingReorderQueueResetResolvers.splice(0, this.pendingReorderQueueResetResolvers.length)
         throw error
       })
 
@@ -152,6 +164,46 @@ export class StreamingHubService {
     }
   }
 
+  async forceResetReorderQueue(sessionId: string): Promise<boolean> {
+    if (!sessionId) {
+      console.warn('强制重置 ReorderQueue 失败：SessionId 为空')
+      return false
+    }
+
+    try {
+      const connection = await this.ensureConnection()
+      return await new Promise<boolean>((resolve) => {
+        const resolver = (success: boolean) => {
+          window.clearTimeout(timeoutId)
+          resolve(success)
+        }
+        this.pendingReorderQueueResetResolvers.push(resolver)
+
+        const timeoutId = window.setTimeout(() => {
+          const index = this.pendingReorderQueueResetResolvers.indexOf(resolver)
+          if (index >= 0) {
+            this.pendingReorderQueueResetResolvers.splice(index, 1)
+          }
+          console.warn('强制重置 ReorderQueue 超时')
+          resolve(false)
+        }, 5000)
+
+        connection.invoke('ForceResetReorderQueue', sessionId).catch((error) => {
+          console.error('通过 StreamingHub 强制重置 ReorderQueue 失败:', error)
+          const index = this.pendingReorderQueueResetResolvers.indexOf(resolver)
+          if (index >= 0) {
+            this.pendingReorderQueueResetResolvers.splice(index, 1)
+          }
+          window.clearTimeout(timeoutId)
+          resolve(false)
+        })
+      })
+    } catch (error) {
+      console.error('建立 StreamingHub 连接失败，无法强制重置 ReorderQueue:', error)
+      return false
+    }
+  }
+
   async disconnect(): Promise<void> {
     if (this.connection) {
       try {
@@ -164,6 +216,7 @@ export class StreamingHubService {
     this.connection = null
     this.connectingPromise = null
     this.pendingKeyframeResolvers.splice(0, this.pendingKeyframeResolvers.length)
+    this.pendingReorderQueueResetResolvers.splice(0, this.pendingReorderQueueResetResolvers.length)
   }
 
   /**

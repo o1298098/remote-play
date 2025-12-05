@@ -51,6 +51,8 @@ namespace RemotePlay.Models.DB.PlayStation
         public string? Notes { get; set; }
         [Column("last_play_date")]
         public DateTime? LastPlayDate { get; set; }
+        [Column("last_seen_at")]
+        public DateTime? LastSeenAt { get; set; }
         [Column("status")]
         public string? Status { get; set; }
 

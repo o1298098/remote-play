@@ -250,6 +250,85 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     return ok
   }, [requestKeyframe, t, toast])
 
+  // 强制重置 ReorderQueue（用户主动触发，解决画面冻结）
+  const forceResetReorderQueue = useCallback(async () => {
+    const sessionId = webrtcSessionIdRef.current || webrtcSessionId
+    if (!sessionId) {
+      console.warn('⚠️ 无法重置队列，缺少 SessionId')
+      try {
+        toast({
+          title: '无法重置队列',
+          description: '当前会话不可用',
+          variant: 'destructive',
+          duration: 2000,
+        })
+      } catch {
+        // ignore toast failure
+      }
+      return false
+    }
+
+    if (!isStreamBoundRef.current) {
+      console.warn('⚠️ 无法重置队列，会话尚未绑定远程流')
+      try {
+        toast({
+          title: '无法重置队列',
+          description: '会话尚未绑定远程流',
+          variant: 'destructive',
+          duration: 2000,
+        })
+      } catch {
+        // ignore toast failure
+      }
+      return false
+    }
+
+    console.warn('🔄 用户手动触发重置 ReorderQueue', { sessionId })
+
+    try {
+      const success = await streamingHubService.forceResetReorderQueue(sessionId)
+      if (success) {
+        console.log('✅ 重置队列成功')
+        try {
+          toast({
+            title: '已重置视频队列',
+            description: '正在请求关键帧恢复画面...',
+            duration: 2000,
+          })
+        } catch {
+          // ignore toast failure
+        }
+        return true
+      } else {
+        console.warn('⚠️ 重置队列未成功')
+        try {
+          toast({
+            title: '重置队列失败',
+            description: '请稍后重试',
+            variant: 'destructive',
+            duration: 2000,
+          })
+        } catch {
+          // ignore toast failure
+        }
+        return false
+      }
+    } catch (error) {
+      console.error('❌ 重置队列异常:', error)
+      try {
+        toast({
+          title: '重置队列失败',
+          description: '发生异常，请稍后重试',
+          variant: 'destructive',
+          duration: 2000,
+        })
+      } catch {
+        // ignore toast failure
+      }
+      return false
+    }
+  }, [webrtcSessionId, toast])
+
   const resolveWebrtcSessionId = useCallback(() => {
     if (webrtcSessionIdRef.current) {
       return webrtcSessionIdRef.current
@@ -2582,6 +2661,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     isStatsMonitoringEnabled: isStatsEnabled,
     setStatsMonitoring,
     refreshStream,
+    forceResetReorderQueue,
     webrtcSessionId,
     stopStickProcessing,
     startStickProcessing,
