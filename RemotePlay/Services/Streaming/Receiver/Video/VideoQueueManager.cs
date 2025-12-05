@@ -12,8 +12,9 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
         private readonly ConcurrentQueue<VideoFrame> _idrQueue = new();
         private readonly ConcurrentQueue<VideoFrame> _normalQueue = new();
         
-        private const int MAX_QUEUE_SIZE = 20;
-        private const int MAX_IDR_QUEUE_SIZE = 10; // IDR队列通常较小
+        // 低延迟队列限制
+        private const int MAX_QUEUE_SIZE = 15;
+        private const int MAX_IDR_QUEUE_SIZE = 3;
 
         /// <summary>
         /// 入队IDR帧（优先队列）

@@ -119,10 +119,9 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
         }
         
         /// <summary>
-        /// ✅ 改进：异步调用 SendVideo 方法（带超时和重试）
-        /// 使用 Task.WhenAny 确保超时能真正生效，即使底层方法阻塞
+        /// 异步调用 SendVideo 方法
         /// </summary>
-        public async Task<bool> InvokeSendVideoAsync(uint timestamp, byte[] data, int timeoutMs = 200, int maxRetries = 2)
+        public async Task<bool> InvokeSendVideoAsync(uint timestamp, byte[] data, int timeoutMs = 100, int maxRetries = 1)
         {
             if (_cachedSendVideoMethod == null)
             {
@@ -139,8 +138,6 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                 {
                     if (_peerConnection == null) return false;
                     
-                    // ✅ 改进：使用 Task.WhenAny 确保超时能真正生效
-                    // 即使底层方法阻塞，超时任务也会先完成
                     var invokeTask = Task.Run(() =>
                     {
                         try
@@ -158,7 +155,6 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                     
                     if (completedTask == timeoutTask)
                     {
-                        // 超时：如果是最后一次重试，返回失败；否则重试
                         if (retry < maxRetries)
                         {
                             await Task.Delay(5).ConfigureAwait(false);
@@ -169,7 +165,6 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                         return false;
                     }
                     
-                    // 检查是否有异常
                     if (invokeTask.IsFaulted)
                     {
                         var ex = invokeTask.Exception?.InnerException ?? invokeTask.Exception ?? new Exception("SendVideo failed");
@@ -182,7 +177,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                         return false;
                     }
                     
-                    return true; // 成功
+                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -200,8 +195,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
         }
         
         /// <summary>
-        /// ✅ 改进：异步调用 SendRtpRaw 方法（5参数版本，带超时和重试）
-        /// 使用 Task.WhenAny 确保超时能真正生效，即使底层方法阻塞
+        /// 异步调用 SendRtpRaw 方法（5参数版本）
         /// </summary>
         public async Task<bool> InvokeSendRtpRawAsync(
             SDPMediaTypesEnum mediaType,
@@ -209,8 +203,8 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             uint timestamp,
             int markerBit,
             int payloadType,
-            int timeoutMs = 200,
-            int maxRetries = 2)
+            int timeoutMs = 100,
+            int maxRetries = 1)
         {
             if (_cachedSendRtpRawMethod == null)
             {
@@ -227,8 +221,6 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                 {
                     if (_peerConnection == null) return false;
                     
-                    // ✅ 改进：使用 Task.WhenAny 确保超时能真正生效
-                    // 即使底层方法阻塞，超时任务也会先完成
                     var invokeTask = Task.Run(() =>
                     {
                         try
@@ -248,7 +240,6 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                     
                     if (completedTask == timeoutTask)
                     {
-                        // 超时：如果是最后一次重试，返回失败；否则重试
                         if (retry < maxRetries)
                         {
                             await Task.Delay(5).ConfigureAwait(false);
@@ -259,7 +250,6 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                         return false;
                     }
                     
-                    // 检查是否有异常
                     if (invokeTask.IsFaulted)
                     {
                         var ex = invokeTask.Exception?.InnerException ?? invokeTask.Exception ?? new Exception("SendRtpRaw failed");
@@ -272,7 +262,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                         return false;
                     }
                     
-                    return true; // 成功
+                    return true;
                 }
                 catch (Exception ex)
                 {

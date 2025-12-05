@@ -134,6 +134,10 @@ namespace RemotePlay.Services.Streaming.Receiver
         private bool _audioMethodsInitialized = false;
         private readonly object _audioMethodsLock = new object();
         
+        // ✅ 音频发送限流：防止任务积压（但不能太严格，避免丢帧导致爆音）
+        // 10 个并发任务 = 200ms 缓冲（假设每个任务 20ms）
+        private readonly SemaphoreSlim _audioSendSemaphore = new(10, 10);  // 最多 10 个并发音频发送任务
+        
         // ✅ 性能优化：缓存连接状态，减少属性访问开销
         private RTCPeerConnectionState? _cachedConnectionState;
         private RTCIceConnectionState? _cachedIceState;
@@ -596,6 +600,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                     _latencyStats?.RecordPacketSent(_sessionId, "video", frameIndex);
                 });
                 
+                // ✅ 设置背压机制回调：队列积压时请求关键帧
+                _videoPipeline.SetOnKeyframeRequest(() =>
+                {
+                    _logger.LogInformation("🎯 视频管道触发背压机制，请求关键帧");
+                    OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
+                });
+                
                 _logger.LogInformation("✅ 模块化视频处理管道已提前初始化 (SSRC={Ssrc}, H264={H264}, HEVC={Hevc})", 
                     _videoSsrc, _negotiatedPtH264, _negotiatedPtHevc);
             }
@@ -629,6 +640,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                 _videoPipeline.SetOnPacketSent(frameIndex => 
                 {
                     _latencyStats?.RecordPacketSent(_sessionId, "video", frameIndex);
+                });
+                
+                // ✅ 设置背压机制回调：队列积压时请求关键帧
+                _videoPipeline.SetOnKeyframeRequest(() =>
+                {
+                    _logger.LogInformation("🎯 视频管道触发背压机制，请求关键帧");
+                    OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
                 });
                 
                 _logger.LogInformation("✅ 模块化视频处理管道已初始化 (SSRC={Ssrc}, H264={H264}, HEVC={Hevc})", 
@@ -956,6 +974,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                         _logger.LogWarning(ex, "⚠️ 释放视频处理管道时发生异常");
                     }
                 }
+                
+                // ✅ 释放音频发送信号量
+                try
+                {
+                    _audioSendSemaphore?.Dispose();
+                }
+                catch { }
                 
                 // ✅ 使用超时机制释放 WebRTC 连接，避免阻塞太久
                 if (_peerConnection != null)

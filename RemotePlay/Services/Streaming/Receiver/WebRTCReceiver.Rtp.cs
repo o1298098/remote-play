@@ -14,8 +14,8 @@ namespace RemotePlay.Services.Streaming.Receiver
     public sealed partial class WebRTCReceiver
     {
         /// <summary>
-        /// ✅ 修复：添加超时保护，避免同步阻塞导致前端冻结
-        /// 使用异步方式调用，带超时机制
+        /// ✅ 修复：添加超时保护和限流机制，避免同步阻塞导致前端冻结
+        /// 使用异步方式调用，带超时机制和信号量限流
         /// </summary>
         private void SendAudioRTPRaw(byte[] rtpBytes, byte[] originalData, int payloadType = 111)
         {
@@ -23,9 +23,24 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 if (_peerConnection == null) return;
                 
-                // ✅ 使用异步方式调用，避免阻塞
+                // ✅ 音频限流优化：使用带超时的等待，避免直接丢帧导致爆音
+                // 音频对连续性要求极高，丢帧会导致爆音、杂音等问题
                 _ = Task.Run(async () =>
                 {
+                    // ✅ 修复：等待最多 20ms（音频帧间隔），避免直接丢帧
+                    // 20ms = 1 帧 @ 50fps（音频通常 48kHz，10ms 或 20ms 一帧）
+                    bool acquired = await _audioSendSemaphore.WaitAsync(20);
+                    
+                    if (!acquired)
+                    {
+                        // 仍然无法获取信号量，说明积压严重，此时才丢帧
+                        if (_audioPacketCount % 100 == 0)
+                        {
+                            _logger.LogWarning("⚠️ 音频发送严重积压（等待 20ms 后仍无法发送），丢弃此帧");
+                        }
+                        return;
+                    }
+                    
                     try
                     {
                         await SendAudioRTPRawAsync(rtpBytes, originalData, payloadType);
@@ -36,6 +51,10 @@ namespace RemotePlay.Services.Streaming.Receiver
                         {
                             _logger.LogWarning(ex, "⚠️ 异步发送音频 RTP 包失败");
                         }
+                    }
+                    finally
+                    {
+                        _audioSendSemaphore.Release();
                     }
                 });
             }
