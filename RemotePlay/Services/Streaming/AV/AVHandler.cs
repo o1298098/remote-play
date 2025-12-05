@@ -464,19 +464,19 @@ namespace RemotePlay.Services.Streaming.AV
                         }
                     }
                 },
-                sizeStart: 128,  // ✅ 增加初始窗口大小（从64增加到128）
-                sizeMin: 64,     // ✅ 增加最小窗口大小（从32增加到64）
-                sizeMax: 512,    // ✅ 增加最大窗口大小（从256增加到512），容纳更多乱序包
-                timeoutMs: 1000, // ✅ 延长超时时间到1000ms（从200ms增加），给网络延迟更多容错空间
-                dropStrategy: ReorderQueueDropStrategy.End, // ✅ 改为End策略：丢弃新到达的包，而不是丢弃队首（保护关键帧）
+                sizeStart: 128,
+                sizeMin: 64,
+                sizeMax: 512,
+                timeoutMs: 2000,
+                dropStrategy: ReorderQueueDropStrategy.End,
                 timeoutCallback: OnReorderQueueTimeout);
         }
 
         // 超时恢复机制：跟踪连续超时次数，超过阈值时请求关键帧
         private int _consecutiveTimeouts = 0;
         private DateTime _lastTimeoutTime = DateTime.MinValue;
-        private const int MAX_CONSECUTIVE_TIMEOUTS = 5; // ✅ 调整为5次（因为超时时间已增加到1000ms，5次即5秒）
-        private const int TIMEOUT_WINDOW_MS = 5000; // ✅ 调整为5秒内的超时才算连续（与超时时间匹配）
+        private const int MAX_CONSECUTIVE_TIMEOUTS = 3;
+        private const int TIMEOUT_WINDOW_MS = 8000;
         
         // ✅ 丢包恢复机制：跟踪连续丢弃次数，超过阈值时重置ReorderQueue
         private int _consecutiveDrops = 0;
@@ -716,8 +716,8 @@ namespace RemotePlay.Services.Streaming.AV
                 int processedCount = 0;
                 DateTime lastQueueLogTime = DateTime.UtcNow;
                 DateTime lastTimeoutCheckTime = DateTime.UtcNow;
-                const int QUEUE_LOG_INTERVAL_SECONDS = 5; // 每5秒输出一次队列状态
-                const int TIMEOUT_CHECK_INTERVAL_MS = 100; // ✅ 每100ms检查一次超时（超时时间已增加到1000ms，100ms检查足够及时）
+                const int QUEUE_LOG_INTERVAL_SECONDS = 5;
+                const int TIMEOUT_CHECK_INTERVAL_MS = 200;
 
                 while (!token.IsCancellationRequested && !_ct.IsCancellationRequested)
                 {

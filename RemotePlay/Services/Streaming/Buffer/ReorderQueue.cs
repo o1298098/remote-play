@@ -443,9 +443,26 @@ namespace RemotePlay.Services.Streaming.Buffer
             var toRemove = new List<uint>();
             uint seq = _begin;
             int consecutiveTimeouts = 0;
-            const int MAX_CONSECUTIVE_TIMEOUTS = 5;
+            int maxConsecutiveTimeouts = 5;
+            
+            // 检测队列积压情况，动态调整恢复策略
+            int arrivedCount = _buffer.Values.Count(e => e.IsSet);
+            bool isHeavyBacklog = arrivedCount > 40;
+            
+            if (isHeavyBacklog)
+            {
+                // 队列严重积压（大量包等待输出），更激进地跳过缺失包
+                maxConsecutiveTimeouts = 30;
+                _logger.LogWarning("ReorderQueue: 检测到严重积压 (arrivedCount={Arrived}, bufferSize={BufferSize}), 启用快速恢复模式 (maxSkip={MaxSkip})", 
+                    arrivedCount, _count, maxConsecutiveTimeouts);
+            }
+            else if (arrivedCount > 20)
+            {
+                // 中度积压，适度提高恢复速度
+                maxConsecutiveTimeouts = 15;
+            }
 
-            for (int i = 0; i < _count && consecutiveTimeouts < MAX_CONSECUTIVE_TIMEOUTS; i++)
+            for (int i = 0; i < _count && consecutiveTimeouts < maxConsecutiveTimeouts; i++)
             {
                 if (!_buffer.TryGetValue(seq, out var entry))
                 {
@@ -463,8 +480,16 @@ namespace RemotePlay.Services.Streaming.Buffer
                     if (entry.ReservedTime != DateTime.MinValue)
                     {
                         var elapsed = (now - entry.ReservedTime).TotalMilliseconds;
-                        if (elapsed > _timeoutMs * 2)
-                            isTimeout = true; // 给未到达的 slot 更长时间
+                        double timeoutThreshold = _timeoutMs * 2;
+                        
+                        // 如果队列积压严重，缩短等待时间
+                        if (isHeavyBacklog)
+                        {
+                            timeoutThreshold = _timeoutMs * 1.2;
+                        }
+                        
+                        if (elapsed > timeoutThreshold)
+                            isTimeout = true;
                     }
                     else
                     {
@@ -475,7 +500,15 @@ namespace RemotePlay.Services.Streaming.Buffer
                 else
                 {
                     var elapsed = (now - entry.ArrivalTime).TotalMilliseconds;
-                    if (elapsed > _timeoutMs)
+                    double timeoutThreshold = _timeoutMs;
+                    
+                    // 如果队列积压严重且这个包已经等待很久，优先输出
+                    if (isHeavyBacklog)
+                    {
+                        timeoutThreshold = _timeoutMs * 0.5;
+                    }
+                    
+                    if (elapsed > timeoutThreshold)
                         isTimeout = true;
                 }
 
@@ -500,8 +533,20 @@ namespace RemotePlay.Services.Streaming.Buffer
                 }
                 else
                 {
-                    // 遇到未超时 slot 停止（避免跳过仍有机会到达的包）
-                    break;
+                    // 如果队列积压严重，即使未超时也继续跳过未到达的包
+                    if (isHeavyBacklog && !entry.IsSet)
+                    {
+                        toRemove.Add(seq);
+                        consecutiveTimeouts++;
+                        _totalDropped++;
+                        _totalTimeoutDropped++;
+                        seq = MaskSeq(seq + 1);
+                    }
+                    else
+                    {
+                        // 遇到未超时 slot 停止（避免跳过仍有机会到达的包）
+                        break;
+                    }
                 }
             }
 
