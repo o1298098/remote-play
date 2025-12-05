@@ -447,19 +447,19 @@ namespace RemotePlay.Services.Streaming.Buffer
             
             // 检测队列积压情况，动态调整恢复策略
             int arrivedCount = _buffer.Values.Count(e => e.IsSet);
-            bool isHeavyBacklog = arrivedCount > 50;
+            bool isHeavyBacklog = arrivedCount > 35;
             
             if (isHeavyBacklog)
             {
-                // 队列严重积压，适度提高恢复速度，但避免跳过太多导致画面跳动
-                maxConsecutiveTimeouts = 12;
+                // 游戏串流优化：队列积压时快速恢复，保持低延迟
+                maxConsecutiveTimeouts = 10;
                 _logger.LogWarning("ReorderQueue: 检测到严重积压 (arrivedCount={Arrived}, bufferSize={BufferSize}), 启用快速恢复模式 (maxSkip={MaxSkip})", 
                     arrivedCount, _count, maxConsecutiveTimeouts);
             }
-            else if (arrivedCount > 30)
+            else if (arrivedCount > 20)
             {
                 // 中度积压，适度提高恢复速度
-                maxConsecutiveTimeouts = 8;
+                maxConsecutiveTimeouts = 7;
             }
 
             for (int i = 0; i < _count && consecutiveTimeouts < maxConsecutiveTimeouts; i++)

@@ -395,17 +395,14 @@ namespace RemotePlay.Services.Streaming.AV
                     _logger.LogWarning("⚠️ Video packet dropped in reorder queue: seq={Seq}, frame={Frame}, unitIndex={UnitIndex}/{Total}",
                         droppedPacket.Index, droppedPacket.FrameIndex, droppedPacket.UnitIndex, droppedPacket.UnitsTotal);
                     
-                    // ✅ 检测连续丢弃，如果过多则重置ReorderQueue
                     var now = DateTime.UtcNow;
                     if (_lastDropTime != DateTime.MinValue && 
                         (now - _lastDropTime).TotalMilliseconds > DROP_WINDOW_MS)
                     {
-                        // 超过时间窗口，重置计数
                         _consecutiveDrops = 0;
                         _firstDropTime = DateTime.MinValue;
                     }
                     
-                    // ✅ 记录第一次丢包的时间
                     if (_consecutiveDrops == 0)
                     {
                         _firstDropTime = now;
@@ -414,14 +411,12 @@ namespace RemotePlay.Services.Streaming.AV
                     _consecutiveDrops++;
                     _lastDropTime = now;
                     
-                    // ✅ 计算丢包持续时间
                     var dropDuration = _firstDropTime != DateTime.MinValue 
                         ? (now - _firstDropTime).TotalMilliseconds 
                         : 0;
                     
-                    // ✅ 如果连续丢弃超过阈值，或者丢包持续时间超过限制，重置ReorderQueue
                     bool shouldReset = _consecutiveDrops >= MAX_CONSECUTIVE_DROPS ||
-                                      (dropDuration >= MAX_DROP_DURATION_MS && _consecutiveDrops >= 10); // 至少10个包且持续2秒
+                                      (dropDuration >= MAX_DROP_DURATION_MS && _consecutiveDrops >= 10);
                     
                     if (shouldReset)
                     {
@@ -432,21 +427,17 @@ namespace RemotePlay.Services.Streaming.AV
                         _logger.LogError("🚨 {Reason}，重置 ReorderQueue 以恢复视频流（最后丢弃的包: seq={LastSeq}, frame={LastFrame}）", 
                             reason, droppedPacket.Index, droppedPacket.FrameIndex);
                         
-                        // ✅ 记录重置前的ReorderQueue统计信息
                         var statsBeforeReset = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
                         _logger.LogWarning("重置前ReorderQueue统计: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
                             statsBeforeReset.processed, statsBeforeReset.dropped, statsBeforeReset.timeoutDropped, statsBeforeReset.bufferSize);
                         
                         ResetVideoReorderQueue();
-                        _consecutiveDrops = 0; // ✅ 重置计数（在ResetVideoReorderQueue之后）
+                        _consecutiveDrops = 0;
                         _lastDropTime = DateTime.MinValue;
                         _firstDropTime = DateTime.MinValue;
-                        
-                        // 同时重置超时计数
                         _consecutiveTimeouts = 0;
                         _lastTimeoutTime = DateTime.MinValue;
                         
-                        // ✅ 重置后请求关键帧，加快恢复
                         if (_requestKeyframeCallback != null)
                         {
                             _ = Task.Run(async () =>
@@ -467,16 +458,15 @@ namespace RemotePlay.Services.Streaming.AV
                 sizeStart: 128,
                 sizeMin: 64,
                 sizeMax: 512,
-                timeoutMs: 2000,
+                timeoutMs: 800,
                 dropStrategy: ReorderQueueDropStrategy.End,
                 timeoutCallback: OnReorderQueueTimeout);
         }
 
-        // 超时恢复机制：跟踪连续超时次数，超过阈值时请求关键帧
         private int _consecutiveTimeouts = 0;
         private DateTime _lastTimeoutTime = DateTime.MinValue;
         private const int MAX_CONSECUTIVE_TIMEOUTS = 3;
-        private const int TIMEOUT_WINDOW_MS = 8000;
+        private const int TIMEOUT_WINDOW_MS = 3000;
         
         // ✅ 丢包恢复机制：跟踪连续丢弃次数，超过阈值时重置ReorderQueue
         private int _consecutiveDrops = 0;
@@ -717,7 +707,7 @@ namespace RemotePlay.Services.Streaming.AV
                 DateTime lastQueueLogTime = DateTime.UtcNow;
                 DateTime lastTimeoutCheckTime = DateTime.UtcNow;
                 const int QUEUE_LOG_INTERVAL_SECONDS = 5;
-                const int TIMEOUT_CHECK_INTERVAL_MS = 200;
+                const int TIMEOUT_CHECK_INTERVAL_MS = 100;
 
                 while (!token.IsCancellationRequested && !_ct.IsCancellationRequested)
                 {
