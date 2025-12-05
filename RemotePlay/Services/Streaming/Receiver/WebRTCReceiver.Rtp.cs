@@ -24,19 +24,19 @@ namespace RemotePlay.Services.Streaming.Receiver
                 if (_peerConnection == null) return;
                 
                 // ✅ 音频限流优化：使用带超时的等待，避免直接丢帧导致爆音
-                // 音频对连续性要求极高，丢帧会导致爆音、杂音等问题
+                // 音频对连续性要求极高，但在高延迟环境下，等待会导致积压和爆音
                 _ = Task.Run(async () =>
                 {
-                    // ✅ 修复：等待最多 20ms（音频帧间隔），避免直接丢帧
-                    // 20ms = 1 帧 @ 50fps（音频通常 48kHz，10ms 或 20ms 一帧）
-                    bool acquired = await _audioSendSemaphore.WaitAsync(20);
+                    // ✅ 立即检查是否可以发送，无法发送则立即丢弃，避免积压导致爆音
+                    bool acquired = await _audioSendSemaphore.WaitAsync(0);
                     
                     if (!acquired)
                     {
-                        // 仍然无法获取信号量，说明积压严重，此时才丢帧
+                        // 无法立即获取信号量，说明音频发送任务积压，立即丢弃此帧
+                        // 在高延迟环境（如TURN）下，宁可丢帧也不要积压导致爆音
                         if (_audioPacketCount % 100 == 0)
                         {
-                            _logger.LogWarning("⚠️ 音频发送严重积压（等待 20ms 后仍无法发送），丢弃此帧");
+                            _logger.LogDebug("⚠️ 音频发送繁忙，丢弃此帧以避免积压");
                         }
                         return;
                     }
