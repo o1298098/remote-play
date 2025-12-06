@@ -49,7 +49,7 @@ const formatFps = (t: TFunction, value: number | null) => {
   })
 }
 
-const formatDuration = (t: TFunction, value: number | null) => {
+const formatDuration = (_t: TFunction, value: number | null) => {
   if (value === null || Number.isNaN(value) || value < 0) {
     return '--'
   }
