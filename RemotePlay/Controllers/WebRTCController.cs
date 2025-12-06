@@ -78,7 +78,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "创建 WebRTC 会话失败", // 保留中文消息作为fallback
+                    ErrorMessage = "创建 WebRTC 会话失败",
                     ErrorCode = ErrorCode.WebRtcOfferCreationFailed
                 });
             }
@@ -97,7 +97,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "SessionId 不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "SessionId 不能为空",
                         ErrorCode = ErrorCode.SessionIdRequired
                     });
                 }
@@ -107,7 +107,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "SDP 不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "SDP 不能为空",
                         ErrorCode = ErrorCode.SdpRequired
                     });
                 }
@@ -122,7 +122,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Answer SDP 为空", // 保留中文消息作为fallback
+                        ErrorMessage = "Answer SDP 为空",
                         ErrorCode = ErrorCode.AnswerSdpRequired
                     });
                 }
@@ -135,7 +135,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "WebRTC 会话不存在", // 保留中文消息作为fallback
+                        ErrorMessage = "WebRTC 会话不存在",
                         ErrorCode = ErrorCode.WebRtcSessionNotFound
                     });
                 }
@@ -157,7 +157,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "会话不存在或已过期", // 保留中文消息作为fallback
+                        ErrorMessage = "会话不存在或已过期",
                         ErrorCode = ErrorCode.WebRtcSessionExpired
                     });
                 }
@@ -168,7 +168,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "处理 Answer 失败", // 保留中文消息作为fallback
+                    ErrorMessage = "处理 Answer 失败",
                     ErrorCode = ErrorCode.WebRtcAnswerProcessingFailed
                 });
             }
@@ -187,7 +187,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "SessionId 不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "SessionId 不能为空",
                         ErrorCode = ErrorCode.SessionIdRequired
                     });
                 }
@@ -239,7 +239,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取待处理的 ICE Candidate 失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorMessage = "获取待处理的 ICE Candidate 失败: " + ex.Message,
                     ErrorCode = ErrorCode.WebRtcGetCandidatesFailed
                 });
             }
@@ -267,7 +267,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "Candidate 不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "Candidate 不能为空",
                         ErrorCode = ErrorCode.CandidateRequired
                     });
                 }
@@ -303,7 +303,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "会话不存在或已过期", // 保留中文消息作为fallback
+                        ErrorMessage = "会话不存在或已过期",
                         ErrorCode = ErrorCode.WebRtcSessionExpired
                     });
                 }
@@ -314,7 +314,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "处理 ICE Candidate 失败", // 保留中文消息作为fallback
+                    ErrorMessage = "处理 ICE Candidate 失败",
                     ErrorCode = ErrorCode.WebRtcIceCandidateProcessingFailed
                 });
             }
@@ -333,7 +333,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "SessionId 不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "SessionId 不能为空",
                         ErrorCode = ErrorCode.SessionIdRequired
                     });
                 }
@@ -344,7 +344,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "WebRTC 会话不存在", // 保留中文消息作为fallback
+                        ErrorMessage = "WebRTC 会话不存在",
                         ErrorCode = ErrorCode.WebRtcSessionNotFound
                     });
                 }
@@ -354,7 +354,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "会话尚未绑定流，无法请求关键帧", // 保留中文消息作为fallback
+                        ErrorMessage = "会话尚未绑定流，无法请求关键帧",
                         ErrorCode = ErrorCode.WebRtcSessionNotBound
                     });
                 }
@@ -365,7 +365,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "远程播放流不存在或已结束", // 保留中文消息作为fallback
+                        ErrorMessage = "远程播放流不存在或已结束",
                         ErrorCode = ErrorCode.StreamNotFound
                     });
                 }
@@ -387,7 +387,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "请求关键帧失败", // 保留中文消息作为fallback
+                    ErrorMessage = "请求关键帧失败",
                     ErrorCode = ErrorCode.WebRtcKeyFrameRequestFailed
                 });
             }
@@ -462,7 +462,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "连接失败", // 保留中文消息作为fallback
+                    ErrorMessage = "连接失败",
                     ErrorCode = ErrorCode.WebRtcConnectionFailed
                 });
             }
@@ -482,7 +482,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "会话不存在", // 保留中文消息作为fallback
+                        ErrorMessage = "会话不存在",
                         ErrorCode = ErrorCode.WebRtcSessionNotFound
                     });
                 }
@@ -509,7 +509,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取会话状态失败", // 保留中文消息作为fallback
+                    ErrorMessage = "获取会话状态失败",
                     ErrorCode = ErrorCode.InternalServerError
                 });
             }
@@ -547,7 +547,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取会话列表失败", // 保留中文消息作为fallback
+                    ErrorMessage = "获取会话列表失败",
                     ErrorCode = ErrorCode.InternalServerError
                 });
             }
@@ -580,7 +580,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "删除会话失败", // 保留中文消息作为fallback
+                    ErrorMessage = "删除会话失败",
                     ErrorCode = ErrorCode.InternalServerError
                 });
             }
@@ -599,7 +599,7 @@ namespace RemotePlay.Controllers
                     return StatusCode(503, new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "延时统计服务未启用", // 保留中文消息作为fallback
+                        ErrorMessage = "延时统计服务未启用",
                         ErrorCode = ErrorCode.LatencyStatsServiceDisabled
                     });
                 }
@@ -610,7 +610,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "未找到该会话的延时统计", // 保留中文消息作为fallback
+                        ErrorMessage = "未找到该会话的延时统计",
                         ErrorCode = ErrorCode.LatencyStatsNotFound
                     });
                 }
@@ -628,7 +628,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取延时统计失败", // 保留中文消息作为fallback
+                    ErrorMessage = "获取延时统计失败",
                     ErrorCode = ErrorCode.LatencyStatsGetFailed
                 });
             }
@@ -647,7 +647,7 @@ namespace RemotePlay.Controllers
                     return StatusCode(503, new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "延时统计服务未启用", // 保留中文消息作为fallback
+                        ErrorMessage = "延时统计服务未启用",
                         ErrorCode = ErrorCode.LatencyStatsServiceDisabled
                     });
                 }
@@ -672,7 +672,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "记录接收时间失败", // 保留中文消息作为fallback
+                    ErrorMessage = "记录接收时间失败",
                     ErrorCode = ErrorCode.LatencyStatsRecordFailed
                 });
             }

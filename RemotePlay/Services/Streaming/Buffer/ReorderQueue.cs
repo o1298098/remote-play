@@ -6,44 +6,41 @@ using Microsoft.Extensions.Logging;
 namespace RemotePlay.Services.Streaming.Buffer
 {
     /// <summary>
-    /// 安全且适用于 16-bit 回环序列号（0..65535）的重排序队列实现。
-    /// 特性：
-    /// - 不使用按数值排序的容器（避免回环问题）。使用 Dictionary + 逻辑顺序推进。
-    /// - 明确的序列比较（模 65536）函数，避免错误判断。
-    /// - 可配置的窗口大小、超时、丢弃策略与回调。
-    /// - 线程安全（内部 lock），并尽量减少锁内工作量。
-    /// - 友好的统计信息，Flush/Reset 支持。
+    /// Production-ready reorder queue for 16-bit cyclic sequence numbers (0..65535).
+    /// Key design choices made to avoid frame-jitter / accidental window resets:
+    /// - No aggressive resets. Only reset on strong wrap-around evidence.
+    /// - Conservative recovery distance (small, e.g. 200 seqs) to avoid accepting very old packets.
+    /// - Limit outputs per Pull to avoid "bursting" dozens of frames at once.
+    /// - Optional predicate to mark keyframes (to preserve them where possible).
+    /// - Thread-safe via a single lock; lock hold-time kept small.
+    /// - Exposes hooks for drop/timeout/output for integration.
     ///
-    /// 设计要点：
-    /// - 序列比较使用 (to - from) & 0xFFFF 的距离判断。
-    /// - _buffer 只保存存在的 slot（已收到或预留），并用 _begin/_count 管理逻辑窗口。
-    /// - 不依赖 SortedDictionary，因此回环时顺序正确。
-    ///
+    /// Generic T must be a reference type.
     /// </summary>
     public enum ReorderQueueDropStrategy
     {
-        /// <summary>当空间不足时，丢弃新到达的包（默认行为）</summary>
         End,
-        /// <summary>当空间不足时，优先丢弃最早（队首）未准备好的 slot</summary>
         Begin
     }
 
-    public class ReorderQueue<T> where T : class
+    public sealed class ReorderQueue<T> where T : class
     {
         private const uint SEQ_MASK = 0xFFFFu;
+        private const uint HALF_SPACE = 0x8000u; // 32768
+
         private readonly ILogger _logger;
-        private readonly Func<T, uint> _getSeqNum;
+        private readonly Func<T, uint> _getSeqNum; // returns raw seq (assumed 0..65535)
         private readonly Action<T> _outputCallback;
         private Action<T>? _dropCallback;
         private Action? _timeoutCallback;
+        private readonly Func<T, bool>? _isKeyFrame; // optional, true if item is a keyframe
 
-        // 用 Dictionary 保存 slot（key = seq），通过 _begin/_count 管理逻辑窗口
         private readonly Dictionary<uint, QueueEntry> _buffer = new Dictionary<uint, QueueEntry>();
         private readonly object _lock = new object();
 
-        private uint _begin = 0; // 下一个期望输出的序列号
-        private int _count = 0;  // 当前窗口内 slot 总数（包括已收到与预留）
-        private int _windowSize; // 当前窗口大小（capacity）
+        private uint _begin = 0; // next expected seq
+        private int _count = 0;  // number of logical slots in window (reserved + arrived)
+        private int _windowSize;
         private readonly int _sizeMin;
         private readonly int _sizeMax;
         private readonly int _timeoutMs;
@@ -54,34 +51,39 @@ namespace RemotePlay.Services.Streaming.Buffer
         private ulong _totalProcessed = 0;
         private ulong _totalDropped = 0;
         private ulong _totalTimeoutDropped = 0;
-        
-        // ✅ 重置后的宽限期：重置后的一段时间内，更宽松地接受包
-        private DateTime _lastResetTime = DateTime.MinValue;
-        private const int RESET_GRACE_PERIOD_MS = 1000; // ✅ 减少宽限期到1秒，避免过于宽松导致帧率波动
-        
-        // ✅ 窗口恢复限制：避免过于频繁的窗口重置
-        private DateTime _lastWindowResetTime = DateTime.MinValue;
-        private const int MIN_WINDOW_RESET_INTERVAL_MS = 500; // 最小窗口重置间隔500ms，避免频繁重置导致帧率波动
 
-        /// <summary>
-        /// 构造函数
-        /// </summary>
+        // conservative constants
+        private const uint MAX_RECOVERY_DISTANCE = 200; // allow limited recovery when seq < begin
+        private const int DEFAULT_MAX_OUTPUT_PER_PULL = 3; // avoid burst output
+        private const int MAX_OUTPUT_PER_PULL = 20; // maximum dynamic output per pull
+
+        private readonly int _maxOutputPerPull;
+        
+        // Log throttling
+        private DateTime _lastDropLogTime = DateTime.MinValue;
+        private int _dropLogCount = 0;
+        private const int DROP_LOG_THROTTLE_MS = 1000; // log at most once per second
+        private const int DROP_LOG_THROTTLE_COUNT = 50; // or when count exceeds this
+
         public ReorderQueue(
             ILogger logger,
             Func<T, uint> getSeqNum,
             Action<T> outputCallback,
             Action<T>? dropCallback = null,
+            Func<T, bool>? isKeyFrame = null,
             int sizeStart = 32,
             int sizeMin = 8,
             int sizeMax = 128,
             int timeoutMs = 80,
             ReorderQueueDropStrategy dropStrategy = ReorderQueueDropStrategy.End,
+            int maxOutputPerPull = DEFAULT_MAX_OUTPUT_PER_PULL,
             Action? timeoutCallback = null)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _getSeqNum = getSeqNum ?? throw new ArgumentNullException(nameof(getSeqNum));
             _outputCallback = outputCallback ?? throw new ArgumentNullException(nameof(outputCallback));
             _dropCallback = dropCallback;
+            _isKeyFrame = isKeyFrame;
             _timeoutCallback = timeoutCallback;
 
             _sizeMin = Math.Max(4, sizeMin);
@@ -89,13 +91,11 @@ namespace RemotePlay.Services.Streaming.Buffer
             _windowSize = Math.Clamp(sizeStart, _sizeMin, _sizeMax);
             _timeoutMs = Math.Max(10, timeoutMs);
             _dropStrategy = dropStrategy;
+            _maxOutputPerPull = Math.Max(1, maxOutputPerPull);
         }
 
         #region Public API
 
-        /// <summary>
-        /// 推入一个包到队列。线程安全。
-        /// </summary>
         public void Push(T item)
         {
             if (item == null) throw new ArgumentNullException(nameof(item));
@@ -103,223 +103,245 @@ namespace RemotePlay.Services.Streaming.Buffer
             {
                 uint seq = MaskSeq(_getSeqNum(item));
 
-                // 第一次到达：直接输出，初始化 _begin
                 if (!_initialized)
                 {
                     _initialized = true;
-                    _begin = MaskSeq(seq + 1);
-                    _outputCallback(item);
-                    _totalProcessed++;
+                    _begin = seq;
+                    _buffer[seq] = new QueueEntry { Item = item, ArrivalTime = DateTime.UtcNow };
+                    _count = 1;
+                    PullLockedLimited();
                     return;
                 }
 
-                // 如果 seq 在 [begin, begin+count) 内（窗口内部）
-                uint end = MaskSeq(_begin + (uint)_count);
-
+                // If seq is inside current logical window -> place or replace
                 if (SeqInWindow(seq, _begin, (uint)_count))
                 {
-                    // 已存在 slot？覆盖 arrival
-                    if (_buffer.TryGetValue(seq, out var exist))
-                    {
-                        if (exist.IsSet)
-                        {
-                            // 重复包：如果是已经输出的 begin（理论上不会），尝试 Pull
-                            // 否则直接 drop
-                            _dropCallback?.Invoke(item);
-                            _totalDropped++;
-                            return;
-                        }
-                        exist.Item = item;
-                        exist.ArrivalTime = DateTime.UtcNow;
-                    }
-                    else
-                    {
-                        _buffer[seq] = new QueueEntry { Item = item, ArrivalTime = DateTime.UtcNow };
-                    }
-
-                    // 如果是队首，推进输出
+                    PlaceIntoWindow(seq, item);
                     if (seq == _begin)
-                        PullLocked();
-
+                        PullLockedLimited();
                     return;
                 }
 
-                // seq 在 begin 之前：检查是否可能是窗口跳过或重置后的包
                 if (SeqLess(seq, _begin))
                 {
-                    // ✅ 检查是否在重置后的宽限期内
-                    bool inResetGracePeriod = _lastResetTime != DateTime.MinValue && 
-                                             (DateTime.UtcNow - _lastResetTime).TotalMilliseconds < RESET_GRACE_PERIOD_MS;
+                    uint gap = SequenceDistance(_begin, seq);
                     
-                    // ✅ 改进：检查距离_begin有多远
-                    uint distance = SequenceDistance(seq, _begin);
-                    const uint MAX_RECOVERY_DISTANCE = 2048; // ✅ 减小恢复距离到2048，避免过于激进的恢复导致帧率波动
-                    
-                    // ✅ 关键改进：如果窗口为空，或者未初始化，总是接受包（重置后窗口可能为空）
-                    if (_count == 0 || !_initialized)
+                    // More aggressive wrap-around detection: if gap > 5000 (about 7.6% of uint16 range), treat as wrap-around
+                    // This is more lenient to catch wrap-arounds earlier and prevent continuous packet drops
+                    bool isLikelyWrap = IsLikelyWrapAround(seq, _begin) || gap > 5000u;
+
+                    if (isLikelyWrap)
                     {
-                        // ✅ 窗口为空或未初始化，直接接受这个包，重新初始化窗口
-                        _logger.LogWarning("ReorderQueue: window empty/not initialized, accepting packet and resetting window. seq={Seq}, begin={Begin}, initialized={Init}", 
-                            seq, _begin, _initialized);
+                        _logger.LogWarning("ReorderQueue: detected wrap-around; resetting window to seq={Seq} (prev begin={Begin}, gap={Gap})", seq, _begin, gap);
                         _buffer.Clear();
-                        _initialized = true;
-                        _begin = MaskSeq(seq + 1);
+                        _begin = seq;
                         _count = 0;
-                        _lastWindowResetTime = DateTime.UtcNow; // ✅ 记录窗口重置时间
+                        _initialized = true;
                         _outputCallback(item);
                         _totalProcessed++;
                         return;
                     }
-                    
-                    // ✅ 如果在重置宽限期内，优先恢复窗口
-                    if (inResetGracePeriod)
+
+                    // Recovery mechanism: if gap is small, try to place packet in reserved slot instead of dropping
+                    if (gap <= MAX_RECOVERY_DISTANCE)
                     {
-                        // ✅ 重置宽限期内，接受包，但仅在距离不太远时（避免接受太老的包导致帧率波动）
-                        if (distance < MAX_RECOVERY_DISTANCE)
+                        // Check if we can place it in a reserved slot
+                        if (_buffer.TryGetValue(seq, out var recoveryEntry) && !recoveryEntry.IsSet)
                         {
-                            _logger.LogWarning("ReorderQueue: accepting packet in reset grace period. seq={Seq}, begin={Begin}, distance={Distance}", 
-                                seq, _begin, distance);
-                            _buffer.Clear();
-                            _initialized = true;
-                            _begin = MaskSeq(seq + 1);
-                            _count = 0;
-                            _outputCallback(item);
-                            _totalProcessed++;
-                            return;
-                        }
-                        else
-                        {
-                            // 距离太远，即使是在宽限期内也不接受，避免帧率波动
-                            _logger.LogDebug("ReorderQueue: packet too far in grace period, dropping. seq={Seq}, begin={Begin}, distance={Distance}", 
-                                seq, _begin, distance);
-                        }
-                    }
-                    
-                    // ✅ 距离不远，可能是窗口跳过，尝试恢复（但仅在距离较近时）
-                    // ✅ 检查窗口重置间隔，避免过于频繁的重置导致帧率波动
-                    if (distance < MAX_RECOVERY_DISTANCE)
-                    {
-                        // 检查距离上次窗口重置是否已经过了足够的时间
-                        bool canResetWindow = _lastWindowResetTime == DateTime.MinValue || 
-                                            (DateTime.UtcNow - _lastWindowResetTime).TotalMilliseconds >= MIN_WINDOW_RESET_INTERVAL_MS;
-                        
-                        if (canResetWindow)
-                        {
-                            // 距离不远，可能是窗口跳过，尝试恢复
-                            _logger.LogWarning("ReorderQueue: window may have skipped, resetting window. seq={Seq}, begin={Begin}, distance={Distance}, count={Count}", 
-                                seq, _begin, distance, _count);
-                            
-                            // ✅ 重置窗口，从这个包重新开始
-                            _buffer.Clear();
-                            _initialized = true;
-                            _begin = MaskSeq(seq + 1);
-                            _count = 0;
-                            _lastWindowResetTime = DateTime.UtcNow; // ✅ 记录窗口重置时间
-                            // ✅ 不清除重置时间，保持宽限期，直到窗口恢复正常
-                            _outputCallback(item);
-                            _totalProcessed++;
-                            return;
-                        }
-                        else
-                        {
-                            // 窗口重置过于频繁，丢弃这个包以避免帧率波动
-                            _logger.LogDebug("ReorderQueue: window reset too frequent, dropping packet to avoid frame rate fluctuation. seq={Seq}, begin={Begin}, distance={Distance}", 
-                                seq, _begin, distance);
-                            _dropCallback?.Invoke(item);
-                            _totalDropped++;
+                            // Place in reserved slot
+                            recoveryEntry.Item = item;
+                            recoveryEntry.ArrivalTime = DateTime.UtcNow;
+                            if (seq == _begin)
+                            {
+                                PullLockedLimited();
+                            }
                             return;
                         }
                     }
-                    
-                    // ✅ 距离很远，但检查是否在回环窗口的另一侧（可能是seq号回环）
-                    // 如果距离超过32768，可能是seq号回环导致的，应该接受
-                    if (distance > 0x8000u)
+
+                    // Throttled logging
+                    _dropLogCount++;
+                    var now = DateTime.UtcNow;
+                    bool shouldLog = (now - _lastDropLogTime).TotalMilliseconds > DROP_LOG_THROTTLE_MS || _dropLogCount >= DROP_LOG_THROTTLE_COUNT;
+                    if (shouldLog)
                     {
-                        // 在回环的另一侧，实际上是"新包"，重置窗口接受它
-                        _logger.LogWarning("ReorderQueue: seq appears to be on wrap-around side, resetting window. seq={Seq}, begin={Begin}, distance={Distance}", 
-                            seq, _begin, distance);
-                        _buffer.Clear();
-                        _initialized = true;
-                        _begin = MaskSeq(seq + 1);
-                        _count = 0;
-                        _lastResetTime = DateTime.UtcNow; // ✅ 重置后设置重置时间
-                        _outputCallback(item);
-                        _totalProcessed++;
-                        return;
+                        _logger.LogWarning("ReorderQueue: dropping packet (seq < begin) (seq={Seq}, begin={Begin}, gap={Gap}, count={Count})", 
+                            seq, _begin, gap, _dropLogCount);
+                        _lastDropLogTime = now;
+                        _dropLogCount = 0;
                     }
-                    
-                    // 否则，确实是老包，丢弃
+
                     _dropCallback?.Invoke(item);
                     _totalDropped++;
                     return;
                 }
 
-                // seq 在窗口外（未来太远），需要扩展窗口或丢弃
-                // 计算当前可用空位
-                uint free = (uint)(_windowSize - _count);
-                uint newEnd = MaskSeq(seq + 1);
-                uint needed = SequenceDistance(end, newEnd); // 需要扩展多少 slot
+                uint end = MaskSeq(_begin + (uint)_count);
+                uint newEnd = MaskSeq(seq + 1u);
+                uint needed = SequenceDistance(end, newEnd);
 
-                if (needed > free)
+                // ⚠️ 关键修复：检测回绕 - 当begin接近回绕边界且seq很小，即使seq > begin，也可能是回绕
+                // 例如：begin=65000, seq=1000 很可能是回绕（序列号从65535回绕到0，然后到1000）
+                bool isLikelyForwardWrap = _begin > 60000u && seq < 32768u && needed > 1000u;
+                if (isLikelyForwardWrap)
                 {
-                    // 空间不足
-                    if (_dropStrategy == ReorderQueueDropStrategy.End)
-                    {
-                        // 丢弃新到达的包
-                        _dropCallback?.Invoke(item);
-                        _totalDropped++;
-                        return;
-                    }
+                    _logger.LogWarning("ReorderQueue: detected forward wrap-around; resetting window to seq={Seq} (prev begin={Begin}, end={End}, needed={Needed})", 
+                        seq, _begin, end, needed);
+                    _buffer.Clear();
+                    _begin = seq;
+                    _count = 0;
+                    _initialized = true;
+                    _outputCallback(item);
+                    _totalProcessed++;
+                    return;
+                }
 
-                    // 否则，丢弃/处理队首直到有空间
-                    while (needed > 0 && _count > 0)
+                // More aggressive reset: if gap > 2000 (about 3% of uint16 range), reset window
+                // This prevents continuous packet drops when processing is significantly behind
+                const uint MAX_GAP_THRESHOLD = 2000u;
+                if (needed > MAX_GAP_THRESHOLD)
+                {
+                    _logger.LogWarning("ReorderQueue: sequence gap too large, resetting window (gap={Gap}, window={Window}, begin={Begin}, end={End}, seq={Seq}, count={Count})",
+                        needed, _windowSize, _begin, end, seq, _count);
+                    _buffer.Clear();
+                    _begin = seq;
+                    _count = 0;
+                    _initialized = true;
+                    _outputCallback(item);
+                    _totalProcessed++;
+                    return;
+                }
+
+                // ⚠️ 关键修复：当需要的空间远大于当前窗口时，也应该重置窗口
+                // 即使差距 < MAX_GAP_THRESHOLD，如果 needed > windowSize * 2，说明窗口太小，应该重置
+                if (needed > (uint)_windowSize * 2 && needed <= MAX_GAP_THRESHOLD)
+                {
+                    _logger.LogWarning("ReorderQueue: needed space ({Needed}) much larger than window ({Window}), resetting window (begin={Begin}, end={End}, seq={Seq})",
+                        needed, _windowSize, _begin, end, seq);
+                    _buffer.Clear();
+                    _begin = seq;
+                    _count = 0;
+                    _initialized = true;
+                    _outputCallback(item);
+                    _totalProcessed++;
+                    return;
+                }
+
+                // ⚠️ 优化：尝试动态扩展窗口以适应更大的序列号跳跃
+                if (needed > (uint)(_windowSize - _count) && needed <= (uint)_sizeMax)
+                {
+                    // 尝试扩展窗口以容纳新包
+                    int newWindowSize = Math.Min(_sizeMax, (int)needed + _count + 50); // 添加一些缓冲
+                    if (newWindowSize > _windowSize)
                     {
-                        // 如果队首存在且已就绪，则输出以回收空间
-                        if (_buffer.TryGetValue(_begin, out var headEntry) && headEntry.IsSet)
+                        _logger.LogDebug("ReorderQueue: expanding window from {Old} to {New} to accommodate needed={Needed}",
+                            _windowSize, newWindowSize, needed);
+                        _windowSize = newWindowSize;
+                    }
+                }
+
+                // ⚠️ 关键优化：如果窗口使用率超过80%，先尝试清理超时的包（避免死锁，直接内联）
+                double windowUsageRate = _windowSize > 0 ? (double)_count / _windowSize : 0;
+                if (needed > (uint)(_windowSize - _count) && windowUsageRate > 0.8)
+                {
+                    // 窗口使用率过高，先清理超时包（简化版本，只清理头部几个）
+                    int cleaned = 0;
+                    uint checkSeq = _begin;
+                    var now = DateTime.UtcNow;
+                    int maxCleanCheck = Math.Min(20, _count); // 最多检查20个
+                    
+                    for (int i = 0; i < maxCleanCheck && cleaned < 10; i++)
+                    {
+                        if (_buffer.TryGetValue(checkSeq, out var checkEntry) && checkEntry.IsSet)
                         {
-                            _outputCallback(headEntry.Item!);
-                            _totalProcessed++;
+                            var elapsed = (now - checkEntry.ArrivalTime).TotalMilliseconds;
+                            // 严重积压时，缩短超时时间
+                            double aggressiveTimeout = windowUsageRate > 0.9 ? _timeoutMs * 0.5 : _timeoutMs * 0.7;
+                            if (elapsed > aggressiveTimeout)
+                            {
+                                // 输出超时的包
+                                _outputCallback(checkEntry.Item!);
+                                _buffer.Remove(checkSeq);
+                                _totalProcessed++;
+                                cleaned++;
+                            }
+                            else
+                            {
+                                break; // 遇到未超时的包，停止清理
+                            }
+                        }
+                        else if (!_buffer.TryGetValue(checkSeq, out _))
+                        {
+                            // 遇到空洞，跳过
+                            cleaned++;
                         }
                         else
                         {
-                            // 若队首未到达，则视为丢失（timeout dropped）
-                            _totalDropped++;
-                            _totalTimeoutDropped++;
+                            break; // 遇到未设置的保留槽，停止清理
                         }
-
-                        _buffer.Remove(_begin);
-                        _begin = MaskSeq(_begin + 1);
-                        _count--;
-                        free = (uint)(_windowSize - _count);
-                        // 重新计算 end 和 needed（end 由 _begin/_count 定义）
+                        
+                        checkSeq = MaskSeq(checkSeq + 1u);
+                    }
+                    
+                    if (cleaned > 0)
+                    {
+                        _begin = checkSeq;
+                        _count -= cleaned;
+                        // 清理后重新计算可用空间
                         end = MaskSeq(_begin + (uint)_count);
-                        newEnd = MaskSeq(seq + 1);
-                        needed = SequenceDistance(end, newEnd);
+                        needed = SequenceDistance(end, MaskSeq(seq + 1u));
+                    }
+                }
+
+                // Log when dropping packets due to insufficient space but gap is not large enough to reset
+                if (needed > (uint)(_windowSize - _count))
+                {
+                    // Not enough free space
+                    if (_dropStrategy == ReorderQueueDropStrategy.End)
+                    {
+                        // Throttled logging
+                        _dropLogCount++;
+                        var now = DateTime.UtcNow;
+                        bool shouldLog = (now - _lastDropLogTime).TotalMilliseconds > DROP_LOG_THROTTLE_MS || _dropLogCount >= DROP_LOG_THROTTLE_COUNT;
+                        if (shouldLog)
+                        {
+                            _logger.LogWarning("ReorderQueue: dropping packet (insufficient space) (seq={Seq}, begin={Begin}, end={End}, needed={Needed}, window={Window}, count={Count}, free={Free}, dropCount={DropCount})",
+                                seq, _begin, end, needed, _windowSize, _count, _windowSize - _count, _dropLogCount);
+                            _lastDropLogTime = now;
+                            _dropLogCount = 0;
+                        }
+                        _dropCallback?.Invoke(item);
+                        _totalDropped++;
+                        return;
                     }
 
-                    // 如果仍然不足空间，最终丢弃新包
-                    if (needed > 0)
+                    // Try to free space from the beginning but do so conservatively: we prefer dropping non-key slots
+                    uint freeNeeded = needed - (uint)(_windowSize - _count);
+                    FreeSpaceFromBeginConservatively(freeNeeded);
+
+                    // Recompute after freeing
+                    if (needed > (uint)(_windowSize - _count))
                     {
+                        // Still not enough -> drop new packet
+                        // Throttled logging
+                        _dropLogCount++;
+                        var now = DateTime.UtcNow;
+                        bool shouldLog = (now - _lastDropLogTime).TotalMilliseconds > DROP_LOG_THROTTLE_MS || _dropLogCount >= DROP_LOG_THROTTLE_COUNT;
+                        if (shouldLog)
+                        {
+                            _logger.LogWarning("ReorderQueue: dropping packet (still insufficient space after freeing) (seq={Seq}, begin={Begin}, end={End}, needed={Needed}, window={Window}, count={Count}, dropCount={DropCount})",
+                                seq, _begin, end, needed, _windowSize, _count, _dropLogCount);
+                            _lastDropLogTime = now;
+                            _dropLogCount = 0;
+                        }
                         _dropCallback?.Invoke(item);
                         _totalDropped++;
                         return;
                     }
                 }
 
-                // 现在预留中间的 slot
-                end = MaskSeq(_begin + (uint)_count);
-                var now = DateTime.UtcNow;
-                while (SequenceDistance(end, MaskSeq(seq + 1)) > 0)
-                {
-                    if (!_buffer.ContainsKey(end))
-                    {
-                        _buffer[end] = new QueueEntry { Item = null, ArrivalTime = DateTime.MinValue, ReservedTime = now };
-                    }
-                    _count++;
-                    end = MaskSeq(_begin + (uint)_count);
-                }
-
-                // 放入实际 item
+                // Reserve intermediate slots then put the item
+                ReserveSlotsUntil(seq);
                 if (_buffer.TryGetValue(seq, out var entry))
                 {
                     entry.Item = item;
@@ -327,18 +349,19 @@ namespace RemotePlay.Services.Streaming.Buffer
                 }
                 else
                 {
-                    // 理论上上面已预留，但是兜底
+                    // fallback (shouldn't happen)
                     _buffer[seq] = new QueueEntry { Item = item, ArrivalTime = DateTime.UtcNow };
                     _count++;
                 }
 
                 if (seq == _begin)
-                    PullLocked();
+                    PullLockedLimited();
             }
         }
 
         /// <summary>
-        /// 检查并清理超时、可强制 flush 或触发超时回调
+        /// Flush: if force==true push everything out immediately (used for shutdown/tests).
+        /// Otherwise perform regular timeout based cleanup.
         /// </summary>
         public void Flush(bool force = false)
         {
@@ -346,10 +369,10 @@ namespace RemotePlay.Services.Streaming.Buffer
             {
                 if (force)
                 {
+                    // Output everything present in order
                     while (PullLocked()) { }
                     return;
                 }
-
                 CheckTimeoutLocked();
             }
         }
@@ -399,7 +422,6 @@ namespace RemotePlay.Services.Streaming.Buffer
                 _begin = 0;
                 _count = 0;
                 _totalDropped = _totalProcessed = _totalTimeoutDropped = 0;
-                _lastResetTime = DateTime.UtcNow; // ✅ 记录重置时间，用于宽限期判断
             }
         }
 
@@ -407,85 +429,290 @@ namespace RemotePlay.Services.Streaming.Buffer
 
         #region Internal helpers (locked)
 
-        // 假设已在 _lock 内调用
+        // Place item into existing reserved slot or overwrite if already present
+        private void PlaceIntoWindow(uint seq, T item)
+        {
+            if (_buffer.TryGetValue(seq, out var exist))
+            {
+                exist.Item = item;
+                exist.ArrivalTime = DateTime.UtcNow;
+            }
+            else
+            {
+                _buffer[seq] = new QueueEntry { Item = item, ArrivalTime = DateTime.UtcNow };
+                // NOTE: if we didn't reserve, this indicates a logic gap; ensure _count consistent by heuristics
+                _count++;
+            }
+        }
+
+        // Reserve intermediate slots between current end and seq (exclusive end)
+        private void ReserveSlotsUntil(uint seq)
+        {
+            uint end = MaskSeq(_begin + (uint)_count);
+            var now = DateTime.UtcNow;
+            while (SequenceDistance(end, MaskSeq(seq + 1u)) > 0)
+            {
+                if (!_buffer.ContainsKey(end))
+                {
+                    _buffer[end] = new QueueEntry { Item = null, ArrivalTime = DateTime.MinValue, ReservedTime = now };
+                }
+                _count++;
+                end = MaskSeq(_begin + (uint)_count);
+            }
+        }
+
+        // Conservative free from begin: prefer removing non-set (holes) first, avoid removing set entries if possible
+        private void FreeSpaceFromBeginConservatively(uint freeNeeded)
+        {
+            uint freed = 0;
+            while (freed < freeNeeded && _count > 0)
+            {
+                // If head is not set, remove it immediately
+                if (!_buffer.TryGetValue(_begin, out var headEntry) || !headEntry.IsSet)
+                {
+                    _buffer.Remove(_begin);
+                    _begin = MaskSeq(_begin + 1u);
+                    _count--;
+                    freed++;
+                    _totalDropped++;
+                    _totalTimeoutDropped++;
+                    continue;
+                }
+
+                // Head is set. If we must free more, be conservative: only drop non-key frames first.
+                // Scan forward with dynamic lookahead based on backlog severity.
+                bool foundToDrop = false;
+                int arrivedCount = _buffer.Values.Count(e => e.IsSet);
+                int lookahead;
+                if (arrivedCount > 100)
+                {
+                    // Extreme backlog: aggressive lookahead, allow dropping keyframes if necessary
+                    lookahead = Math.Min(64, _count);
+                }
+                else if (arrivedCount > 50)
+                {
+                    // High backlog: larger lookahead
+                    lookahead = Math.Min(32, _count);
+                }
+                else
+                {
+                    // Normal: conservative lookahead
+                    lookahead = Math.Min(16, _count);
+                }
+                uint scanSeq = _begin;
+                for (int i = 0; i < lookahead; i++)
+                {
+                    if (!_buffer.TryGetValue(scanSeq, out var scanEntry) || !scanEntry.IsSet)
+                    {
+                        // hole -> remove
+                        _buffer.Remove(scanSeq);
+                        // logically need to shift window by count of removed before begin; to keep simple we will remove from begin until this slot
+                        // remove from begin until scanSeq (inclusive)
+                        uint removeCount = SequenceDistance(_begin, MaskSeq(scanSeq + 1u));
+                        for (uint r = 0; r < removeCount && _count > 0; r++)
+                        {
+                            _buffer.Remove(_begin);
+                            _begin = MaskSeq(_begin + 1u);
+                            _count--;
+                            freed++;
+                            _totalDropped++;
+                            _totalTimeoutDropped++;
+                        }
+
+                        foundToDrop = true;
+                        break;
+                    }
+                    else if (_isKeyFrame != null && !_isKeyFrame(scanEntry.Item!))
+                    {
+                        // non-key frame: remove it to free space
+                        // remove up to and including scanSeq
+                        uint removeCount = SequenceDistance(_begin, MaskSeq(scanSeq + 1u));
+                        for (uint r = 0; r < removeCount && _count > 0; r++)
+                        {
+                            _buffer.Remove(_begin);
+                            _begin = MaskSeq(_begin + 1u);
+                            _count--;
+                            freed++;
+                            _totalDropped++;
+                        }
+                        foundToDrop = true;
+                        break;
+                    }
+
+                    scanSeq = MaskSeq(scanSeq + 1u);
+                }
+
+                if (!foundToDrop)
+                {
+                    // As last resort, drop the head (even if set) to free space
+                    // In extreme backlog, allow dropping keyframes to prevent complete queue blocking
+                    bool allowKeyframeDrop = arrivedCount > 100;
+                    if (_buffer.TryGetValue(_begin, out var head))
+                    {
+                        bool isKey = _isKeyFrame != null && _isKeyFrame(head.Item!);
+                        if (!isKey || allowKeyframeDrop)
+                        {
+                            _buffer.Remove(_begin);
+                            _begin = MaskSeq(_begin + 1u);
+                            _count--;
+                            freed++;
+                            _totalDropped++;
+                            if (isKey && allowKeyframeDrop)
+                            {
+                                _logger.LogWarning("ReorderQueue: forced drop of keyframe head seq to free space (extreme backlog)");
+                            }
+                        }
+                        else
+                        {
+                            // Can't drop keyframe, try next slot
+                            uint nextSeq = MaskSeq(_begin + 1u);
+                            if (_buffer.TryGetValue(nextSeq, out var nextEntry) && nextEntry.IsSet)
+                            {
+                                _buffer.Remove(nextSeq);
+                                _begin = MaskSeq(nextSeq + 1u);
+                                _count--;
+                                freed++;
+                                _totalDropped++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pull with dynamic limit based on backlog to avoid window accumulation
+        private void PullLockedLimited()
+        {
+            // Dynamic output limit: increase when backlog is high
+            int dynamicMax = _maxOutputPerPull;
+            if (_count > 100)
+            {
+                // High backlog: allow more outputs to catch up
+                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, Math.Max(_maxOutputPerPull, _count / 10));
+            }
+            else if (_count > 50)
+            {
+                // Medium backlog: moderate increase
+                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, _maxOutputPerPull * 2);
+            }
+
+            int outputs = 0;
+            while (outputs < dynamicMax && PullLocked())
+            {
+                outputs++;
+            }
+        }
+
+        // Pull all available (used by force flush)
         private bool PullLocked()
         {
-            // 如果没有任何 slot
             if (_count == 0) return false;
-
             bool pulledAny = false;
-            // 连续输出已就绪的 slot（限制单次输出数量可在这里加入）
             while (_count > 0)
             {
                 if (!_buffer.TryGetValue(_begin, out var entry))
-                    break; // 没有 slot（稀疏）
-
+                    break; // sparse
                 if (!entry.IsSet)
-                    break; // 队首未到达
+                    break; // head not arrived
 
                 _outputCallback(entry.Item!);
                 _buffer.Remove(_begin);
-                _begin = MaskSeq(_begin + 1);
+                _begin = MaskSeq(_begin + 1u);
                 _count--;
                 _totalProcessed++;
                 pulledAny = true;
             }
-
             return pulledAny;
         }
 
-        // 假设已在 _lock 内调用
         private void CheckTimeoutLocked()
         {
             if (_count == 0) return;
-
             var now = DateTime.UtcNow;
             var toRemove = new List<uint>();
-            uint seq = _begin;
-            int consecutiveTimeouts = 0;
-            int maxConsecutiveTimeouts = 5;
-            
-            // 检测队列积压情况，动态调整恢复策略
+
             int arrivedCount = _buffer.Values.Count(e => e.IsSet);
-            bool isHeavyBacklog = arrivedCount > 35;
+            // ⚠️ 优化：降低积压阈值，更早触发清理（从50降到30）
+            bool isHeavyBacklog = arrivedCount > 30;
             
-            if (isHeavyBacklog)
+            // ⚠️ 优化：考虑窗口使用率，而不仅仅是已到达包的数量
+            double windowUsageRate = _windowSize > 0 ? (double)_count / _windowSize : 0;
+            bool isHighWindowUsage = windowUsageRate > 0.8; // 窗口使用率超过80%
+            
+            int maxConsecutive = 8;
+            if (isHeavyBacklog || isHighWindowUsage)
             {
-                // 游戏串流优化：队列积压时快速恢复，保持低延迟
-                maxConsecutiveTimeouts = 10;
-                _logger.LogWarning("ReorderQueue: 检测到严重积压 (arrivedCount={Arrived}, bufferSize={BufferSize}), 启用快速恢复模式 (maxSkip={MaxSkip})", 
-                    arrivedCount, _count, maxConsecutiveTimeouts);
+                if (arrivedCount > 500 || windowUsageRate > 0.95)
+                {
+                    maxConsecutive = 100; // 极端积压或窗口几乎满
+                }
+                else if (arrivedCount > 300 || windowUsageRate > 0.9)
+                {
+                    maxConsecutive = 80; // 严重积压
+                }
+                else if (arrivedCount > 150 || windowUsageRate > 0.85)
+                {
+                    maxConsecutive = 50; // 中度积压
+                }
+                else if (arrivedCount > 60)
+                {
+                    maxConsecutive = 30; // 一般积压
+                }
+                else
+                {
+                    maxConsecutive = 20; // 轻微积压但窗口使用率高
+                }
             }
             else if (arrivedCount > 20)
             {
-                // 中度积压，适度提高恢复速度
-                maxConsecutiveTimeouts = 7;
+                maxConsecutive = 10;
+            }
+            else if (arrivedCount > 15)
+            {
+                maxConsecutive = 8;
             }
 
-            for (int i = 0; i < _count && consecutiveTimeouts < maxConsecutiveTimeouts; i++)
+            // We only consider timeout for consecutive slots starting from begin (conservative)
+            uint seq = _begin;
+            int consecutive = 0;
+
+            for (int i = 0; i < _count && consecutive < maxConsecutive; i++)
             {
                 if (!_buffer.TryGetValue(seq, out var entry))
                 {
-                    // 若 slot 本身都不存在，视为未到达，计为超时并继续
+                    // hole -> treat as timeout candidate
                     toRemove.Add(seq);
-                    consecutiveTimeouts++;
-                    seq = MaskSeq(seq + 1);
+                    consecutive++;
+                    seq = MaskSeq(seq + 1u);
                     continue;
                 }
 
                 bool isTimeout = false;
                 if (!entry.IsSet)
                 {
-                    // 未收到，使用 ReservedTime 判断
                     if (entry.ReservedTime != DateTime.MinValue)
                     {
                         var elapsed = (now - entry.ReservedTime).TotalMilliseconds;
-                        double timeoutThreshold = _timeoutMs * 2;
+                        double timeoutThreshold = _timeoutMs * 2.0; // 默认值
                         
-                        // 如果队列积压严重，适度缩短等待时间，但不要太激进
-                        if (isHeavyBacklog)
+                        if (isHeavyBacklog || isHighWindowUsage)
                         {
-                            timeoutThreshold = _timeoutMs * 1.5;
+                            if (arrivedCount > 500 || windowUsageRate > 0.95)
+                            {
+                                timeoutThreshold = _timeoutMs * 0.5; // 极端积压：大幅缩短
+                            }
+                            else if (arrivedCount > 300 || windowUsageRate > 0.9)
+                            {
+                                timeoutThreshold = _timeoutMs * 0.7; // 严重积压
+                            }
+                            else if (arrivedCount > 150 || windowUsageRate > 0.85)
+                            {
+                                timeoutThreshold = _timeoutMs * 1.0; // 中度积压
+                            }
+                            else
+                            {
+                                timeoutThreshold = _timeoutMs * 1.2; // 一般积压
+                            }
                         }
                         
                         if (elapsed > timeoutThreshold)
@@ -493,20 +720,32 @@ namespace RemotePlay.Services.Streaming.Buffer
                     }
                     else
                     {
-                        // 兜底：没有 reservedTime 视为可立即处理
-                        isTimeout = true;
+                        isTimeout = true; // no reserved time means it's stale
                     }
                 }
                 else
                 {
                     var elapsed = (now - entry.ArrivalTime).TotalMilliseconds;
-                    double timeoutThreshold = _timeoutMs;
+                    double timeoutThreshold = _timeoutMs; // 默认值
                     
-                    // 如果队列积压严重且这个包已经等待很久，优先输出
-                    // 但不要太激进，保持画面连续性
-                    if (isHeavyBacklog)
+                    if (isHeavyBacklog || isHighWindowUsage)
                     {
-                        timeoutThreshold = _timeoutMs * 0.8;
+                        if (arrivedCount > 500 || windowUsageRate > 0.95)
+                        {
+                            timeoutThreshold = _timeoutMs * 0.3; // 极端积压：大幅加速输出
+                        }
+                        else if (arrivedCount > 300 || windowUsageRate > 0.9)
+                        {
+                            timeoutThreshold = _timeoutMs * 0.5; // 严重积压
+                        }
+                        else if (arrivedCount > 150 || windowUsageRate > 0.85)
+                        {
+                            timeoutThreshold = _timeoutMs * 0.7; // 中度积压
+                        }
+                        else
+                        {
+                            timeoutThreshold = _timeoutMs * 0.8; // 一般积压
+                        }
                     }
                     
                     if (elapsed > timeoutThreshold)
@@ -517,70 +756,42 @@ namespace RemotePlay.Services.Streaming.Buffer
                 {
                     if (entry.IsSet)
                     {
-                        // 已收到但过时，优先输出（保持连续）
+                        // output arrived item rather than drop (keep continuity)
                         _outputCallback(entry.Item!);
                         _totalProcessed++;
                     }
                     else
                     {
-                        // 从未到达
                         _totalDropped++;
                         _totalTimeoutDropped++;
                     }
-
                     toRemove.Add(seq);
-                    consecutiveTimeouts++;
-                    seq = MaskSeq(seq + 1);
+                    consecutive++;
+                    seq = MaskSeq(seq + 1u);
                 }
                 else
                 {
-                    // 遇到未超时 slot 停止（避免跳过仍有机会到达的包）
-                    // 即使积压严重，也要给包足够的时间到达，保持画面连续性
+                    // hit a slot that isn't timed out -> stop conservative timeout sweep
                     break;
                 }
             }
 
             if (toRemove.Count == 0) return;
 
-            // 记录日志（合并记录）
-            if (toRemove.Count > 5)
-            {
-                _logger.LogWarning("ReorderQueue: timeout batch removed {Count} slots from {From} to {To}",
-                    toRemove.Count, toRemove.First(), toRemove.Last());
-            }
-            else
-            {
-                // 如果有未收到的 slot，记录其序号
-                var firstUnreceived = toRemove.FirstOrDefault(s => !_buffer.ContainsKey(s) || !_buffer[s].IsSet);
-                if (firstUnreceived != 0 || toRemove.Contains(0u)) // 注意 0 可能是真正的 seq
-                {
-                    _logger.LogDebug("ReorderQueue: timeout skip starting at {Seq}", toRemove[0]);
-                }
-            }
-
-            // 移除并推进 _begin / _count
             foreach (var s in toRemove)
-            {
                 _buffer.Remove(s);
-            }
 
             _begin = MaskSeq(_begin + (uint)toRemove.Count);
             _count -= toRemove.Count;
 
-            // 调用超时回调
             _timeoutCallback?.Invoke();
-
-            // 尝试继续输出后续已就绪的包
-            PullLocked();
+            PullLockedLimited();
         }
 
         #endregion
 
         #region Sequence helpers
 
-        /// <summary>
-        /// 返回 (to - from) & 0xFFFF
-        /// </summary>
         private static uint SequenceDistance(uint from, uint to)
         {
             return (to - from) & SEQ_MASK;
@@ -588,18 +799,10 @@ namespace RemotePlay.Services.Streaming.Buffer
 
         private static uint MaskSeq(uint value) => value & SEQ_MASK;
 
-        /// <summary>
-        /// 判断 a < b（模 65536 逻辑）
-        /// 返回 true 当且仅当 b 在 a 的 "后面" 少于 32768
-        /// </summary>
+        // true if a is strictly less than b in modular arithmetic (< with half-space cutoff)
         private static bool SeqLess(uint a, uint b)
         {
-            return SequenceDistance(a, b) != 0 && SequenceDistance(a, b) < 0x8000u;
-        }
-
-        private static bool SeqLessOrEqual(uint a, uint b)
-        {
-            return SequenceDistance(a, b) < 0x8000u;
+            return SequenceDistance(a, b) != 0 && SequenceDistance(a, b) < HALF_SPACE;
         }
 
         private bool SeqInWindow(uint seq, uint windowBegin, uint windowCount)
@@ -607,6 +810,31 @@ namespace RemotePlay.Services.Streaming.Buffer
             if (windowCount == 0) return false;
             uint dist = SequenceDistance(windowBegin, seq);
             return dist < (uint)windowCount;
+        }
+
+        private static bool IsLikelyWrapAround(uint seq, uint begin)
+        {
+            // seq < begin 的情况（向后回绕）
+            if (begin > 60000u && seq < 1000u)
+                return true;
+            
+            if (begin > 50000u && seq < 20000u)
+                return true;
+            
+            // More aggressive: if begin > 40000 and seq < 30000, likely wrap-around
+            if (begin > 40000u && seq < 30000u)
+                return true;
+            
+            // Even more aggressive: if begin > 30000 and seq < 25000, likely wrap-around
+            if (begin > 30000u && seq < 25000u)
+                return true;
+            
+            uint gap = SequenceDistance(begin, seq);
+            // ⚠️ 关键修复：当gap很大时（接近或超过一半空间），很可能是回绕
+            if (gap > 32768u) // 超过一半空间，一定是回绕
+                return true;
+            
+            return gap > 5000u;  // Lowered from 10000 to catch wrap-arounds earlier
         }
 
         #endregion
@@ -622,7 +850,5 @@ namespace RemotePlay.Services.Streaming.Buffer
         }
 
         #endregion
-
     }
-
 }

@@ -56,7 +56,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "SessionId 不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "SessionId 不能为空",
                         ErrorCode = ErrorCode.SessionIdRequired
                     });
                 }
@@ -67,7 +67,7 @@ namespace RemotePlay.Controllers
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "远程播放流不存在或已结束", // 保留中文消息作为fallback
+                        ErrorMessage = "远程播放流不存在或已结束",
                         ErrorCode = ErrorCode.StreamNotFound
                     });
                 }
@@ -89,7 +89,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "请求关键帧失败", // 保留中文消息作为fallback
+                    ErrorMessage = "请求关键帧失败",
                     ErrorCode = ErrorCode.KeyFrameRequestFailed
                 });
             }
@@ -103,7 +103,7 @@ namespace RemotePlay.Controllers
                 return BadRequest(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "SessionId 不能为空", // 保留中文消息作为fallback
+                    ErrorMessage = "SessionId 不能为空",
                     ErrorCode = ErrorCode.SessionIdRequired
                 });
             }
@@ -114,7 +114,7 @@ namespace RemotePlay.Controllers
                 return NotFound(new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "远程播放流不存在或已结束", // 保留中文消息作为fallback
+                    ErrorMessage = "远程播放流不存在或已结束",
                     ErrorCode = ErrorCode.StreamNotFound
                 });
             }
@@ -316,7 +316,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取 TURN 配置失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorMessage = "获取 TURN 配置失败: " + ex.Message,
                     ErrorCode = ErrorCode.TurnConfigGetFailed
                 });
             }
@@ -401,7 +401,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "保存 TURN 配置失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorMessage = "保存 TURN 配置失败: " + ex.Message,
                     ErrorCode = ErrorCode.TurnConfigSaveFailed
                 });
             }
@@ -573,7 +573,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "获取 WebRTC 配置失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorMessage = "获取 WebRTC 配置失败: " + ex.Message,
                     ErrorCode = ErrorCode.WebRtcConfigGetFailed
                 });
             }
@@ -595,7 +595,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "配置不能为空", // 保留中文消息作为fallback
+                        ErrorMessage = "配置不能为空",
                         ErrorCode = ErrorCode.ConfigRequired
                     });
                 }
@@ -689,7 +689,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "保存 WebRTC 配置失败: " + ex.Message, // 保留中文消息作为fallback
+                    ErrorMessage = "保存 WebRTC 配置失败: " + ex.Message,
                     ErrorCode = ErrorCode.WebRtcConfigSaveFailed
                 });
             }

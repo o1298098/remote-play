@@ -455,10 +455,10 @@ namespace RemotePlay.Services.Streaming.AV
                         }
                     }
                 },
-                sizeStart: 128,
-                sizeMin: 64,
-                sizeMax: 512,
-                timeoutMs: 800,
+                sizeStart: 192,
+                sizeMin: 96,
+                sizeMax: 768,
+                timeoutMs: 1000,
                 dropStrategy: ReorderQueueDropStrategy.End,
                 timeoutCallback: OnReorderQueueTimeout);
         }
@@ -468,13 +468,12 @@ namespace RemotePlay.Services.Streaming.AV
         private const int MAX_CONSECUTIVE_TIMEOUTS = 3;
         private const int TIMEOUT_WINDOW_MS = 3000;
         
-        // ✅ 丢包恢复机制：跟踪连续丢弃次数，超过阈值时重置ReorderQueue
         private int _consecutiveDrops = 0;
         private DateTime _lastDropTime = DateTime.MinValue;
-        private DateTime _firstDropTime = DateTime.MinValue; // ✅ 记录第一次丢包的时间
-        private const int MAX_CONSECUTIVE_DROPS = 20; // ✅ 降低到20个包，更快恢复（特别是TURN连接）
-        private const int DROP_WINDOW_MS = 1000; // 1秒内的丢弃才算连续
-        private const int MAX_DROP_DURATION_MS = 2000; // ✅ 如果2秒内持续丢包，即使未达到20个也触发恢复
+        private DateTime _firstDropTime = DateTime.MinValue;
+        private const int MAX_CONSECUTIVE_DROPS = 12;
+        private const int DROP_WINDOW_MS = 1000;
+        private const int MAX_DROP_DURATION_MS = 1200;
 
         // 健康状态跟踪
         private readonly object _healthLock = new();

@@ -38,7 +38,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "请求数据验证失败", // 保留中文消息作为fallback
+                        ErrorMessage = "请求数据验证失败",
                         ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
@@ -66,7 +66,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "服务器内部错误", // 保留中文消息作为fallback
+                    ErrorMessage = "服务器内部错误",
                     ErrorCode = ErrorCode.InternalServerError
                 });
             }
@@ -86,7 +86,7 @@ namespace RemotePlay.Controllers
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "请求数据验证失败", // 保留中文消息作为fallback
+                        ErrorMessage = "请求数据验证失败",
                         ErrorCode = ErrorCode.InvalidRequest
                     });
                 }
@@ -98,7 +98,7 @@ namespace RemotePlay.Controllers
                     return Unauthorized(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "用户名或密码错误", // 保留中文消息作为fallback
+                        ErrorMessage = "用户名或密码错误",
                         ErrorCode = ErrorCode.InvalidCredentials
                     });
                 }
@@ -116,7 +116,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "服务器内部错误", // 保留中文消息作为fallback
+                    ErrorMessage = "服务器内部错误",
                     ErrorCode = ErrorCode.InternalServerError
                 });
             }
@@ -137,7 +137,7 @@ namespace RemotePlay.Controllers
                     return Unauthorized(new ApiErrorResponse
                     {
                         Success = false,
-                        ErrorMessage = "无法获取用户信息", // 保留中文消息作为fallback
+                        ErrorMessage = "无法获取用户信息",
                         ErrorCode = ErrorCode.Unauthorized
                     });
                 }
@@ -182,7 +182,7 @@ namespace RemotePlay.Controllers
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
-                    ErrorMessage = "服务器内部错误", // 保留中文消息作为fallback
+                    ErrorMessage = "服务器内部错误",
                     ErrorCode = ErrorCode.InternalServerError
                 });
             }

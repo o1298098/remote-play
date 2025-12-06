@@ -207,7 +207,10 @@ namespace RemotePlay.Services.Streaming.Receiver
                     
                     // ✅ 初始化新的模块化视频处理管道（在 SDP 协商完成后）
                     // 如果已经在 Answer 设置后提前初始化，这里不会重复初始化
+                _logger.LogInformation("🔍 连接建立，准备初始化视频管道: _videoTrack={Track}, _peerConnection={Pc}", 
+                    _videoTrack != null, _peerConnection != null);
                     InitializeVideoPipeline();
+                _logger.LogInformation("🔍 视频管道初始化完成: _videoPipeline={Pipeline}", _videoPipeline != null);
                     
                     // ✅ 启动连接保活机制
                     StartKeepalive();
@@ -649,8 +652,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                     OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
                 });
                 
-                _logger.LogInformation("✅ 模块化视频处理管道已初始化 (SSRC={Ssrc}, H264={H264}, HEVC={Hevc})", 
-                    _videoSsrc, _negotiatedPtH264, _negotiatedPtHevc);
+                _logger.LogInformation("✅ 模块化视频处理管道已初始化 (SSRC={Ssrc}, H264={H264}, HEVC={Hevc}, _videoTrack={Track})", 
+                    _videoSsrc, _negotiatedPtH264, _negotiatedPtHevc, _videoTrack != null);
             }
             catch (Exception ex)
             {

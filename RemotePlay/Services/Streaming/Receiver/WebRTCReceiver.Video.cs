@@ -307,15 +307,34 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     // ✅ 非阻塞异步发送
                     _ = _videoPipeline.OnNormalFrame(packet);
+                    Interlocked.Increment(ref _videoPacketCount);
                     return;
                 }
                 
-                // ⚠️ 如果管道未初始化，记录警告（限流：每 10 秒最多一次）
+                // ⚠️ 关键问题：视频管道未初始化
+                // 尝试立即初始化（可能在连接建立时初始化失败）
+                if (_videoTrack != null)
+                {
                 var now = DateTime.UtcNow;
                 if ((now - _lastVideoPipelineWarningTime).TotalSeconds >= VIDEO_PIPELINE_WARNING_INTERVAL_SECONDS)
                 {
-                    _logger.LogWarning("⚠️ 视频管道未初始化，无法处理普通帧 (已收到 {Count} 个视频包)", _videoPacketCount);
+                        _logger.LogWarning("⚠️ 视频管道未初始化，尝试重新初始化 (已收到 {Count} 个视频包, _videoTrack={Track}, _peerConnection={Pc})", 
+                            _videoPacketCount, _videoTrack != null, _peerConnection != null);
+                        _lastVideoPipelineWarningTime = now;
+                        
+                        // 尝试重新初始化
+                        InitializeVideoPipeline();
+                    }
+                }
+                else
+                {
+                    // _videoTrack 为 null，这是更严重的问题
+                    var now = DateTime.UtcNow;
+                    if ((now - _lastVideoPipelineWarningTime).TotalSeconds >= VIDEO_PIPELINE_WARNING_INTERVAL_SECONDS)
+                    {
+                        _logger.LogError("❌ 视频管道未初始化：_videoTrack 为 null (已收到 {Count} 个视频包)", _videoPacketCount);
                     _lastVideoPipelineWarningTime = now;
+                    }
                 }
             }
             catch (Exception ex)

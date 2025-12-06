@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using RemotePlay.Models.PlayStation;
 using RemotePlay.Models.Streaming;
 using RemotePlay.Services.Streaming.AV;
+using RemotePlay.Services.Streaming.Pipeline;
 using RemotePlay.Services.Streaming.Quality;
 using RemotePlay.Services.Streaming.Protocol;
 using RemotePlay.Services.Streaming.Feedback;
@@ -28,7 +29,7 @@ namespace RemotePlay.Services.Streaming.Core
     /// 3. 依赖注入：使用 ILogger、ILoggerFactory
     /// 4. 易于维护：代码结构清晰，注释完整
     /// </summary>
-    public sealed class RPStreamV2 : IDisposable
+    public sealed partial class RPStreamV2 : IDisposable
     {
         #region Constants 
 
@@ -108,6 +109,10 @@ namespace RemotePlay.Services.Streaming.Core
 
         // AV 处理
         private AV.AVHandler? _avHandler;
+        
+        // ✅ 新的 Pipeline 架构（可选启用）
+        private AVPipelineCoordinator? _avPipeline;
+        private bool _usePipeline = true; // 默认使用新的 Pipeline 架构
 
         // 接收器
         private IAVReceiver? _receiver;
@@ -214,7 +219,20 @@ namespace RemotePlay.Services.Streaming.Core
             _sendQueue = Channel.CreateBounded<SendPacketItem>(channelOptions);
             _sendQueueWriter = _sendQueue.Writer;
 
-            // 初始化 AVHandler2
+            // ✅ 初始化 AV 处理（支持新旧两种架构）
+            if (_usePipeline)
+            {
+                // 使用新的 Pipeline 架构
+                _logger.LogInformation("🚀 使用新的 Pipeline 架构");
+                // Pipeline 会在 SetReceiver 时初始化（需要 receiver）
+            }
+            else
+            {
+                // 使用旧的 AVHandler
+                _logger.LogInformation("🔄 使用旧的 AVHandler 架构");
+            }
+            
+            // 初始化 AVHandler（作为备份或主要使用）
             _avHandler = new AV.AVHandler(
                 _loggerFactory.CreateLogger<AV.AVHandler>(),
                 _session.HostType,
@@ -345,8 +363,17 @@ namespace RemotePlay.Services.Streaming.Core
                     _congestionControl.Dispose();
                 }
                 
-                // 停止 AVHandler
+                // ✅ 停止 AV 处理器（支持新旧两种架构）
+                if (_usePipeline && _avPipeline != null)
+                {
+                    _avPipeline.Stop();
+                    _avPipeline.Dispose();
+                    _avPipeline = null;
+                }
+                else
+                {
                 _avHandler?.Stop();
+                }
 
                 // 发送 DISCONNECT
                 if (_cipher != null)
@@ -421,7 +448,56 @@ namespace RemotePlay.Services.Streaming.Core
 
             var oldReceiver = _receiver;
             _receiver = receiver;
+            
+            // ✅ 支持新旧两种架构
+            if (_usePipeline)
+            {
+                // 初始化 Pipeline（如果还没有初始化）
+                if (_avPipeline == null)
+                {
+                    _logger.LogInformation("🚀 初始化 AV Pipeline");
+                    _avPipeline = new AVPipelineCoordinator(
+                        _loggerFactory.CreateLogger<AVPipelineCoordinator>(),
+                        _loggerFactory,
+                        _session.HostType,
+                        receiver,
+                        _cancellationToken
+                    );
+                    
+                    // 如果已有 cipher，设置它
+                    if (_cipher != null)
+                    {
+                        _avPipeline.SetCipher(_cipher);
+                    }
+                    
+                    // 如果已有 headers，设置它们
+                    if (_cachedVideoHeader != null || _cachedAudioHeader != null)
+                    {
+                        var videoProfiles = _adaptiveStreamManager?.GetAllProfiles()?.ToArray();
+                        _avPipeline.SetHeaders(_cachedVideoHeader, _cachedAudioHeader, videoProfiles);
+                    }
+                    
+                    // 设置回调
+                    if (_adaptiveStreamManager != null)
+                    {
+                        _avPipeline.SetAdaptiveStreamManager(_adaptiveStreamManager, OnProfileSwitched);
+                    }
+                    _avPipeline.SetRequestKeyframeCallback(RequestKeyframeAsync);
+                    
+                    // 启动统计监控
+                    StartPipelineStatsMonitoring();
+                }
+                else
+                {
+                    // 如果 Pipeline 已存在，更新 receiver
+                    _avPipeline.SetReceiver(receiver);
+                }
+            }
+            else
+            {
+                // 使用旧的 AVHandler
             _avHandler?.SetReceiver(receiver);
+            }
 
             // 通知 receiver 进入等待 IDR 模式
             receiver.EnterWaitForIdr();
@@ -891,12 +967,25 @@ namespace RemotePlay.Services.Streaming.Core
             // 检查是否为 AV 包
             if (data.Length > 0 && Packet.IsAv(data[0]))
             {
-                // 处理 AV 包
-                if (_avHandler != null && _receiver != null)
+                // ✅ 处理 AV 包（支持新旧两种架构）
+                if (_receiver != null)
                 {
                     try
                     {
+                        if (_usePipeline && _avPipeline != null)
+                        {
+                            // 使用新的 Pipeline 架构
+                            _avPipeline.AddPacket(data);
+                        }
+                        else if (_avHandler != null)
+                        {
+                            // 使用旧的 AVHandler
                         _avHandler.AddPacket(data);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("⚠️ AV 处理器未初始化");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -905,8 +994,7 @@ namespace RemotePlay.Services.Streaming.Core
                 }
                 else
                 {
-                    _logger.LogWarning("Received AV packet but AVHandler or receiver is null (avHandler={AvHandler}, receiver={Receiver})", 
-                        _avHandler != null, _receiver != null);
+                    _logger.LogWarning("Received AV packet but receiver is null");
                 }
                 return;
             }
@@ -1499,10 +1587,17 @@ namespace RemotePlay.Services.Streaming.Core
                 return;
             }
 
-            // 如果已有接收器，设置 cipher
-            if (_receiver != null && _avHandler != null)
+            // ✅ 如果已有接收器，设置 cipher（支持新旧两种架构）
+            if (_receiver != null)
+            {
+                if (_usePipeline && _avPipeline != null)
+                {
+                    _avPipeline.SetCipher(_cipher!);
+                }
+                else if (_avHandler != null)
             {
                 _avHandler.SetCipher(_cipher!);
+                }
             }
 
             // ✅ 启动 FeedbackSender 和 CongestionControl 服务
@@ -2094,9 +2189,14 @@ namespace RemotePlay.Services.Streaming.Core
             _cachedVideoHeader = rawVideoHeader;
             _cachedAudioHeader = audioHeader;
 
-            // 设置 AVHandler 的 headers
+            // ✅ 设置 AV 处理器的 headers（支持新旧两种架构）
             // AVHandler 内部会创建 AVStream，AVStream 会为视频 header 添加 padding
-            if (_avHandler != null)
+            if (_usePipeline && _avPipeline != null)
+            {
+                var videoProfiles = _adaptiveStreamManager?.GetAllProfiles()?.ToArray();
+                _avPipeline.SetHeaders(rawVideoHeader, audioHeader, videoProfiles);
+            }
+            else if (_avHandler != null)
             {
                 _avHandler.SetHeaders(rawVideoHeader, audioHeader, _loggerFactory);
             }
