@@ -122,50 +122,22 @@ namespace RemotePlay.Services.Streaming.Buffer
                     return;
                 }
 
-                if (SeqLess(seq, _begin))
+                // ✅ 原则1：使用严格的数学定义判断是否是旧包
+                // seq 比 begin "旧" <==> (seq - begin) mod 65536 >= 32768
+                // 即：!IsNewer(seq, begin)
+                if (!IsNewer(seq, _begin))
                 {
+                    // ✅ 原则2：旧包只丢弃，不尝试恢复，不检测回绕
+                    // 回绕是自然发生的，当seq从65535增长到0时，IsNewer会自动处理
                     uint gap = SequenceDistance(_begin, seq);
                     
-                    // More aggressive wrap-around detection: if gap > 5000 (about 7.6% of uint16 range), treat as wrap-around
-                    // This is more lenient to catch wrap-arounds earlier and prevent continuous packet drops
-                    bool isLikelyWrap = IsLikelyWrapAround(seq, _begin) || gap > 5000u;
-
-                    if (isLikelyWrap)
-                    {
-                        _logger.LogWarning("ReorderQueue: detected wrap-around; resetting window to seq={Seq} (prev begin={Begin}, gap={Gap})", seq, _begin, gap);
-                        _buffer.Clear();
-                        _begin = seq;
-                        _count = 0;
-                        _initialized = true;
-                        _outputCallback(item);
-                        _totalProcessed++;
-                        return;
-                    }
-
-                    // Recovery mechanism: if gap is small, try to place packet in reserved slot instead of dropping
-                    if (gap <= MAX_RECOVERY_DISTANCE)
-                    {
-                        // Check if we can place it in a reserved slot
-                        if (_buffer.TryGetValue(seq, out var recoveryEntry) && !recoveryEntry.IsSet)
-                        {
-                            // Place in reserved slot
-                            recoveryEntry.Item = item;
-                            recoveryEntry.ArrivalTime = DateTime.UtcNow;
-                            if (seq == _begin)
-                            {
-                                PullLockedLimited();
-                            }
-                            return;
-                        }
-                    }
-
                     // Throttled logging
                     _dropLogCount++;
                     var now = DateTime.UtcNow;
                     bool shouldLog = (now - _lastDropLogTime).TotalMilliseconds > DROP_LOG_THROTTLE_MS || _dropLogCount >= DROP_LOG_THROTTLE_COUNT;
                     if (shouldLog)
                     {
-                        _logger.LogWarning("ReorderQueue: dropping packet (seq < begin) (seq={Seq}, begin={Begin}, gap={Gap}, count={Count})", 
+                        _logger.LogWarning("ReorderQueue: dropping old packet (seq={Seq}, begin={Begin}, gap={Gap}, count={Count})", 
                             seq, _begin, gap, _dropLogCount);
                         _lastDropLogTime = now;
                         _dropLogCount = 0;
@@ -180,52 +152,8 @@ namespace RemotePlay.Services.Streaming.Buffer
                 uint newEnd = MaskSeq(seq + 1u);
                 uint needed = SequenceDistance(end, newEnd);
 
-                // ⚠️ 关键修复：检测回绕 - 当begin接近回绕边界且seq很小，即使seq > begin，也可能是回绕
-                // 例如：begin=65000, seq=1000 很可能是回绕（序列号从65535回绕到0，然后到1000）
-                bool isLikelyForwardWrap = _begin > 60000u && seq < 32768u && needed > 1000u;
-                if (isLikelyForwardWrap)
-                {
-                    _logger.LogWarning("ReorderQueue: detected forward wrap-around; resetting window to seq={Seq} (prev begin={Begin}, end={End}, needed={Needed})", 
-                        seq, _begin, end, needed);
-                    _buffer.Clear();
-                    _begin = seq;
-                    _count = 0;
-                    _initialized = true;
-                    _outputCallback(item);
-                    _totalProcessed++;
-                    return;
-                }
-
-                // More aggressive reset: if gap > 2000 (about 3% of uint16 range), reset window
-                // This prevents continuous packet drops when processing is significantly behind
-                const uint MAX_GAP_THRESHOLD = 2000u;
-                if (needed > MAX_GAP_THRESHOLD)
-                {
-                    _logger.LogWarning("ReorderQueue: sequence gap too large, resetting window (gap={Gap}, window={Window}, begin={Begin}, end={End}, seq={Seq}, count={Count})",
-                        needed, _windowSize, _begin, end, seq, _count);
-                    _buffer.Clear();
-                    _begin = seq;
-                    _count = 0;
-                    _initialized = true;
-                    _outputCallback(item);
-                    _totalProcessed++;
-                    return;
-                }
-
-                // ⚠️ 关键修复：当需要的空间远大于当前窗口时，也应该重置窗口
-                // 即使差距 < MAX_GAP_THRESHOLD，如果 needed > windowSize * 2，说明窗口太小，应该重置
-                if (needed > (uint)_windowSize * 2 && needed <= MAX_GAP_THRESHOLD)
-                {
-                    _logger.LogWarning("ReorderQueue: needed space ({Needed}) much larger than window ({Window}), resetting window (begin={Begin}, end={End}, seq={Seq})",
-                        needed, _windowSize, _begin, end, seq);
-                    _buffer.Clear();
-                    _begin = seq;
-                    _count = 0;
-                    _initialized = true;
-                    _outputCallback(item);
-                    _totalProcessed++;
-                    return;
-                }
+                // ✅ 原则3：不再检测回绕，回绕是自然发生的
+                // IsNewer已经正确处理了回绕情况，无需特殊处理
 
                 // ⚠️ 优化：尝试动态扩展窗口以适应更大的序列号跳跃
                 if (needed > (uint)(_windowSize - _count) && needed <= (uint)_sizeMax)
@@ -293,7 +221,50 @@ namespace RemotePlay.Services.Streaming.Buffer
                     }
                 }
 
-                // Log when dropping packets due to insufficient space but gap is not large enough to reset
+                // ✅ 原则4：Reset只在队列满到极限且begin无法推进时进行
+                // 检查是否需要重置：窗口已扩展到最大，且begin处没有包，无法推进
+                if (needed > (uint)(_windowSize - _count) && _windowSize >= _sizeMax)
+                {
+                    // 检查begin是否可以推进
+                    bool canAdvanceBegin = false;
+                    if (_count > 0)
+                    {
+                        // 检查begin处是否有包，或者可以超时清理
+                        if (_buffer.TryGetValue(_begin, out var headEntry))
+                        {
+                            if (headEntry.IsSet)
+                            {
+                                // begin处有包，可以输出后推进
+                                canAdvanceBegin = true;
+                            }
+                            else if (headEntry.ReservedTime != DateTime.MinValue)
+                            {
+                                // 检查是否超时
+                                var elapsed = (DateTime.UtcNow - headEntry.ReservedTime).TotalMilliseconds;
+                                if (elapsed > _timeoutMs * 2.0)
+                                {
+                                    canAdvanceBegin = true; // 可以超时清理
+                                }
+                            }
+                        }
+                    }
+
+                    // 只有在无法推进时才重置
+                    if (!canAdvanceBegin)
+                    {
+                        _logger.LogWarning("ReorderQueue: resetting window (queue full, cannot advance begin) (seq={Seq}, begin={Begin}, window={Window}, needed={Needed})",
+                            seq, _begin, _windowSize, needed);
+                        _buffer.Clear();
+                        _begin = seq;
+                        _count = 0;
+                        _initialized = true;
+                        _outputCallback(item);
+                        _totalProcessed++;
+                        return;
+                    }
+                }
+
+                // Log when dropping packets due to insufficient space
                 if (needed > (uint)(_windowSize - _count))
                 {
                     // Not enough free space
@@ -799,7 +770,16 @@ namespace RemotePlay.Services.Streaming.Buffer
 
         private static uint MaskSeq(uint value) => value & SEQ_MASK;
 
+        // ✅ 原则1：使用严格的数学定义判断seq是否比base"新"
+        // seq 比 base "新" <==> (seq - base) mod 65536 < 32768
+        // seq 比 base "旧" <==> (seq - base) mod 65536 >= 32768
+        private static bool IsNewer(uint seq, uint @base)
+        {
+            return ((seq - @base) & SEQ_MASK) < HALF_SPACE;
+        }
+
         // true if a is strictly less than b in modular arithmetic (< with half-space cutoff)
+        // ⚠️ 保留用于向后兼容，但新代码应该使用 IsNewer
         private static bool SeqLess(uint a, uint b)
         {
             return SequenceDistance(a, b) != 0 && SequenceDistance(a, b) < HALF_SPACE;
@@ -812,29 +792,14 @@ namespace RemotePlay.Services.Streaming.Buffer
             return dist < (uint)windowCount;
         }
 
+        // ✅ 已废弃：不再需要特殊检测回绕
+        // 回绕是自然发生的，IsNewer会自动正确处理
+        // 保留此方法以保持向后兼容性，但实际上不会被调用
+        [Obsolete("Use IsNewer instead. Wrap-around is handled naturally.")]
         private static bool IsLikelyWrapAround(uint seq, uint begin)
         {
-            // seq < begin 的情况（向后回绕）
-            if (begin > 60000u && seq < 1000u)
-                return true;
-            
-            if (begin > 50000u && seq < 20000u)
-                return true;
-            
-            // More aggressive: if begin > 40000 and seq < 30000, likely wrap-around
-            if (begin > 40000u && seq < 30000u)
-                return true;
-            
-            // Even more aggressive: if begin > 30000 and seq < 25000, likely wrap-around
-            if (begin > 30000u && seq < 25000u)
-                return true;
-            
-            uint gap = SequenceDistance(begin, seq);
-            // ⚠️ 关键修复：当gap很大时（接近或超过一半空间），很可能是回绕
-            if (gap > 32768u) // 超过一半空间，一定是回绕
-                return true;
-            
-            return gap > 5000u;  // Lowered from 10000 to catch wrap-arounds earlier
+            // 这个方法不再使用，但保留以避免编译错误
+            return false;
         }
 
         #endregion
