@@ -578,14 +578,20 @@
         "videoBitrate": "視訊位元率",
         "resolution": "解析度",
         "latency": "延迟",
-        "fps": "幀率"
+        "fps": "幀率",
+        "duration": "時長"
       },
       "units": {
         "mbps": "{{value}} Mbps",
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} 毫秒",
         "resolution": "{{width}} × {{height}}",
-        "fps": "{{value}} fps"
+        "fps": "{{value}} fps",
+        "duration": {
+          "hms": "{{hours}}:{{minutes, minimumIntegerDigits=2}}:{{seconds, minimumIntegerDigits=2}}",
+          "ms": "{{minutes}}:{{seconds, minimumIntegerDigits=2}}",
+          "s": "{{seconds}} 秒"
+        }
       }
     },
     "loading": {

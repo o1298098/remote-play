@@ -38,6 +38,7 @@ export interface StreamingMonitorStats {
   resolution: { width: number; height: number } | null
   latencyMs: number | null
   fps: number | null
+  streamingDurationMs: number | null
 }
 
 export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoRef, toast, onConnectionError }: UseStreamingConnectionParams) {
@@ -112,6 +113,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     videoBytesReceived: number
     framesDecoded: number | null
   } | null>(null)
+  const streamingStartTimeRef = useRef<number | null>(null)
   const webrtcSessionIdRef = useRef<string | null>(null)
   const isStreamBoundRef = useRef<boolean>(false)
   const hasVideoTrackRef = useRef<boolean>(false)
@@ -575,6 +577,12 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         }
       }
 
+      // 计算串流时长
+      let streamingDurationMs: number | null = null
+      if (streamingStartTimeRef.current !== null) {
+        streamingDurationMs = Date.now() - streamingStartTimeRef.current
+      }
+
       if (!previous) {
         previousStatsRef.current = {
           timestamp: now,
@@ -594,6 +602,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               : prev?.resolution ?? null,
           latencyMs: latencyMs ?? prev?.latencyMs ?? null,
           fps: fps ?? prev?.fps ?? null,
+          streamingDurationMs: streamingDurationMs,
         }))
 
         return
@@ -630,6 +639,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
             : prev?.resolution ?? null,
         latencyMs: latencyMs ?? prev?.latencyMs ?? null,
         fps: fps ?? prev?.fps ?? null,
+        streamingDurationMs: streamingDurationMs,
       }))
     } catch (error) {
       console.warn('获取 WebRTC 统计信息失败:', error)
@@ -1091,6 +1101,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     previousStatsRef.current = null
+    streamingStartTimeRef.current = null
     setConnectionStats(null)
 
     if (videoRef.current) {
@@ -1666,6 +1677,10 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               setIsConnected(true)
               isConnectedRef.current = true
               setConnectionState(t('streaming.connection.state.connected'))
+              // 记录串流开始时间
+              if (streamingStartTimeRef.current === null) {
+                streamingStartTimeRef.current = Date.now()
+              }
               // 连接成功，顶栏已显示状态，不再显示弹出提示
             })
 

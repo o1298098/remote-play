@@ -50,6 +50,33 @@ const formatFps = (t: TFunction, value: number | null) => {
   })
 }
 
+const formatDuration = (t: TFunction, value: number | null) => {
+  if (value === null || Number.isNaN(value) || value < 0) {
+    return '--'
+  }
+  const totalSeconds = Math.floor(value / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  
+  if (hours > 0) {
+    return t('streaming.monitor.units.duration.hms', {
+      hours,
+      minutes,
+      seconds,
+    })
+  } else if (minutes > 0) {
+    return t('streaming.monitor.units.duration.ms', {
+      minutes,
+      seconds,
+    })
+  } else {
+    return t('streaming.monitor.units.duration.s', {
+      seconds,
+    })
+  }
+}
+
 export function StreamingStatsOverlay({ stats }: StreamingStatsOverlayProps) {
   const { t } = useTranslation()
   const { isMobile } = useDevice()
@@ -70,6 +97,10 @@ export function StreamingStatsOverlay({ stats }: StreamingStatsOverlayProps) {
         </span>
       </div>
       <div className="space-y-2 text-white/80">
+        <div className="flex items-center justify-between">
+          <span className="text-white/60">{t('streaming.monitor.labels.duration')}</span>
+          <span>{formatDuration(t, stats?.streamingDurationMs ?? null)}</span>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-white/60">{t('streaming.monitor.labels.download')}</span>
           <span>{formatRate(t, stats?.downloadKbps ?? null)}</span>

@@ -578,14 +578,20 @@
         "videoBitrate": "Débit vidéo",
         "resolution": "Résolution",
         "latency": "Latence",
-        "fps": "Fréquence d'images"
+        "fps": "Fréquence d'images",
+        "duration": "Durée"
       },
       "units": {
         "mbps": "{{value}} Mbps",
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} ms",
         "resolution": "{{width}} × {{height}}",
-        "fps": "{{value}} ips"
+        "fps": "{{value}} ips",
+        "duration": {
+          "hms": "{{hours}}:{{minutes, minimumIntegerDigits=2}}:{{seconds, minimumIntegerDigits=2}}",
+          "ms": "{{minutes}}:{{seconds, minimumIntegerDigits=2}}",
+          "s": "{{seconds}}s"
+        }
       }
     },
     "loading": {

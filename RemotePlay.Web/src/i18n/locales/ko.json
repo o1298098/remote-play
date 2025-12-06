@@ -578,14 +578,20 @@
         "videoBitrate": "비디오 비트레이트",
         "resolution": "해상도",
         "latency": "지연 시간",
-        "fps": "프레임 속도"
+        "fps": "프레임 속도",
+        "duration": "시간"
       },
       "units": {
         "mbps": "{{value}} Mbps",
         "kbps": "{{value}} Kbps",
         "ms": "{{value}} ms",
         "resolution": "{{width}} × {{height}}",
-        "fps": "{{value}} fps"
+        "fps": "{{value}} fps",
+        "duration": {
+          "hms": "{{hours}}:{{minutes, minimumIntegerDigits=2}}:{{seconds, minimumIntegerDigits=2}}",
+          "ms": "{{minutes}}:{{seconds, minimumIntegerDigits=2}}",
+          "s": "{{seconds}}초"
+        }
       }
     },
     "loading": {

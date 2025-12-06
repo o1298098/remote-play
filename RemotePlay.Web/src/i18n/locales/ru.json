@@ -578,14 +578,20 @@
         "videoBitrate": "Битрейт видео",
         "resolution": "Разрешение",
         "latency": "Задержка",
-        "fps": "Частота кадров"
+        "fps": "Частота кадров",
+        "duration": "Время"
       },
       "units": {
         "mbps": "{{value}} Мбит/с",
         "kbps": "{{value}} Кбит/с",
         "ms": "{{value}} мс",
         "resolution": "{{width}} × {{height}}",
-        "fps": "{{value}} кадр/с"
+        "fps": "{{value}} кадр/с",
+        "duration": {
+          "hms": "{{hours}}:{{minutes, minimumIntegerDigits=2}}:{{seconds, minimumIntegerDigits=2}}",
+          "ms": "{{minutes}}:{{seconds, minimumIntegerDigits=2}}",
+          "s": "{{seconds}}с"
+        }
       }
     },
     "loading": {

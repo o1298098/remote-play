@@ -49,6 +49,25 @@ const formatFps = (t: TFunction, value: number | null) => {
   })
 }
 
+const formatDuration = (t: TFunction, value: number | null) => {
+  if (value === null || Number.isNaN(value) || value < 0) {
+    return '--'
+  }
+  const totalSeconds = Math.floor(value / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  
+  // 移动端使用更紧凑的格式
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  } else if (minutes > 0) {
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  } else {
+    return `${seconds}s`
+  }
+}
+
 export function MobileStatsBar({ stats }: MobileStatsBarProps) {
   const { t } = useTranslation()
 
@@ -76,6 +95,23 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
             WebkitOverflowScrolling: 'touch',
           }}
         >
+          {/* 串流时长 */}
+          <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '100px' }}>
+            <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '50px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.duration')}:</span>
+            <span 
+              className="font-medium whitespace-nowrap text-right flex-shrink-0" 
+              style={{ 
+                textShadow: '0 1px 3px rgba(0, 0, 0, 0.9), 0 0 4px rgba(0, 0, 0, 0.6)',
+                width: '48px'
+              }}
+            >
+              {formatDuration(t, stats?.streamingDurationMs ?? null)}
+            </span>
+          </div>
+
+          {/* 分隔符 */}
+          <span className="text-white/30 flex-shrink-0" style={{ textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)' }}>|</span>
+
           {/* 下行速率 */}
           <div className="flex items-center gap-1.5 flex-shrink-0" style={{ width: '105px' }}>
             <span className="text-white/60 whitespace-nowrap text-[8px] flex-shrink-0 overflow-hidden" style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.8)', width: '50px', textOverflow: 'ellipsis' }}>{t('streaming.monitor.labels.download')}:</span>
@@ -174,6 +210,7 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
               {formatFps(t, stats?.fps ?? null)}
             </span>
           </div>
+
         </div>
       </div>
       {/* 隐藏滚动条样式 */}
