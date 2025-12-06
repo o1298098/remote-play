@@ -39,21 +39,31 @@ namespace RemotePlay.Utils.Crypto
         {
             while (Keystreams.Count < 3)
             {
-                int keyPos = KeystreamIndex * KeyStreamLen;
+                ulong keyPosLong = (ulong)KeystreamIndex * KeyStreamLen;
+                if (keyPosLong > uint.MaxValue)
+                {
+                    keyPosLong = uint.MaxValue;
+                }
+                uint keyPos = (uint)keyPosLong;
                 var keyStream = GetKeyStream(BaseKey!, BaseIv!, keyPos, KeyStreamLen);
                 Keystreams.Add((KeystreamIndex, keyStream));
                 KeystreamIndex++;
             }
         }
 
-        protected byte[] GetKeyStream(int keyPos, int dataLen)
+        protected byte[] GetKeyStream(uint keyPos, int dataLen)
         {
             NextKeyStream();
             // Remove old blocks
             for (int i = 0; i < Keystreams.Count; i++)
             {
                 var ksIndex = Keystreams[i].Item1;
-                if (keyPos / KeyStreamLen > ksIndex)
+                uint streamIndex = keyPos / KeyStreamLen;
+                if (streamIndex > int.MaxValue)
+                {
+                    break;
+                }
+                if ((int)streamIndex > ksIndex)
                 {
                     Keystreams.RemoveAt(i);
                     i--;
@@ -64,7 +74,7 @@ namespace RemotePlay.Utils.Crypto
             if (Keystreams.Count == 0) return Array.Empty<byte>();
 
             bool requiresAdditional = false;
-            int startPos = keyPos % KeyStreamLen;
+            int startPos = (int)(keyPos % KeyStreamLen);
             int endPos = startPos + dataLen;
 
             if (endPos > KeyStreamLen)
@@ -89,10 +99,14 @@ namespace RemotePlay.Utils.Crypto
             return keyStream;
         }
 
-        public byte[] GetGmac(byte[] data, int keyPos)
+        public byte[] GetGmac(byte[] data, uint keyPos)
         {
-            var initVector = CounterAdd(keyPos / 16, BaseIv!);
-            int index = keyPos > 0 ? (keyPos - 1) / 45000 : 0;
+            ulong counterValue = keyPos / 16;
+            int counter = counterValue > int.MaxValue ? int.MaxValue : (int)counterValue;
+            var initVector = CounterAdd(counter, BaseIv!);
+            
+            ulong indexValue = keyPos > 0 ? (keyPos - 1) / 45000 : 0;
+            int index = indexValue > int.MaxValue ? int.MaxValue : (int)indexValue;
             byte[] key;
             if (index > Index)
             {
@@ -125,9 +139,9 @@ namespace RemotePlay.Utils.Crypto
             iv.CopyTo(result, 0);
             for (int i = 0; i < result.Length; i++)
             {
-                int add = result[i] + counter;
+                long add = (long)result[i] + counter;
                 result[i] = (byte)(add & 0xFF);
-                counter = add >> 8;
+                counter = (int)(add >> 8);
                 if (counter <= 0 || i >= 15) break;
             }
             return result;
@@ -154,7 +168,7 @@ namespace RemotePlay.Utils.Crypto
         protected static byte[] DecryptEncrypt(
             byte[] key, 
             byte[] initVector, 
-            int keyPos, 
+            uint keyPos, 
             byte[] data, 
             byte[]? keyStream = null)
         {
@@ -166,8 +180,13 @@ namespace RemotePlay.Utils.Crypto
         }
         protected static byte[] GetGmacKey(int gmacIndex, byte[] key, byte[] initVector)
         {
-            gmacIndex *= 44910;
-            var outArray = CounterAdd(gmacIndex, initVector);
+            long gmacIndexLong = (long)gmacIndex * 44910;
+            if (gmacIndexLong > int.MaxValue)
+            {
+                gmacIndexLong = int.MaxValue;
+            }
+            int gmacIndexSafe = (int)gmacIndexLong;
+            var outArray = CounterAdd(gmacIndexSafe, initVector);
             byte[] outKey = key.Concat(outArray).ToArray();
             using var sha = SHA256.Create();
             var hash = sha.ComputeHash(outKey);
@@ -187,46 +206,42 @@ namespace RemotePlay.Utils.Crypto
 
         protected static byte[] GetGmacTag(byte[] data, byte[] key, byte[] iv)
         {
-            // ✅ 使用 BouncyCastle 来支持 16 字节 nonce（Chiaki 使用的标准）
-            // .NET 的 AesGcm 只支持 12 字节，但 Chiaki 使用 16 字节
-            
-            // 创建 AES-GCM cipher
             var cipher = new GcmBlockCipher(new AesEngine());
-            
-            // 设置 16 字节的 nonce 和 128 位 (16 字节) 的 tag
             var parameters = new AeadParameters(
                 new KeyParameter(key), 
-                128,  // tag size in bits (16 bytes)
-                iv,   // 16-byte nonce
-                null  // no additional authenticated data (AAD) - we put data as AAD below
+                128,
+                iv,
+                null
             );
             
-            // 初始化为加密模式
             cipher.Init(true, parameters);
-            
-            // Process AAD (associated authenticated data)
-            // 在 GMAC 模式下，我们只处理 AAD，不加密任何数据
             cipher.ProcessAadBytes(data, 0, data.Length);
             
-            // 完成计算并获取 tag
             byte[] outBuf = new byte[cipher.GetOutputSize(0)];
             int outLen = cipher.DoFinal(outBuf, 0);
             
-            // 返回前 4 字节的 GMAC（协议仅使用 4 字节）
             return outBuf[..4];
         }
 
-        protected static byte[] GetKeyStream(byte[] key, byte[] initVector, int keyPos, int length)
+        protected static byte[] GetKeyStream(byte[] key, byte[] initVector, uint keyPos, int length)
         {
-            int padding = keyPos % 16;
-            keyPos -= padding;
+            int padding = (int)(keyPos % 16);
+            keyPos -= (uint)padding;
             int keyStreamLen = ((padding + length + 16 - 1) / 16) * 16;
             byte[] buffer = new byte[keyStreamLen];
             
-            // 从下一个块开始 (key_pos/16 + 1)
-            int counterStart = keyPos / 16 + 1;
+            ulong counterStartUlong = (keyPos / 16) + 1;
+            if (counterStartUlong > int.MaxValue)
+            {
+                counterStartUlong = int.MaxValue;
+            }
+            int counterStart = (int)counterStartUlong;
             for (int i = 0; i < keyStreamLen / 16; i++)
             {
+                if (counterStart > int.MaxValue - i)
+                {
+                    throw new OverflowException($"Counter overflow: counterStart={counterStart}, i={i}");
+                }
                 CounterAdd(counterStart + i, initVector).CopyTo(buffer, i * 16);
             }
             

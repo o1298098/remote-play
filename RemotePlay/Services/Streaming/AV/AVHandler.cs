@@ -336,8 +336,8 @@ namespace RemotePlay.Services.Streaming.AV
             var data = packet.Data;
             if (_cipher != null && data.Length > 0 && packet.KeyPos > 0)
             {
-                try { data = _cipher.Decrypt(data, (int)packet.KeyPos); }
-                catch (Exception ex) { _logger.LogError(ex, "❌ Decrypt failed frame={Frame}", packet.FrameIndex); }
+                try { data = _cipher.Decrypt(data, packet.KeyPos); }
+                catch (Exception ex) { _logger.LogError(ex, "❌ Decrypt failed frame={Frame}, keyPos={KeyPos}", packet.FrameIndex, packet.KeyPos); }
             }
             return data;
         }

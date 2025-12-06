@@ -2660,7 +2660,7 @@ namespace RemotePlay.Services.Streaming.Core
                     Array.Clear(tmp, 0x0b, 4);  // key_pos
 
                     // 5. 计算 GMAC（使用新的 key_pos）
-                    var gmac = _cipher.GetGmacAtKeyPos(tmp, (int)keyPos);
+                    var gmac = _cipher.GetGmacAtKeyPos(tmp, keyPos);
                     var gmacValue = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(gmac);
 
                     // 6. 写入 GMAC（偏移 0x07-0x0a）
@@ -2686,7 +2686,7 @@ namespace RemotePlay.Services.Streaming.Core
                     }
 
                     // 计算 GMAC
-                    var gmac = _cipher.GetGmacAtKeyPos(tmp, (int)keyPos);
+                    var gmac = _cipher.GetGmacAtKeyPos(tmp, keyPos);
                     var gmacValue = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(gmac);
 
                     // 写入 GMAC 和 key_pos

@@ -124,34 +124,34 @@ namespace RemotePlay.Services.Streaming.Pipeline
                         {
                             try
                             {
-                                var decryptedData = _cipher.Decrypt(packet.Data, (int)packet.KeyPos);
-                                if (decryptedData != null && decryptedData.Length == packet.Data.Length)
-                                {
-                                    int dataStart = rawData.Length - packet.Data.Length;
-                                    var newBuffer = new byte[dataStart + decryptedData.Length];
-                                    Array.Copy(rawData, 0, newBuffer, 0, dataStart);
-                                    Array.Copy(decryptedData, 0, newBuffer, dataStart, decryptedData.Length);
-                                    
-                                    if (AVPacket.TryParse(newBuffer, _hostType, out var decryptedPacket))
+                                var decryptedData = _cipher.Decrypt(packet.Data, packet.KeyPos);
+                                    if (decryptedData != null && decryptedData.Length == packet.Data.Length)
                                     {
-                                        packet = decryptedPacket;
-                                        Interlocked.Increment(ref _totalDecrypted);
+                                        int dataStart = rawData.Length - packet.Data.Length;
+                                        var newBuffer = new byte[dataStart + decryptedData.Length];
+                                        Array.Copy(rawData, 0, newBuffer, 0, dataStart);
+                                        Array.Copy(decryptedData, 0, newBuffer, dataStart, decryptedData.Length);
+                                        
+                                        if (AVPacket.TryParse(newBuffer, _hostType, out var decryptedPacket))
+                                        {
+                                            packet = decryptedPacket;
+                                            Interlocked.Increment(ref _totalDecrypted);
+                                        }
+                                        else
+                                        {
+                                            Interlocked.Increment(ref _decryptErrors);
+                                        }
                                     }
                                     else
                                     {
                                         Interlocked.Increment(ref _decryptErrors);
                                     }
                                 }
-                                else
+                                catch (Exception ex)
                                 {
                                     Interlocked.Increment(ref _decryptErrors);
+                                    _logger.LogError(ex, "Decrypt failed frame={Frame}, keyPos={KeyPos}", packet.FrameIndex, packet.KeyPos);
                                 }
-                            }
-                            catch (Exception ex)
-                            {
-                                Interlocked.Increment(ref _decryptErrors);
-                                _logger.LogError(ex, "Decrypt failed frame={Frame}, keyPos={KeyPos}", packet.FrameIndex, packet.KeyPos);
-                            }
                         }
 
                         if (!_outputChannel.Writer.TryWrite(packet))

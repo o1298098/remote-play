@@ -2,7 +2,7 @@
 {
     public class LocalCipher : BaseCipher
     {
-        private int _keyPos;
+        private uint _keyPos;
 
         public LocalCipher(byte[] handshakeKey, byte[] secret) : base(handshakeKey, secret)
         {
@@ -20,13 +20,20 @@
         /// <summary>
         /// 使用指定的 keyPos 加密数据（不推进当前 _keyPos）
         /// </summary>
-        public byte[] EncryptAtKeyPos(byte[] data, int keyPos)
+        public byte[] EncryptAtKeyPos(byte[] data, uint keyPos)
         {
             var keyStream = GetKeyStream(keyPos, data.Length);
             return DecryptEncrypt(BaseKey!, BaseIv!, keyPos, data, keyStream);
         }
 
-        public void AdvanceKeyPos(int advanceBy) => _keyPos += advanceBy;
+        public void AdvanceKeyPos(int advanceBy)
+        {
+            if (advanceBy < 0)
+            {
+                throw new ArgumentException($"advanceBy must be non-negative, got {advanceBy}", nameof(advanceBy));
+            }
+            _keyPos += (uint)advanceBy;
+        }
 
         public byte[] GetGmac(byte[] data)
         {
@@ -37,12 +44,12 @@
         /// <summary>
         /// 使用指定的 keyPos 计算 GMAC（用于加密包时，需要使用加密前的 keyPos）
         /// </summary>
-        public byte[] GetGmacAtKeyPos(byte[] data, int keyPos)
+        public byte[] GetGmacAtKeyPos(byte[] data, uint keyPos)
         {
             var tag = base.GetGmac(data, keyPos);
             return tag;
         }
 
-        public int KeyPos => _keyPos;
+        public uint KeyPos => _keyPos;
     }
 }
