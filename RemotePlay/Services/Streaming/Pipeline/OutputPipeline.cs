@@ -24,15 +24,9 @@ namespace RemotePlay.Services.Streaming.Pipeline
         private volatile IAVReceiver _receiver;
         private readonly Channel<ProcessedFrame> _videoChannel;
         private readonly Channel<ProcessedFrame> _audioChannel;
-        private readonly int _videoQueueCapacity;
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _videoSendTask;
         private readonly Task _audioSendTask;
-
-        // ✅ 帧率控制：目标60fps，即每帧间隔约16.67ms
-        private const int TARGET_FPS = 60;
-        private const double TARGET_FRAME_INTERVAL_MS = 1000.0 / TARGET_FPS; // ~16.67ms
-        private DateTime _lastVideoFrameSentTime = DateTime.MinValue;
 
         // 统计
         private long _videoFramesSent;
@@ -49,10 +43,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
         {
             _logger = logger;
             _receiver = receiver;
-            _videoQueueCapacity = videoQueueCapacity;
 
-            // ✅ 优化：视频队列使用 DropOldest 策略，但优先保留关键帧
-            // 当队列满时，优先丢弃非关键帧，保留关键帧
+            // 视频队列 - 使用 DropOldest 策略保证最新帧优先
             _videoChannel = Channel.CreateBounded<ProcessedFrame>(new BoundedChannelOptions(videoQueueCapacity)
             {
                 FullMode = BoundedChannelFullMode.DropOldest,
@@ -77,42 +69,14 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
         /// <summary>
         /// 推送视频帧（非阻塞）
-        /// ✅ 优化：当队列满时，优先丢弃非关键帧，保留关键帧
         /// </summary>
         public bool TryPushVideoFrame(ProcessedFrame frame)
         {
-            // ✅ 如果是关键帧且队列接近满，尝试先丢弃一个非关键帧
-            if (frame.IsKeyFrame && _videoChannel.Reader.Count >= _videoQueueCapacity * 0.8)
-            {
-                // 尝试读取并丢弃一个非关键帧
-                if (_videoChannel.Reader.TryRead(out ProcessedFrame oldFrame))
-                {
-                    if (!oldFrame.IsKeyFrame)
-                    {
-                        Interlocked.Increment(ref _videoFramesDropped);
-                        _logger.LogDebug("🔍 Output video queue: dropped non-keyframe to make room for keyframe");
-                    }
-                    else
-                    {
-                        // 如果是关键帧，放回去
-                        _videoChannel.Writer.TryWrite(oldFrame);
-                    }
-                }
-            }
-            
             bool success = _videoChannel.Writer.TryWrite(frame);
             if (!success)
             {
                 Interlocked.Increment(ref _videoFramesDropped);
-                // ✅ 如果是关键帧，记录警告；如果是普通帧，只记录调试信息
-                if (frame.IsKeyFrame)
-                {
-                    _logger.LogWarning("⚠️ Output video queue full, dropping keyframe={Frame}", frame.FrameIndex);
-                }
-                else
-                {
-                    _logger.LogDebug("⚠️ Output video queue full, dropping frame={Frame}", frame.FrameIndex);
-                }
+                _logger.LogWarning("⚠️ Output video queue full, dropping frame={Frame}", frame.FrameIndex);
             }
             return success;
         }
@@ -176,42 +140,11 @@ namespace RemotePlay.Services.Streaming.Pipeline
             try
             {
                 long receivedCount = 0;
-                _lastVideoFrameSentTime = DateTime.UtcNow;
-                
                 await foreach (var frame in _videoChannel.Reader.ReadAllAsync(_cts.Token))
                 {
                     receivedCount++;
                     try
                     {
-                        // ✅ 游戏串流优化：优先低延迟，只在极端情况下才限制帧率
-                        var now = DateTime.UtcNow;
-                        if (_lastVideoFrameSentTime != DateTime.MinValue)
-                        {
-                            var elapsed = (now - _lastVideoFrameSentTime).TotalMilliseconds;
-                            var queueSize = _videoChannel.Reader.Count;
-                            
-                            // ✅ 游戏串流：优先低延迟，只在发送过快时才轻微限制
-                            // ✅ 关键帧和积压严重时：立即发送，不延迟
-                            if (frame.IsKeyFrame || queueSize >= 20)
-                            {
-                                // 关键帧或队列积压：立即发送，保证低延迟
-                                // 不延迟
-                            }
-                            else if (!frame.IsKeyFrame && queueSize < 20)
-                            {
-                                // ✅ 正常情况：只在发送过快（< 8ms，即>125fps）时才轻微延迟，避免极端情况
-                                // 游戏串流允许更高的帧率波动，优先保证低延迟
-                                var minInterval = 8.0; // 最小间隔8ms（最大125fps），只在极端情况下限制
-                                if (elapsed < minInterval)
-                                {
-                                    var delayMs = minInterval - elapsed;
-                                    await Task.Delay(TimeSpan.FromMilliseconds(delayMs), _cts.Token);
-                                    now = DateTime.UtcNow;
-                                }
-                            }
-                        }
-                        _lastVideoFrameSentTime = now;
-
                         // 构建带 header 的包
                         var packetData = new byte[1 + frame.Data.Length];
                         packetData[0] = (byte)HeaderType.VIDEO;
@@ -220,9 +153,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
                         // ⚠️ 调试：记录发送的帧信息（使用 Information 级别，确保不会被过滤）
                         if (receivedCount % 100 == 0 || frame.IsKeyFrame)
                         {
-                            var queueSize = _videoChannel.Reader.Count;
-                            _logger.LogDebug("🔍 OutputPipeline: Sending video frame={Frame}, isKeyFrame={Key}, dataLen={Len}, receiver={Receiver}, received={Received}, queueSize={Queue}",
-                                frame.FrameIndex, frame.IsKeyFrame, packetData.Length, _receiver?.GetType().Name ?? "null", receivedCount, queueSize);
+                            _logger.LogDebug("🔍 OutputPipeline: Sending video frame={Frame}, isKeyFrame={Key}, dataLen={Len}, receiver={Receiver}, received={Received}",
+                                frame.FrameIndex, frame.IsKeyFrame, packetData.Length, _receiver?.GetType().Name ?? "null", receivedCount);
                         }
 
                         // 根据是否为关键帧选择发送方式

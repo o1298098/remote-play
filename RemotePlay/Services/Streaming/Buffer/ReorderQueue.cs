@@ -465,16 +465,11 @@ namespace RemotePlay.Services.Streaming.Buffer
 
         private void PullLockedLimited()
         {
-            // ✅ 游戏串流优化：根据积压情况动态调整输出帧数，优先保证低延迟和稳定性
             int dynamicMax = _maxOutputPerPull;
-            if (_countSlots > 200)
-                dynamicMax = Math.Min(20, Math.Max(_maxOutputPerPull, _countSlots / 12));  // ✅ 积压非常严重时，最多20帧，快速处理
-            else if (_countSlots > 100)
-                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, Math.Max(_maxOutputPerPull, _countSlots / 8));  // ✅ 积压严重时，最多25帧
+            if (_countSlots > 100)
+                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, Math.Max(_maxOutputPerPull, _countSlots / 10));
             else if (_countSlots > 50)
-                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, _maxOutputPerPull * 4);  // ✅ 中等积压时，最多12帧
-            else
-                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, _maxOutputPerPull * 3);  // ✅ 正常情况，最多9帧，保证低延迟和稳定性
+                dynamicMax = Math.Min(MAX_OUTPUT_PER_PULL, _maxOutputPerPull * 2);
 
             int outputs = 0;
             while (outputs < dynamicMax && PullLocked()) outputs++;
@@ -505,7 +500,6 @@ namespace RemotePlay.Services.Streaming.Buffer
             int maxConsecutive = CalculateMaxConsecutive();
             int consecutive = 0;
             var remove = 0;
-            bool hasTimeoutOccupied = false;  // ✅ 记录是否有已占用的slot超时
 
             for (int i = 0; i < _countSlots && consecutive < maxConsecutive; i++)
             {
@@ -525,8 +519,7 @@ namespace RemotePlay.Services.Streaming.Buffer
                     if (s.ReservedTime != DateTime.MinValue)
                     {
                         var elapsed = (now - s.ReservedTime).TotalMilliseconds;
-                        // ✅ 优化：对于未占用的slot，使用更长的超时时间，避免过早丢弃
-                        if (elapsed > _timeoutMs * 3.0) isTimeout = true;
+                        if (elapsed > _timeoutMs * 2.0) isTimeout = true;
                     }
                     else
                     {
@@ -536,19 +529,13 @@ namespace RemotePlay.Services.Streaming.Buffer
                 else
                 {
                     var elapsed = (now - s.ArrivalTime).TotalMilliseconds;
-                    // ✅ 优化：对于已占用的slot，使用标准超时时间，但记录是否有超时
-                    if (elapsed > _timeoutMs) 
-                    {
-                        isTimeout = true;
-                        hasTimeoutOccupied = true;
-                    }
+                    if (elapsed > _timeoutMs) isTimeout = true;
                 }
 
                 if (isTimeout)
                 {
                     if (s.Occupied)
                     {
-                        // ✅ 优化：即使超时，也输出已占用的slot，避免帧丢失
                         _output(s.Item!);
                         _processed++;
                         _arrived--;
@@ -569,14 +556,7 @@ namespace RemotePlay.Services.Streaming.Buffer
             if (remove == 0) return;
 
             AdvanceBaseBy(remove);
-            
-            // ✅ 优化：只有在有已占用的slot超时时才调用timeoutCallback，避免过于频繁的调用
-            // 这可以减少不必要的关键帧请求，避免画面冻结
-            if (hasTimeoutOccupied)
-            {
-                _timeoutCallback?.Invoke();
-            }
-            
+            _timeoutCallback?.Invoke();
             PullLockedLimited();
         }
 

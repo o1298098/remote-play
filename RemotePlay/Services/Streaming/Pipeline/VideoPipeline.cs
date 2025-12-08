@@ -203,19 +203,16 @@ namespace RemotePlay.Services.Streaming.Pipeline
                         {
                             _reorderQueue.Push(packet);
                             
-                            // ✅ 游戏串流优化：更积极的flush策略，优先保证低延迟和稳定性
+                            // 检查积压情况，严重时强制 flush
                             var stats = _reorderQueue.GetStats();
-                            if (stats.bufferSize > 150)
+                            if (stats.bufferSize > 100)
                             {
-                                // ✅ 积压严重时，立即flush，保证低延迟
-                                _reorderQueue.Flush(force: false);
+                                _reorderQueue.Flush(force: true);
                             }
-                            else if (stats.bufferSize > 80)
+                            else
                             {
-                                // ✅ 中等积压时，也进行flush，避免延迟累积
-                                _reorderQueue.Flush(false);
+                                _reorderQueue.Flush(false);  // ⭐ 每次 Push 后立即 Flush（与原始 AVHandler 一致）
                             }
-                            // ✅ 积压不严重时，依赖ReorderFlushLoop定期flush（10ms间隔），保证低延迟
                         }
                         else
                         {
@@ -250,25 +247,9 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 {
                     _reorderQueue?.Flush(false);
                     
-                    // ✅ 游戏串流优化：更频繁的flush，优先保证低延迟和稳定性
+                    // 根据积压情况动态调整 Flush 频率
                     var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
-                    int delayMs;
-                    if (stats.bufferSize > 200)
-                    {
-                        delayMs = 8;   // ✅ 积压非常严重时，8ms flush一次，快速处理
-                    }
-                    else if (stats.bufferSize > 100)
-                    {
-                        delayMs = 10;  // ✅ 积压严重时，10ms flush一次，快速处理
-                    }
-                    else if (stats.bufferSize > 50)
-                    {
-                        delayMs = 12;  // ✅ 中等积压时，12ms flush一次
-                    }
-                    else
-                    {
-                        delayMs = 10;  // ✅ 正常情况，10ms flush一次（约100fps处理能力），保证低延迟和稳定性
-                    }
+                    int delayMs = stats.bufferSize > 150 ? 25 : 50;
                     await Task.Delay(delayMs, _cts.Token);
                 }
             }
@@ -365,38 +346,35 @@ namespace RemotePlay.Services.Streaming.Pipeline
             var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
             _logger.LogWarning("⚠️ VideoPipeline reorder timeout, bufferSize={BufferSize}", stats.bufferSize);
 
-            // ✅ 优化：避免过于激进的超时处理，减少画面冻结
-            // ✅ 同时避免强制flush导致突然释放大量帧超过60fps
+            // 每次超时时都进行 flush，积压严重时强制 flush
             if (_reorderQueue != null)
             {
-                if (stats.bufferSize > 200)
+                if (stats.bufferSize > 80)
                 {
-                    _logger.LogWarning("⚠️ ReorderQueue 积压严重（{Size}），普通 flush 以恢复画面（不强制，避免超过60fps）", stats.bufferSize);
-                    // ✅ 使用普通flush而不是强制flush，让PullLockedLimited控制输出速率
-                    _reorderQueue.Flush(force: false);
-                    
-                    // ✅ 只有在积压非常严重时才请求关键帧，避免频繁请求导致画面冻结
-                    if (_requestKeyframeCallback != null)
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await _requestKeyframeCallback();
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "❌ Request keyframe failed");
-                            }
-                        });
-                    }
+                    _logger.LogWarning("⚠️ ReorderQueue 积压严重（{Size}），强制 flush 以恢复画面", stats.bufferSize);
+                    _reorderQueue.Flush(force: true);  // 强制 flush，跳过所有等待的包
                 }
                 else
                 {
-                    // ✅ 积压不严重时，只进行普通flush，不请求关键帧，避免打断正常流
-                    // 普通flush会处理超时的包，但不会跳过所有等待的包
+                    // 即使积压不严重，也进行 flush 以处理超时的包
                     _reorderQueue.Flush(force: false);
                 }
+            }
+
+            // 请求关键帧
+            if (_requestKeyframeCallback != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _requestKeyframeCallback();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ Request keyframe failed");
+                    }
+                });
             }
         }
 
