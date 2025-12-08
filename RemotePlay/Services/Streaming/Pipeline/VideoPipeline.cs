@@ -81,11 +81,11 @@ namespace RemotePlay.Services.Streaming.Pipeline
                     HandleOrderedPacket,
                     dropCallback: OnPacketDropped,
                     sizeStart: reorderWindowSize,
-                    sizeMin: 128,  // ⚠️ 优化：增大最小窗口（从96到128）以容纳更多包
-                    sizeMax: 512,  // ⚠️ 优化：降低最大窗口（从768到512）以平衡内存和性能
+                    sizeMin: 128,
+                    sizeMax: 512,
                     timeoutMs: reorderTimeoutMs,
                     dropStrategy: ReorderQueueDropStrategy.End,
-                    maxOutputPerPull: 10,  // ⚠️ 关键优化：增加每次输出的包数量（从默认3到10），加快处理速度
+                    maxOutputPerPull: 10,
                     timeoutCallback: OnReorderTimeout
                 );
 
@@ -203,11 +203,10 @@ namespace RemotePlay.Services.Streaming.Pipeline
                         {
                             _reorderQueue.Push(packet);
                             
-                            // ⚠️ 优化：检查积压情况，严重时强制 flush
+                            // 检查积压情况，严重时强制 flush
                             var stats = _reorderQueue.GetStats();
                             if (stats.bufferSize > 100)
                             {
-                                // 积压严重，强制 flush 以恢复（降低阈值从200到100）
                                 _reorderQueue.Flush(force: true);
                             }
                             else
@@ -248,10 +247,9 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 {
                     _reorderQueue?.Flush(false);
                     
-                    // ⚠️ 优化：根据积压情况动态调整 Flush 频率
-                    // 积压严重时（>150），更频繁地检查超时，避免画面冻结
+                    // 根据积压情况动态调整 Flush 频率
                     var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
-                    int delayMs = stats.bufferSize > 150 ? 25 : 50;  // 积压严重时 25ms，正常时 50ms（从100ms优化）
+                    int delayMs = stats.bufferSize > 150 ? 25 : 50;
                     await Task.Delay(delayMs, _cts.Token);
                 }
             }
@@ -282,16 +280,13 @@ namespace RemotePlay.Services.Streaming.Pipeline
                     return;
                 }
 
-                // ⚠️ 关键修复：解密已在 IngestPipeline 中完成（串行处理，保证 keyPos 顺序）
-                // packet.Data 已经是解密后的数据
+                // 解密已在 IngestPipeline 中完成，packet.Data 已经是解密后的数据
                 _videoReceiver.ProcessPacket(packet, packet.Data, (frame, recovered, success) =>
                 {
                     Interlocked.Increment(ref _totalProcessed);
 
-                    // ✅ 关键修复：在宽限期内，即使success=false，如果recovered=true，也应该发送帧
-                    // 这可以避免在帧丢失后，因为参考帧缺失导致完全没有画面输出
-                    // VideoReceiver会在宽限期内将success设置为true，但为了保险起见，这里也检查recovered
-                    // 与旧的 AVHandler 保持一致：if (_receiver != null && (success || recovered))
+                    // 在宽限期内，即使success=false，如果recovered=true，也应该发送帧
+                    // 避免在帧丢失后，因为参考帧缺失导致完全没有画面输出
                     if (success || recovered)
                     {
                         if (success)
@@ -351,8 +346,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
             var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
             _logger.LogWarning("⚠️ VideoPipeline reorder timeout, bufferSize={BufferSize}", stats.bufferSize);
 
-            // ⚠️ 优化：每次超时时都进行 flush，避免包等待过久
-            // 积压严重时（>80）强制 flush，否则正常 flush
+            // 每次超时时都进行 flush，积压严重时强制 flush
             if (_reorderQueue != null)
             {
                 if (stats.bufferSize > 80)

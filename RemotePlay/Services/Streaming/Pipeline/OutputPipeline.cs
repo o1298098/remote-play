@@ -21,7 +21,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
     public sealed class OutputPipeline : IDisposable
     {
         private readonly ILogger<OutputPipeline> _logger;
-        private volatile IAVReceiver _receiver;  // ⚠️ 修复：使用 volatile 支持动态切换 receiver
+        private volatile IAVReceiver _receiver;
         private readonly Channel<ProcessedFrame> _videoChannel;
         private readonly Channel<ProcessedFrame> _audioChannel;
         private readonly CancellationTokenSource _cts = new();

@@ -174,7 +174,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
                     return;
                 }
 
-                // ⚠️ 关键修复：解密已在 IngestPipeline 中完成（串行处理，保证 keyPos 顺序）
+                // 解密已在 IngestPipeline 中完成
                 // packet.Data 已经是解密后的数据
                 _audioReceiver.ProcessPacket(packet, packet.Data, (frame) =>
                 {

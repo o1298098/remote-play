@@ -31,6 +31,11 @@ interface UseStreamingConnectionParams {
   onConnectionError?: (reason: string) => void
 }
 
+export interface FrameCountDataPoint {
+  timestamp: number
+  frameCount: number
+}
+
 export interface StreamingMonitorStats {
   downloadKbps: number | null
   uploadKbps: number | null
@@ -39,6 +44,7 @@ export interface StreamingMonitorStats {
   latencyMs: number | null
   fps: number | null
   streamingDurationMs: number | null
+  frameCountHistory: FrameCountDataPoint[]
 }
 
 export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoRef, toast, onConnectionError }: UseStreamingConnectionParams) {
@@ -113,6 +119,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     videoBytesReceived: number
     framesDecoded: number | null
   } | null>(null)
+  const frameCountHistoryRef = useRef<FrameCountDataPoint[]>([])
   const streamingStartTimeRef = useRef<number | null>(null)
   const webrtcSessionIdRef = useRef<string | null>(null)
   const isStreamBoundRef = useRef<boolean>(false)
@@ -577,6 +584,20 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         }
       }
 
+      const currentTime = Date.now()
+      const tenMinutesAgo = currentTime - 10 * 60 * 1000
+      
+      frameCountHistoryRef.current = frameCountHistoryRef.current.filter(
+        (point) => point.timestamp >= tenMinutesAgo
+      )
+      
+      if (fps !== null && Number.isFinite(fps) && fps >= 0) {
+        frameCountHistoryRef.current.push({
+          timestamp: currentTime,
+          frameCount: fps,
+        })
+      }
+
       // 计算串流时长
       let streamingDurationMs: number | null = null
       if (streamingStartTimeRef.current !== null) {
@@ -603,6 +624,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
           latencyMs: latencyMs ?? prev?.latencyMs ?? null,
           fps: fps ?? prev?.fps ?? null,
           streamingDurationMs: streamingDurationMs,
+          frameCountHistory: [...frameCountHistoryRef.current],
         }))
 
         return
@@ -640,6 +662,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         latencyMs: latencyMs ?? prev?.latencyMs ?? null,
         fps: fps ?? prev?.fps ?? null,
         streamingDurationMs: streamingDurationMs,
+        frameCountHistory: [...frameCountHistoryRef.current],
       }))
     } catch (error) {
       console.warn('获取 WebRTC 统计信息失败:', error)
@@ -1101,6 +1124,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
 
     previousStatsRef.current = null
+    frameCountHistoryRef.current = []
     streamingStartTimeRef.current = null
     setConnectionStats(null)
 

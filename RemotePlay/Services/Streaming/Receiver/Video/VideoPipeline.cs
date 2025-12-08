@@ -72,8 +72,8 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             
             _rtpPacketizer = new RtpPacketizer(logger, _methodCache, _detectedVideoFormat, _negotiatedPtH264, _negotiatedPtHevc);
             
-            // 低延迟优化：40 帧队列 (≈ 0.67s @ 60fps)
-            var options = new BoundedChannelOptions(40)
+            // 60 帧队列 (≈ 1.0s @ 60fps)，在高码率时提供更好的缓冲
+            var options = new BoundedChannelOptions(60)
             {
                 FullMode = BoundedChannelFullMode.DropOldest,
                 SingleReader = true,
@@ -115,9 +115,9 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             try
             {
                 int currentQueueSize = _queueManager.TotalCount;
-                if (currentQueueSize > 30)
+                if (currentQueueSize > 45)
                 {
-                    _logger?.LogWarning("⚠️ 视频队列积压 ({Queue}/40)，可能出现发送瓶颈", currentQueueSize);
+                    _logger?.LogWarning("⚠️ 视频队列积压 ({Queue}/60)，可能出现发送瓶颈", currentQueueSize);
                 }
                 
                 _currentFrameIndex++;
@@ -155,25 +155,25 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             {
                 int currentQueueSize = _queueManager.TotalCount;
                 
-                // 丢帧策略：队列 > 35 帧时触发
-                if (currentQueueSize > 35)
+                // 丢帧策略：队列 > 50 帧时触发
+                if (currentQueueSize > 50)
                 {
                     int totalAttempts = _sentCount + _failedCount;
                     double failureRate = totalAttempts > 0 ? (double)_failedCount / totalAttempts : 0;
                     
                     // 队列接近满或失败率高：立即丢帧
-                    if (currentQueueSize >= 38 || failureRate > 0.5)
+                    if (currentQueueSize >= 58 || failureRate > 0.5)
                     {
                         if (_sentCount % 60 == 0)
                         {
-                            _logger?.LogWarning("⚠️ 视频队列接近满 ({Queue}/40)，失败率 {Rate:P1}，丢弃普通帧", 
+                            _logger?.LogWarning("⚠️ 视频队列接近满 ({Queue}/60)，失败率 {Rate:P1}，丢弃普通帧", 
                                 currentQueueSize, failureRate);
                         }
                         return ValueTask.FromResult(false);
                     }
                     
                     // 中度积压：渐进式概率丢帧
-                    double dropProbability = (currentQueueSize - 35) / 6.0;
+                    double dropProbability = (currentQueueSize - 50) / 10.0;
                     if (Random.Shared.Next(100) < dropProbability * 100)
                     {
                         return ValueTask.FromResult(false);
@@ -229,9 +229,9 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                             _queueManager.TryEnqueueNormal(frame);
                         }
                         
-                        // 背压机制：队列 > 30 帧时请求关键帧
+                        // 背压机制：队列 > 45 帧时请求关键帧
                         int currentQueueSize = _queueManager.TotalCount;
-                        if (currentQueueSize > 30 && _onKeyframeRequest != null)
+                        if (currentQueueSize > 45 && _onKeyframeRequest != null)
                         {
                             var backpressureCheckTime = DateTime.UtcNow;
                             var timeSinceLastRequest = (backpressureCheckTime - _lastKeyframeRequestTime).TotalMilliseconds;
@@ -239,7 +239,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                             if (timeSinceLastRequest >= KEYFRAME_REQUEST_COOLDOWN_MS)
                             {
                                 _lastKeyframeRequestTime = backpressureCheckTime;
-                                _logger?.LogWarning("🔄 队列积压严重 ({Queue}/100)，触发背压机制，请求关键帧以重新同步", currentQueueSize);
+                                _logger?.LogWarning("🔄 队列积压严重 ({Queue}/60)，触发背压机制，请求关键帧以重新同步", currentQueueSize);
                                 
                                 // 清空大部分旧帧，保留最近的几帧
                                 int cleared = _queueManager.ClearOldFrames(framesToKeep: 10);
@@ -263,7 +263,11 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                         // 批量处理：动态调整批量大小
                         int queueSize = _queueManager.TotalCount;
                         int maxBatchSize;
-                        if (queueSize > 30)
+                        if (queueSize > 45)
+                        {
+                            maxBatchSize = 15;
+                        }
+                        else if (queueSize > 30)
                         {
                             maxBatchSize = 10;
                         }

@@ -80,8 +80,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 loggerFactory,
                 outputCapacity: 512,
                 enableReorder: true,        
-                reorderWindowSize: 256,    // ⚠️ 优化：增大窗口（从192到256）以减少连续丢包
-                reorderTimeoutMs: 300);    // ⚠️ 优化：进一步降低超时时间（从500ms到300ms），更快触发超时处理，避免画面冻结    
+                reorderWindowSize: 256,
+                reorderTimeoutMs: 300);    
 
             _audioPipeline = new AudioPipeline(
                 loggerFactory.CreateLogger<AudioPipeline>(),
@@ -95,7 +95,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 videoQueueCapacity: 256,
                 audioQueueCapacity: 512);
 
-            // ⚠️ 修复：启动统一的包路由任务（避免多读取者竞争）
+            // 启动统一的包路由任务
             _packetRouterTask = Task.Run(RoutePacketsFromIngest, _routerCts.Token);
 
             // 启动帧路由任务
@@ -112,7 +112,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
     #region Pipeline Input Channels
 
-    // ⚠️ 修复：使用独立的 Channel，避免多读取者竞争
+    // 使用独立的 Channel，避免多读取者竞争
     private readonly Channel<AVPacket> _videoInputChannel = Channel.CreateBounded<AVPacket>(new BoundedChannelOptions(2048)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
@@ -143,7 +143,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
     /// <summary>
     /// 统一的包路由任务：从 Ingest 读取包并根据类型分发到 Video/Audio Pipeline
-    /// ⚠️ 这是修复多读取者竞争问题的关键！
+    /// 统一的包路由任务：从 Ingest 读取包并根据类型分发到 Video/Audio Pipeline
     /// </summary>
     private async Task RoutePacketsFromIngest()
     {
@@ -249,7 +249,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
         /// <summary>
         /// 设置接收器
-        /// ⚠️ 关键修复：同时更新 OutputPipeline 的 receiver，支持从 DefaultReceiver 切换到 WebRTCReceiver
+        /// 设置接收器，同时更新 OutputPipeline 的 receiver
         /// </summary>
         public void SetReceiver(IAVReceiver receiver)
         {
@@ -260,9 +260,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
         /// <summary>
         /// 设置解密密钥
-        /// ⚠️ 关键修复：解密必须在 IngestPipeline 中串行进行，避免并行解密导致 keyPos 混乱
-        /// 旧的 AVHandler 虽然解密在 ProcessSinglePacket 中，但它是串行处理的（一个线程）
-        /// 新的 Pipeline 中，VideoPipeline 和 AudioPipeline 并行处理，如果它们都解密，会导致 cipher 的 keyPos 状态混乱
+        /// 设置解密密钥
+        /// 解密在 IngestPipeline 中串行进行，避免并行解密导致 keyPos 混乱
         /// </summary>
         public void SetCipher(StreamCipher? cipher)
         {

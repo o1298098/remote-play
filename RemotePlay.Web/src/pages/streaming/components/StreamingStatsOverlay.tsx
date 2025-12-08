@@ -2,6 +2,7 @@ import type { StreamingMonitorStats } from '@/hooks/use-streaming-connection'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useDevice } from '@/hooks/use-device'
+import { FrameCountChart } from './FrameCountChart'
 
 interface StreamingStatsOverlayProps {
   stats: StreamingMonitorStats | null
@@ -124,6 +125,13 @@ export function StreamingStatsOverlay({ stats }: StreamingStatsOverlayProps) {
         <div className="flex items-center justify-between">
           <span className="text-white/60">{t('streaming.monitor.labels.fps')}</span>
           <span>{formatFps(t, stats?.fps ?? null)}</span>
+        </div>
+        <div className="w-full overflow-hidden">
+          <FrameCountChart
+            data={stats?.frameCountHistory ?? []}
+            width={isMobile ? undefined : 212}
+            height={40}
+          />
         </div>
       </div>
     </div>
