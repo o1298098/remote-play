@@ -85,6 +85,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
                     sizeMax: 512,  // ⚠️ 优化：降低最大窗口（从768到512）以平衡内存和性能
                     timeoutMs: reorderTimeoutMs,
                     dropStrategy: ReorderQueueDropStrategy.End,
+                    maxOutputPerPull: 10,  // ⚠️ 关键优化：增加每次输出的包数量（从默认3到10），加快处理速度
                     timeoutCallback: OnReorderTimeout
                 );
 
@@ -201,7 +202,18 @@ namespace RemotePlay.Services.Streaming.Pipeline
                         if (_enableReorder && _reorderQueue != null)
                         {
                             _reorderQueue.Push(packet);
-                            _reorderQueue.Flush(false);  // ⭐ 每次 Push 后立即 Flush（与原始 AVHandler 一致）
+                            
+                            // ⚠️ 优化：检查积压情况，严重时强制 flush
+                            var stats = _reorderQueue.GetStats();
+                            if (stats.bufferSize > 100)
+                            {
+                                // 积压严重，强制 flush 以恢复（降低阈值从200到100）
+                                _reorderQueue.Flush(force: true);
+                            }
+                            else
+                            {
+                                _reorderQueue.Flush(false);  // ⭐ 每次 Push 后立即 Flush（与原始 AVHandler 一致）
+                            }
                         }
                         else
                         {
@@ -235,7 +247,12 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 while (!_cts.Token.IsCancellationRequested)
                 {
                     _reorderQueue?.Flush(false);
-                    await Task.Delay(100, _cts.Token);
+                    
+                    // ⚠️ 优化：根据积压情况动态调整 Flush 频率
+                    // 积压严重时（>150），更频繁地检查超时，避免画面冻结
+                    var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
+                    int delayMs = stats.bufferSize > 150 ? 25 : 50;  // 积压严重时 25ms，正常时 50ms（从100ms优化）
+                    await Task.Delay(delayMs, _cts.Token);
                 }
             }
             catch (OperationCanceledException)
@@ -331,7 +348,24 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
         private void OnReorderTimeout()
         {
-            _logger.LogWarning("⚠️ VideoPipeline reorder timeout");
+            var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
+            _logger.LogWarning("⚠️ VideoPipeline reorder timeout, bufferSize={BufferSize}", stats.bufferSize);
+
+            // ⚠️ 优化：每次超时时都进行 flush，避免包等待过久
+            // 积压严重时（>80）强制 flush，否则正常 flush
+            if (_reorderQueue != null)
+            {
+                if (stats.bufferSize > 80)
+                {
+                    _logger.LogWarning("⚠️ ReorderQueue 积压严重（{Size}），强制 flush 以恢复画面", stats.bufferSize);
+                    _reorderQueue.Flush(force: true);  // 强制 flush，跳过所有等待的包
+                }
+                else
+                {
+                    // 即使积压不严重，也进行 flush 以处理超时的包
+                    _reorderQueue.Flush(force: false);
+                }
+            }
 
             // 请求关键帧
             if (_requestKeyframeCallback != null)

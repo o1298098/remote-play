@@ -81,7 +81,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 outputCapacity: 512,
                 enableReorder: true,        
                 reorderWindowSize: 256,    // ⚠️ 优化：增大窗口（从192到256）以减少连续丢包
-                reorderTimeoutMs: 1000);    
+                reorderTimeoutMs: 300);    // ⚠️ 优化：进一步降低超时时间（从500ms到300ms），更快触发超时处理，避免画面冻结    
 
             _audioPipeline = new AudioPipeline(
                 loggerFactory.CreateLogger<AudioPipeline>(),
