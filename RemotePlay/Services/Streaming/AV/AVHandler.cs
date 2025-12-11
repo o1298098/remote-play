@@ -455,12 +455,9 @@ namespace RemotePlay.Services.Streaming.AV
                         }
                     }
                 },
-                sizeStart: 192,
-                sizeMin: 96,
-                sizeMax: 768,
-                timeoutMs: 1000,
-                dropStrategy: ReorderQueueDropStrategy.End,
-                timeoutCallback: OnReorderQueueTimeout);
+                maxBufferFrames: 192,
+                maxGap: 96,
+                timeoutMsBase: 6); // 注意：新实现会将超时限制在 4-12ms 范围内
         }
 
         private int _consecutiveTimeouts = 0;

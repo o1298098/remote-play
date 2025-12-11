@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -80,14 +81,9 @@ namespace RemotePlay.Services.Streaming.Pipeline
                     pkt => (uint)pkt.Index,
                     HandleOrderedPacket,
                     dropCallback: OnPacketDropped,
-                    sizeStart: reorderWindowSize,
-                    sizeMin: 128,
-                    sizeMax: 512,
-                    timeoutMs: reorderTimeoutMs,
-                    dropStrategy: ReorderQueueDropStrategy.End,
-                    maxOutputPerPull: 10,
-                    timeoutCallback: OnReorderTimeout
-                );
+                    maxBufferFrames: reorderWindowSize,
+                    maxGap: Math.Min(reorderWindowSize, 128), // 允许更大的gap容忍（局域网乱序可能较大）
+                    timeoutMsBase: reorderTimeoutMs); // 使用传入的超时值，不再强制限制在4-12ms
 
                 // 启动定期 Flush 任务
                 _reorderFlushTask = Task.Run(ReorderFlushLoop, _cts.Token);
@@ -239,24 +235,54 @@ namespace RemotePlay.Services.Streaming.Pipeline
             }
         }
 
-        private async Task ReorderFlushLoop()
+        /// <summary>
+        /// ✅ 高精度定时器驱动的 Flush 循环
+        /// 使用 Stopwatch 替代 Task.Delay，消除定时器抖动导致的 FPS 锯齿
+        /// 原理：固定间隔 tick（60fps = 16.666ms），SpinWait 避免线程切换开销
+        /// </summary>
+        private Task ReorderFlushLoop()
         {
-            try
+            return Task.Run(() =>
             {
-                while (!_cts.Token.IsCancellationRequested)
+                try
                 {
-                    _reorderQueue?.Flush(false);
+                    var sw = Stopwatch.StartNew();
+                    long next = 0;
                     
-                    // 根据积压情况动态调整 Flush 频率
-                    var stats = _reorderQueue?.GetStats() ?? (0, 0, 0, 0);
-                    int delayMs = stats.bufferSize > 150 ? 25 : 50;
-                    await Task.Delay(delayMs, _cts.Token);
+                    // 60fps = 16.666ms = 16,666,000 纳秒
+                    // 转换为 Stopwatch ticks：1 tick = 100ns (Stopwatch.Frequency = 10,000,000 Hz)
+                    // 16,666,000 ns / 100 ns = 166,660 ticks
+                    const long intervalTicks = 166_660; // 16.666ms at 60fps
+                    
+                    while (!_cts.Token.IsCancellationRequested)
+                    {
+                        long nowTicks = sw.ElapsedTicks;
+                        
+                        if (nowTicks >= next)
+                        {
+                            // 执行 flush
+                            _reorderQueue?.Flush(false);
+                            
+                            // 计算下一个 tick 时间（使用固定间隔 + 补偿累积误差）
+                            next += intervalTicks;
+                            
+                            // 如果落后太多，直接跳到当前时间（避免追赶导致 burst）
+                            if (nowTicks > next + intervalTicks * 2)
+                            {
+                                next = nowTicks + intervalTicks;
+                            }
+                        }
+                        
+                        // 轻量级等待，避免忙等待但保持低延迟响应
+                        // SpinWait 不会阻塞线程，只是让出 CPU 时间片
+                        Thread.SpinWait(50);
+                    }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // 正常退出
-            }
+                catch (OperationCanceledException)
+                {
+                    // 正常退出
+                }
+            }, _cts.Token);
         }
 
         #endregion
