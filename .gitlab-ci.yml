@@ -15,9 +15,9 @@ variables:
 # 构建 RemotePlay 后端服务
 build-remoteplay:
   stage: push
-  image: docker:24
+  image: docker:29
   services:
-    - docker:24-dind
+    - docker:29-dind
   variables:
     IMAGE_NAME: $REGISTRY_IMAGE/server
   before_script:
@@ -54,9 +54,9 @@ build-remoteplay:
 # 构建 RemotePlay.DBTool
 build-dbtool:
   stage: push
-  image: docker:24
+  image: docker:29
   services:
-    - docker:24-dind
+    - docker:29-dind
   variables:
     IMAGE_NAME: $REGISTRY_IMAGE/dbtool
   before_script:
@@ -94,9 +94,9 @@ build-dbtool:
 # 构建 remoteplay.web 前端
 build-web:
   stage: push
-  image: docker:24
+  image: docker:29
   services:
-    - docker:24-dind
+    - docker:29-dind
   variables:
     IMAGE_NAME: $REGISTRY_IMAGE/web
   before_script:

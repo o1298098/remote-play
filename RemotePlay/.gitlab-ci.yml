@@ -11,9 +11,9 @@ variables:
 # 构建和推送 Docker 镜像
 build-and-push:
   stage: push
-  image: docker:24
+  image: docker:29
   services:
-    - docker:24-dind
+    - docker:29-dind
   before_script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
