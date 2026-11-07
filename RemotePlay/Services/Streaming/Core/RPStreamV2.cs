@@ -40,7 +40,7 @@ namespace RemotePlay.Services.Streaming.Core
         private const byte INBOUND_STREAMS = 0x64;
         private const int DEFAULT_RTT = 1;
         private const int DEFAULT_MTU = 1454;
-        private const int UDP_RECEIVE_BUFFER_SIZE = 1 << 20; // 1MB
+        private const int UDP_RECEIVE_BUFFER_SIZE = 8 << 20; // 8MB，50Mbps 下约可缓冲 1.3 秒
         private const int MAX_PROCESSED_TSNS = 1000;
 
         // 状态常量
@@ -91,6 +91,9 @@ namespace RemotePlay.Services.Streaming.Core
         private const int STREAM_TIMEOUT_SECONDS = 30; // 30 秒没有收到任何包，认为流已断开
         
         // ✅ 降档统计
+        private static readonly TimeSpan BrowserLossMaxAge = TimeSpan.FromSeconds(2);
+        private const double BrowserLossCap = 0.3;
+        private DateTime _lastBrowserLossLog = DateTime.MinValue;
         private int _qualityDowngradeCount = 0;
         private int _qualityUpgradeCount = 0;
 
@@ -563,7 +566,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// </summary>
         public async Task SendCorruptAsync(int start, int end)
         {
-            var data = ProtoHandler.CorruptFrame(start, end);
+            var data = ProtoCodec.BuildCorruptFrame((uint)start, (uint)end);
 			// CORRUPTFRAME 使用 flag=1, channel=2
 			await SendDataAsync(data, channel: 2, flag: 1, proto: true);
         }
@@ -698,6 +701,18 @@ namespace RemotePlay.Services.Streaming.Core
             _udpClient.Client.ReceiveBufferSize = UDP_RECEIVE_BUFFER_SIZE;
             _udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
             _udpClient.DontFragment = true;
+
+            // Linux 会把该值截断到 net.core.rmem_max（并加倍返回），高码率时需要在宿主机调大
+            int effective = _udpClient.Client.ReceiveBufferSize;
+            if (effective < UDP_RECEIVE_BUFFER_SIZE)
+            {
+                _logger.LogWarning("⚠️ UDP 接收缓冲区仅 {Effective} 字节（请求 {Requested}），高码率下可能丢包，请调大宿主机 net.core.rmem_max",
+                    effective, UDP_RECEIVE_BUFFER_SIZE);
+            }
+            else
+            {
+                _logger.LogInformation("UDP 接收缓冲区: {Effective} 字节", effective);
+            }
         }
 
         /// <summary>
@@ -731,27 +746,55 @@ namespace RemotePlay.Services.Streaming.Core
             // 创建 ECDH
             _ecdh = new StreamECDH();
 
-            // 构建 LaunchSpec
-            var launchSpecRaw = BuildLaunchSpec();
-            var launchSpecEnc = ProtoHandler.EncodeLaunchSpecWithSession(
-                _session.HostType,
-                _session.Secret,
-                _session.SessionIv,
-                launchSpecRaw
-            );
+            // BIG 不能分片（socket 设置了 DontFragment），候选分辨率过多会超过 MTU 导致发送失败，
+            // 因此从完整列表开始逐个去掉最低档，直到整包不超过 MTU
+            var launchOptions = _session.LaunchOptions ?? StreamLaunchOptionsResolver.Resolve(_session);
+            bool adaptive = launchOptions.AdaptiveResolution &&
+                string.Equals(_session.HostType, "PS5", StringComparison.OrdinalIgnoreCase);
+            var ladder = StreamLaunchOptionsResolver.BuildResolutionLadder(launchOptions.Width, launchOptions.Height, adaptive);
+            int maxPacketSize = GetMaxUdpPayloadSize();
 
-            // 构建 BIG 负载
-            var bigPayload = ProtoCodec.BuildBigPayload(
-                clientVersion: version,
-                sessionKey: _session.SessionId ?? Array.Empty<byte>(),
-                launchSpec: launchSpecEnc,
-                encryptedKey: new byte[4],
-                ecdhPub: _ecdh.PublicKey,
-                ecdhSig: _ecdh.PublicSig
-            );
+            byte[] bigPayload = Array.Empty<byte>();
+            int resolutionCount = ladder.Count;
+            for (; resolutionCount >= 1; resolutionCount--)
+            {
+                var launchSpecRaw = BuildLaunchSpec(launchOptions, ladder.Take(resolutionCount).ToList());
+                var launchSpecEnc = ProtoHandler.EncodeLaunchSpecWithSession(
+                    _session.HostType,
+                    _session.Secret,
+                    _session.SessionIv,
+                    launchSpecRaw
+                );
 
-            _logger.LogInformation("Sending BIG payload: len={Len}, tagRemote={TagRemote}", 
-                bigPayload.Length, _tagRemote);
+                bigPayload = ProtoCodec.BuildBigPayload(
+                    clientVersion: version,
+                    sessionKey: _session.SessionId ?? Array.Empty<byte>(),
+                    launchSpec: launchSpecEnc,
+                    encryptedKey: new byte[4],
+                    ecdhPub: _ecdh.PublicKey,
+                    ecdhSig: _ecdh.PublicSig
+                );
+
+                int packetSize = Packet.CreateData(0, 1, 1, bigPayload).Length;
+                if (packetSize <= maxPacketSize || resolutionCount == 1)
+                {
+                    if (packetSize > maxPacketSize)
+                    {
+                        _logger.LogWarning("⚠️ BIG 包 {Size} 字节超过 MTU 限制 {Max} 字节，可能发送失败", packetSize, maxPacketSize);
+                    }
+                    break;
+                }
+            }
+
+            if (resolutionCount < ladder.Count)
+            {
+                _logger.LogInformation("BIG 包受 MTU（{Max} 字节）限制，候选分辨率从 {Full} 个裁剪为 {Count} 个",
+                    maxPacketSize, ladder.Count, resolutionCount);
+            }
+
+            _logger.LogInformation("Sending BIG payload: len={Len}, tagRemote={TagRemote}, 候选分辨率={Resolutions}",
+                bigPayload.Length, _tagRemote,
+                string.Join(", ", ladder.Take(resolutionCount).Select(r => $"{r.Width}x{r.Height}")));
             
             // 保存 BIG payload 用于重试
             _lastBigPayload = bigPayload;
@@ -815,18 +858,16 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 构建 LaunchSpec
         /// </summary>
-        private byte[] BuildLaunchSpec()
+        private byte[] BuildLaunchSpec(StreamLaunchOptions launchOptions, IReadOnlyList<(int Width, int Height)> resolutions)
         {
             int rtt = _session.RttUs > 0 ? (int)(_session.RttUs / 1000) : DEFAULT_RTT;
             int mtu = _session.MtuOut > 0 ? _session.MtuOut : DEFAULT_MTU;
-            var launchOptions = _session.LaunchOptions ?? StreamLaunchOptionsResolver.Resolve(_session);
 
             return ProtoHandler.BuildLaunchSpec(
                 _session.SessionId,
                 _session.HostType,
                 _ecdh!.HandshakeKey,
-                width: launchOptions.Width,
-                height: launchOptions.Height,
+                resolutions: resolutions,
                 fps: launchOptions.Fps,
                 bitrateKbps: launchOptions.BitrateKbps,
                 videoCodec: launchOptions.VideoCodec,
@@ -834,6 +875,15 @@ namespace RemotePlay.Services.Streaming.Core
                 rtt: rtt,
                 mtu: mtu
             );
+        }
+
+        /// <summary>
+        /// 单个 UDP 包可承载的最大负载：取协商 MTU 与以太网 MTU 的较小值，再减去 IP+UDP 头
+        /// </summary>
+        private int GetMaxUdpPayloadSize()
+        {
+            int mtu = _session.MtuOut > 0 ? _session.MtuOut : DEFAULT_MTU;
+            return Math.Min(mtu, 1500) - 28;
         }
 
         #endregion
@@ -1882,12 +1932,52 @@ namespace RemotePlay.Services.Streaming.Core
 
             // 获取并重置统计（合并 generation 和 sequence 统计）
             var (received, lost) = _packetStats.GetAndReset(reset: true);
+            (received, lost) = ApplyBrowserLoss(received, lost);
 
             // 限制在 ushort 范围内
             if (received > ushort.MaxValue) received = ushort.MaxValue;
             if (lost > ushort.MaxValue) lost = ushort.MaxValue;
 
             return ((ushort)received, (ushort)lost);
+        }
+
+        /// <summary>
+        /// 把浏览器回报的丢包率合并进上报给主机的拥塞统计：主机只看得到 PS→服务端 这一段，
+        /// 而瓶颈通常在服务端→浏览器，不合并的话主机永远不会降码率或降分辨率。
+        /// 合并后保持总包数不变：combined = 1 - (1 - 主机段丢包率) × (1 - 浏览器段丢包率)。
+        /// </summary>
+        private (ulong received, ulong lost) ApplyBrowserLoss(ulong received, ulong lost)
+        {
+            ulong total = received + lost;
+            if (total == 0 || _receiver is not Receiver.WebRTCReceiver webrtcReceiver)
+            {
+                return (received, lost);
+            }
+
+            var stats = webrtcReceiver.BrowserVideoStats;
+            if (stats == null || DateTime.UtcNow - stats.Value.ReceivedAtUtc > BrowserLossMaxAge)
+            {
+                return (received, lost);
+            }
+
+            double browserLoss = Math.Min(stats.Value.FractionLost, BrowserLossCap);
+            if (browserLoss <= 0)
+            {
+                return (received, lost);
+            }
+
+            double hostLoss = (double)lost / total;
+            double combined = 1 - (1 - hostLoss) * (1 - browserLoss);
+            ulong combinedLost = Math.Max(lost, (ulong)Math.Round(total * combined));
+
+            if (browserLoss >= 0.02 && DateTime.UtcNow - _lastBrowserLossLog > TimeSpan.FromSeconds(5))
+            {
+                _lastBrowserLossLog = DateTime.UtcNow;
+                _logger.LogInformation("📉 浏览器侧丢包 {BrowserLoss:P1}，上报主机的合并丢包率 {Combined:P1}",
+                    browserLoss, combined);
+            }
+
+            return (total - combinedLost, combinedLost);
         }
 
         public (StreamHealthSnapshot Snapshot, StreamPipelineStats PipelineStats) GetStreamHealth()

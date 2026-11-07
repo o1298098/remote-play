@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
 using RemotePlay.Contracts.Services;
+using RemotePlay.Models.WebRTC;
 using RemotePlay.Services.WebRTC;
 using RemotePlay.Services.Streaming;
 
@@ -63,7 +64,7 @@ namespace RemotePlay.Hubs
 
                 await stream.RequestKeyframeAsync();
 
-                _logger.LogInformation("🎯 SignalR 请求关键帧成功: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
+                _logger.LogDebug("🎯 SignalR 请求关键帧成功: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
                     sessionId, session.StreamingSessionId, Context.ConnectionId);
 
                 await Clients.Caller.SendAsync("KeyframeRequested", true);
@@ -76,6 +77,29 @@ namespace RemotePlay.Hubs
             }
         }
         
+        /// <summary>
+        /// 浏览器定期回传的视频接收统计，仅用于写日志诊断
+        /// </summary>
+        public Task ReportClientStats(string sessionId, ClientVideoStats stats)
+        {
+            if (stats == null || !_logger.IsEnabled(LogLevel.Debug))
+            {
+                return Task.CompletedTask;
+            }
+
+            _logger.LogDebug(
+                "浏览器视频统计 [{Session}]: 状态={State} 收包={PacketsReceived} 丢包={PacketsLost} 收帧={FramesReceived} 解码={FramesDecoded} " +
+                "关键帧解码={KeyFramesDecoded} 丢帧={FramesDropped} PLI={Pli} FIR={Fir} NACK={Nack} 冻结={FreezeCount}次/{FreezeSeconds:F1}s " +
+                "解码帧率={DecodeFps:F1} 码率={Kbps:F0}kbps 抖动缓冲={JitterBufferMs:F0}ms 解码器={Decoder} 编码={Codec} 分辨率={Width}x{Height}",
+                sessionId.Length > 8 ? sessionId[..8] : sessionId,
+                stats.ConnectionState, stats.PacketsReceived, stats.PacketsLost, stats.FramesReceived, stats.FramesDecoded,
+                stats.KeyFramesDecoded, stats.FramesDropped, stats.PliCount, stats.FirCount, stats.NackCount,
+                stats.FreezeCount, stats.TotalFreezesDuration, stats.DecodeFps, stats.BitrateKbps, stats.JitterBufferDelayMs,
+                stats.DecoderImplementation, stats.Codec, stats.FrameWidth, stats.FrameHeight);
+
+            return Task.CompletedTask;
+        }
+
         /// <summary>
         /// 处理 ICE Restart：当 ICE 连接断开时，重新协商
         /// </summary>

@@ -164,6 +164,12 @@ volumes:
 - WebRTC 和 TURN 服务器设置现在可通过 Web 界面配置（设置页面）
 - 如需远程访问，请通过 Web 界面配置端口转发和 TURN 服务器
 - 在生产环境部署前，请更改默认 JWT 密钥
+- 使用 20Mbps 以上码率时，需要在 **Linux 宿主机** 上调大 UDP 缓冲区上限（容器内设置无效），否则高码率关键帧容易丢包：
+  ```bash
+  sudo sysctl -w net.core.rmem_max=8388608 net.core.wmem_max=8388608
+  # 永久生效：写入 /etc/sysctl.d/99-psrp.conf
+  ```
+  后端日志若出现"UDP 接收缓冲区仅 … 字节"或"RTP 发送缓冲区仅 … 字节"的警告，说明该设置尚未生效
 
 ## 贡献指南
 欢迎通过 Issue、Pull Request 或 Discussions 参与共建。提交前建议：

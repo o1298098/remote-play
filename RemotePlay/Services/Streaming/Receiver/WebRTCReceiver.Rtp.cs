@@ -1,8 +1,10 @@
 using SIPSorcery.Media;
 using SIPSorcery.Net;
 using System;
+using System.Buffers.Binary;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Concentus;
 
@@ -13,245 +15,91 @@ namespace RemotePlay.Services.Streaming.Receiver
     /// </summary>
     public sealed partial class WebRTCReceiver
     {
+        private readonly record struct AudioRtpPacket(byte[] Payload, uint Timestamp, ushort SeqNum, int PayloadType);
+
+        private const int AUDIO_SEND_QUEUE_CAPACITY = 10;
+        private Channel<AudioRtpPacket>? _audioSendChannel;
+        private CancellationTokenSource? _audioSendCts;
+        private Task? _audioSendTask;
+        private int _audioSendFailureCount;
+
+        private void StartAudioSendLoop()
+        {
+            _audioSendChannel = Channel.CreateBounded<AudioRtpPacket>(new BoundedChannelOptions(AUDIO_SEND_QUEUE_CAPACITY)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false
+            });
+            _audioSendCts = new CancellationTokenSource();
+            _audioSendTask = Task.Run(() => AudioSendLoopAsync(_audioSendChannel.Reader, _audioSendCts.Token));
+        }
+
+        private void StopAudioSendLoop()
+        {
+            try
+            {
+                _audioSendCts?.Cancel();
+                _audioSendChannel?.Writer.TryComplete();
+                _audioSendTask?.Wait(TimeSpan.FromMilliseconds(200));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "停止音频发送循环时异常");
+            }
+            finally
+            {
+                _audioSendCts?.Dispose();
+                _audioSendCts = null;
+            }
+        }
+
+        private async Task AudioSendLoopAsync(ChannelReader<AudioRtpPacket> reader, CancellationToken token)
+        {
+            try
+            {
+                await foreach (var packet in reader.ReadAllAsync(token))
+                {
+                    var peerConnection = _peerConnection;
+                    if (peerConnection == null ||
+                        peerConnection.connectionState is RTCPeerConnectionState.closed or RTCPeerConnectionState.failed)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        peerConnection.SendRtpRaw(SDPMediaTypesEnum.audio, packet.Payload, packet.Timestamp, 0, packet.PayloadType, packet.SeqNum);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (Interlocked.Increment(ref _audioSendFailureCount) % 100 == 1)
+                        {
+                            _logger.LogWarning(ex, "⚠️ 音频 RTP 发送失败 (累计 {Count} 次)", _audioSendFailureCount);
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 音频发送循环异常退出");
+            }
+        }
+
         /// <summary>
-        /// ✅ 修复：添加超时保护和限流机制，避免同步阻塞导致前端冻结
-        /// 使用异步方式调用，带超时机制和信号量限流
+        /// 入队一个音频 RTP 包，由单一发送线程按序发出（序号和时间戳取自已构建的 RTP 头）
         /// </summary>
         private void SendAudioRTPRaw(byte[] rtpBytes, byte[] originalData, int payloadType = 111)
         {
-            try
+            if (_peerConnection == null || rtpBytes.Length < 12 || _audioSendChannel == null)
             {
-                if (_peerConnection == null) return;
-                
-                // ✅ 音频限流优化：使用带超时的等待，避免直接丢帧导致爆音
-                // 音频对连续性要求极高，但在高延迟环境下，等待会导致积压和爆音
-                _ = Task.Run(async () =>
-                {
-                    // ✅ 立即检查是否可以发送，无法发送则立即丢弃，避免积压导致爆音
-                    bool acquired = await _audioSendSemaphore.WaitAsync(0);
-                    
-                    if (!acquired)
-                    {
-                        // 无法立即获取信号量，说明音频发送任务积压，立即丢弃此帧
-                        // 在高延迟环境（如TURN）下，宁可丢帧也不要积压导致爆音
-                        if (_audioPacketCount % 100 == 0)
-                        {
-                            _logger.LogDebug("⚠️ 音频发送繁忙，丢弃此帧以避免积压");
-                        }
-                        return;
-                    }
-                    
-                    try
-                    {
-                        await SendAudioRTPRawAsync(rtpBytes, originalData, payloadType);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_audioPacketCount % 100 == 0)
-                        {
-                            _logger.LogWarning(ex, "⚠️ 异步发送音频 RTP 包失败");
-                        }
-                    }
-                    finally
-                    {
-                        _audioSendSemaphore.Release();
-                    }
-                });
+                return;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送音频 RTP 包失败");
-            }
-        }
-        
-        /// <summary>
-        /// 异步发送音频 RTP 包，带超时保护
-        /// </summary>
-        private async Task<bool> SendAudioRTPRawAsync(byte[] rtpBytes, byte[] originalData, int payloadType = 111)
-        {
-            try
-            {
-                if (_peerConnection == null) return false;
-                
-                var peerConnectionType = _peerConnection.GetType();
-                var sendRtpRawMethods = peerConnectionType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                    .Where(m => m.Name == "SendRtpRaw")
-                    .ToList();
-                
-                if (sendRtpRawMethods.Count == 0)
-                {
-                    var baseType = peerConnectionType.BaseType;
-                    if (baseType != null)
-                    {
-                        sendRtpRawMethods = baseType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                            .Where(m => m.Name == "SendRtpRaw")
-                            .ToList();
-                    }
-                }
-                
-                bool rtpSent = false;
-                foreach (var method in sendRtpRawMethods)
-                {
-                    try
-                    {
-                        var parameters = method.GetParameters();
-                        
-                        if (parameters.Length == 2 && parameters[0].ParameterType == typeof(byte[]))
-                        {
-                            if (parameters[1].ParameterType == typeof(SDPMediaTypesEnum))
-                            {
-                                // ✅ 使用超时保护，避免阻塞
-                                using var cts = new CancellationTokenSource(100); // 100ms 超时
-                                var invokeTask = Task.Run(() => 
-                                    method.Invoke(_peerConnection, new object[] { rtpBytes, SDPMediaTypesEnum.audio }), cts.Token);
-                                
-                                try
-                                {
-                                    await invokeTask;
-                                    if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
-                                    {
-                                        _logger.LogDebug("✅ 音频 RTP 包已发送 (2参数, SDPMediaTypesEnum): size={Size}", rtpBytes.Length);
-                                    }
-                                    rtpSent = true;
-                                    break;
-                                }
-                                catch (OperationCanceledException)
-                                {
-                                    if (_audioPacketCount % 100 == 0)
-                                    {
-                                        _logger.LogWarning("⚠️ 音频 RTP 发送超时 (2参数, SDPMediaTypesEnum)");
-                                    }
-                                    continue;
-                                }
-                            }
-                            else if (parameters[1].ParameterType == typeof(int))
-                            {
-                                // ✅ 使用超时保护，避免阻塞
-                                using var cts = new CancellationTokenSource(100); // 100ms 超时
-                                var invokeTask = Task.Run(() => 
-                                    method.Invoke(_peerConnection, new object[] { rtpBytes, payloadType }), cts.Token);
-                                
-                                try
-                                {
-                                    await invokeTask;
-                                    if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
-                                    {
-                                        _logger.LogDebug("✅ 音频 RTP 包已发送 (2参数, int): payloadType={Pt}, size={Size}", payloadType, rtpBytes.Length);
-                                    }
-                                    rtpSent = true;
-                                    break;
-                                }
-                                catch (OperationCanceledException)
-                                {
-                                    if (_audioPacketCount % 100 == 0)
-                                    {
-                                        _logger.LogWarning("⚠️ 音频 RTP 发送超时 (2参数, int)");
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                        else if (parameters.Length == 6 &&
-                                 parameters[0].ParameterType == typeof(SDPMediaTypesEnum) &&
-                                 parameters[1].ParameterType == typeof(byte[]) &&
-                                 parameters[2].ParameterType == typeof(uint) &&
-                                 parameters[3].ParameterType == typeof(int) &&
-                                 parameters[4].ParameterType == typeof(int) &&
-                                 parameters[5].ParameterType == typeof(ushort))
-                        {
-                            byte[] payloadData = originalData;
-                            
-                            uint timestamp = 0;
-                            ushort seqNum = 0;
-                            if (rtpBytes.Length >= 12)
-                            {
-                                seqNum = (ushort)((rtpBytes[2] << 8) | rtpBytes[3]);
-                                timestamp = (uint)((rtpBytes[4] << 24) | (rtpBytes[5] << 16) | (rtpBytes[6] << 8) | rtpBytes[7]);
-                            }
-                            else
-                            {
-                                seqNum = (ushort)((_audioSequenceNumber - 1) & 0xFFFF);
-                                timestamp = _audioTimestamp;
-                            }
-                            
-                            int markerBit = 0;
-                            
-                            // ✅ 使用超时保护，避免阻塞
-                            using var cts = new CancellationTokenSource(100); // 100ms 超时
-                            var invokeTask = Task.Run(() => 
-                                method.Invoke(_peerConnection, new object[] { 
-                                    SDPMediaTypesEnum.audio, 
-                                    payloadData,
-                                    timestamp, 
-                                    markerBit,
-                                    payloadType,
-                                    seqNum 
-                                }), cts.Token);
-                            
-                            try
-                            {
-                                await invokeTask;
-                                if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
-                                {
-                                    _logger.LogDebug("✅ 音频 RTP 包已发送 (6参数): seq={Seq}, ts={Ts}, payloadType={Pt}, size={Size}", 
-                                        seqNum, timestamp, payloadType, payloadData.Length);
-                                }
-                                rtpSent = true;
-                                break;
-                            }
-                            catch (OperationCanceledException)
-                            {
-                                if (_audioPacketCount % 100 == 0)
-                                {
-                                    _logger.LogWarning("⚠️ 音频 RTP 发送超时 (6参数): seq={Seq}, ts={Ts}", seqNum, timestamp);
-                                }
-                                continue;
-                            }
-                            catch (Exception invokeEx)
-                            {
-                                var innerEx = invokeEx.InnerException ?? invokeEx;
-                                _logger.LogError(innerEx, "❌ SendRtpRaw (6参数) 调用异常: seqNum={Seq}, timestamp={Ts}, payloadType={Pt}, payloadLen={Len}, error={Error}", 
-                                    seqNum, timestamp, payloadType, payloadData.Length, innerEx.Message);
-                                continue;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_audioPacketCount < 5 || _audioPacketCount % 100 == 0)
-                        {
-                            var innerEx = ex.InnerException ?? ex;
-                            _logger.LogWarning("⚠️ SendRtpRaw 调用失败: {Ex}, 方法: {Method}", 
-                                innerEx.Message, 
-                                string.Join(", ", method.GetParameters().Select(p => p.ParameterType.Name)));
-                        }
-                    }
-                }
-                
-                if (!rtpSent)
-                {
-                    if (_audioPacketCount % 100 == 0)
-                    {
-                        _logger.LogWarning("⚠️ 音频 RTP 包已构建但未发送: seq={Seq}, size={Size}, 找到方法数: {Count}", 
-                            _audioSequenceNumber, rtpBytes.Length, sendRtpRawMethods.Count);
-                        
-                        if (sendRtpRawMethods.Count == 0)
-                        {
-                            _logger.LogWarning("⚠️ 未找到 SendRtpRaw 方法，检查连接状态: {State}, ICE: {Ice}, 信令: {Signaling}", 
-                                _peerConnection?.connectionState, 
-                                _peerConnection?.iceConnectionState, 
-                                _peerConnection?.signalingState);
-                        }
-                    }
-                }
-                
-                return rtpSent;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ 发送音频 RTP 包失败");
-                return false;
-            }
+
+            ushort seqNum = BinaryPrimitives.ReadUInt16BigEndian(rtpBytes.AsSpan(2, 2));
+            uint timestamp = BinaryPrimitives.ReadUInt32BigEndian(rtpBytes.AsSpan(4, 4));
+            _audioSendChannel.Writer.TryWrite(new AudioRtpPacket(originalData, timestamp, seqNum, payloadType));
         }
 
         private void SendAudioPCMToWebRTC(byte[] pcmData, int samplesDecoded)

@@ -229,7 +229,11 @@
           "LOW": "低画质（約 4Mbps）",
           "MEDIUM": "中等画质（約 6Mbps）",
           "HIGH": "高畫質（約 10Mbps）",
-          "VERY_HIGH": "非常高畫質（約 15Mbps）"
+          "VERY_HIGH": "非常高畫質（約 15Mbps）",
+          "ULTRA_20M": "超高畫質（約 20Mbps）",
+          "ULTRA_30M": "超高畫質（約 30Mbps）",
+          "ULTRA_40M": "極高畫質（約 40Mbps，實驗性）",
+          "ULTRA_50M": "極高畫質（約 50Mbps，實驗性）"
         },
         "streamType": {
           "H264": "H.264 編碼",

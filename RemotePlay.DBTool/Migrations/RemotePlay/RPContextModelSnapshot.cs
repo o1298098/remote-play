@@ -255,6 +255,54 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         },
                         new
                         {
+                            Id = "quality-ultra-20m",
+                            CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "超高画质（约 20Mbps）",
+                            EnumCode = "ULTRA_20M",
+                            EnumKey = "ULTRA_20M",
+                            EnumType = "Quality",
+                            EnumValue = "20000",
+                            IsActive = true,
+                            SortOrder = 6
+                        },
+                        new
+                        {
+                            Id = "quality-ultra-30m",
+                            CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "超高画质（约 30Mbps）",
+                            EnumCode = "ULTRA_30M",
+                            EnumKey = "ULTRA_30M",
+                            EnumType = "Quality",
+                            EnumValue = "30000",
+                            IsActive = true,
+                            SortOrder = 7
+                        },
+                        new
+                        {
+                            Id = "quality-ultra-40m",
+                            CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "极高画质（约 40Mbps，实验性）",
+                            EnumCode = "ULTRA_40M",
+                            EnumKey = "ULTRA_40M",
+                            EnumType = "Quality",
+                            EnumValue = "40000",
+                            IsActive = true,
+                            SortOrder = 8
+                        },
+                        new
+                        {
+                            Id = "quality-ultra-50m",
+                            CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "极高画质（约 50Mbps，实验性）",
+                            EnumCode = "ULTRA_50M",
+                            EnumKey = "ULTRA_50M",
+                            EnumType = "Quality",
+                            EnumValue = "50000",
+                            IsActive = true,
+                            SortOrder = 9
+                        },
+                        new
+                        {
                             Id = "fps-low",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "30 帧每秒",

@@ -8,6 +8,10 @@ namespace RemotePlay.Services.WebRTC
     /// </summary>
     public partial class WebRTCSignalingService
     {
+        /// <summary>
+        /// 为每个视频编码声明 PLI/FIR 反馈，并移除服务端未实现的反馈类型
+        /// （generic NACK、goog-remb、transport-cc），避免浏览器等待永远不会到来的重传或带宽估计。
+        /// </summary>
         private string OptimizeSdpForLowLatency(string sdp)
         {
             try
@@ -15,65 +19,71 @@ namespace RemotePlay.Services.WebRTC
                 if (string.IsNullOrWhiteSpace(sdp) || sdp.Length < 10)
                     return sdp;
 
-                if (sdp.Contains("a=x-google-flag:low-latency") && sdp.Contains("a=minBufferedPlaybackTime"))
-                    return sdp;
-
                 var lines = sdp.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-                var optimizedLines = new List<string>();
-                bool foundVideo = false, foundAudio = false;
-                bool videoOptimized = false, audioOptimized = false;
 
-                foreach (var line in lines)
+                var videoCodecByPt = new Dictionary<string, string>(StringComparer.Ordinal);
+                var existingLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var ptsWithFmtp = new HashSet<string>(StringComparer.Ordinal);
+                bool inVideo = false;
+                foreach (var raw in lines)
                 {
-                    optimizedLines.Add(line);
-                    var trimmed = line.Trim();
-
-                    if (trimmed.StartsWith("m=video "))
+                    var line = raw.Trim();
+                    existingLines.Add(line);
+                    if (line.StartsWith("m=", StringComparison.Ordinal))
                     {
-                        foundVideo = true;
-                        foundAudio = false;
-                        videoOptimized = false;
+                        inVideo = line.StartsWith("m=video ", StringComparison.Ordinal);
+                        continue;
                     }
-                    else if (trimmed.StartsWith("m=audio "))
+                    if (!inVideo)
+                        continue;
+
+                    if (line.StartsWith("a=rtpmap:", StringComparison.OrdinalIgnoreCase))
                     {
-                        foundAudio = true;
-                        foundVideo = false;
-                        audioOptimized = false;
+                        var parts = line.Substring("a=rtpmap:".Length).Split(' ', 2);
+                        if (parts.Length == 2)
+                        {
+                            var codec = parts[1].Split('/')[0].ToUpperInvariant();
+                            if (codec is "H264" or "H265" or "HEVC")
+                                videoCodecByPt[parts[0]] = codec;
+                        }
                     }
-                    else if (trimmed.StartsWith("m="))
+                    else if (line.StartsWith("a=fmtp:", StringComparison.OrdinalIgnoreCase))
                     {
-                        foundAudio = false;
-                        foundVideo = false;
+                        ptsWithFmtp.Add(line.Substring("a=fmtp:".Length).Split(' ', 2)[0]);
+                    }
+                }
+
+                var optimizedLines = new List<string>(lines.Length + videoCodecByPt.Count * 3);
+                inVideo = false;
+                foreach (var raw in lines)
+                {
+                    var line = raw.Trim();
+                    if (line.StartsWith("m=", StringComparison.Ordinal))
+                        inVideo = line.StartsWith("m=video ", StringComparison.Ordinal);
+
+                    if (line.StartsWith("a=x-google-flag:", StringComparison.OrdinalIgnoreCase) ||
+                        line.StartsWith("a=minBufferedPlaybackTime", StringComparison.OrdinalIgnoreCase) ||
+                        IsUnsupportedRtcpFeedback(line))
+                    {
+                        continue;
                     }
 
-                    if (foundVideo && !videoOptimized && trimmed.StartsWith("a=") &&
-                        !trimmed.StartsWith("a=rtcp:") && trimmed.Length > 2)
+                    optimizedLines.Add(raw);
+
+                    if (!inVideo || !line.StartsWith("a=rtpmap:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var pt = line.Substring("a=rtpmap:".Length).Split(' ', 2)[0];
+                    if (!videoCodecByPt.TryGetValue(pt, out var videoCodec))
+                        continue;
+
+                    if (videoCodec == "H264" && !ptsWithFmtp.Contains(pt))
+                        optimizedLines.Add($"a=fmtp:{pt} level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f");
+
+                    foreach (var fb in new[] { $"a=rtcp-fb:{pt} nack pli", $"a=rtcp-fb:{pt} ccm fir" })
                     {
-                        if (!sdp.Contains("a=x-google-flag:low-latency"))
-                            optimizedLines.Add("a=x-google-flag:low-latency");
-
-                        if (!sdp.Contains("a=minBufferedPlaybackTime"))
-                            optimizedLines.Add("a=minBufferedPlaybackTime:0");
-
-                        optimizedLines.Add("a=rtcp-fb:96 nack pli");
-                        optimizedLines.Add("a=rtcp-fb:96 goog-remb");
-                        optimizedLines.Add("a=rtcp-fb:96 transport-cc");
-                        optimizedLines.Add("a=extmap-allow-mixed");
-                        optimizedLines.Add("a=fmtp:96 packetization-mode=1;max-latency=0;profile-level-id=42001f");
-
-                        videoOptimized = true;
-                    }
-
-                    if (foundAudio && !audioOptimized && trimmed.StartsWith("a=") &&
-                        !trimmed.StartsWith("a=rtcp:") && trimmed.Length > 2)
-                    {
-                        if (!sdp.Contains("a=minBufferedPlaybackTime"))
-                            optimizedLines.Add("a=minBufferedPlaybackTime:0");
-
-                        optimizedLines.Add("a=extmap-allow-mixed");
-                        optimizedLines.Add("a=rtcp-fb:111 transport-cc");
-
-                        audioOptimized = true;
+                        if (!existingLines.Contains(fb))
+                            optimizedLines.Add(fb);
                     }
                 }
 
@@ -92,6 +102,19 @@ namespace RemotePlay.Services.WebRTC
                 _logger.LogWarning(ex, "⚠️ SDP 优化失败，使用原始 SDP");
                 return sdp;
             }
+        }
+
+        private static bool IsUnsupportedRtcpFeedback(string line)
+        {
+            if (!line.StartsWith("a=rtcp-fb:", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var parts = line.Substring("a=rtcp-fb:".Length).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2)
+                return false;
+
+            var type = parts[1].ToLowerInvariant();
+            return (type == "nack" && parts.Length == 2) || type == "goog-remb" || type == "transport-cc";
         }
 
         private string ApplyPublicIpToSdp(string sdp, string? publicIp = null)

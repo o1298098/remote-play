@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useGamepadInput, useGamepad } from '@/hooks/use-gamepad'
 import { streamingService } from '@/service/streaming.service'
-import { streamingHubService } from '@/service/streaming-hub.service'
+import { streamingHubService, type ClientVideoStats } from '@/service/streaming-hub.service'
 import { controllerService } from '@/service/controller.service'
 import {
   applyControllerRumbleToGamepads,
@@ -137,7 +137,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const lastHealthCheckAtRef = useRef<number>(0)
   const lastNeutralHealthKeyframeRef = useRef<number>(0)
 
-  const KEYFRAME_REQUEST_COOLDOWN_MS = 8000
+  const KEYFRAME_REQUEST_COOLDOWN_MS = 2000
   const HEALTH_CHECK_COOLDOWN_MS = 3000
   // 过去用于自动触发 neutral 关键帧的冷却时间（已不再使用）
   // const HEALTH_NEUTRAL_KEYFRAME_COOLDOWN_MS = 5000
@@ -172,7 +172,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       lastKeyframeRequestRef.current = now
       pendingKeyframeRequestRef.current = true
 
-      console.warn('⚠️ 触发关键帧请求', {
+      console.debug('⚠️ 触发关键帧请求', {
         reason,
         sessionId,
       })
@@ -193,7 +193,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
               console.log('🎯 HTTP 关键帧请求已发送', { reason })
             }
           } else {
-            console.log('🎯 SignalR 关键帧请求已发送', { reason })
+            console.debug('🎯 SignalR 关键帧请求已发送', { reason })
           }
         } catch (error) {
           console.error('❌ 请求关键帧失败，尝试使用 HTTP 备用方案', error, { reason })
@@ -2616,8 +2616,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         return
       }
 
-      // 检测到卡顿
+      // 检测到卡顿：解码器多半在等关键帧（WebRTC 侧丢包且无重传），主动向主机请求
       setIsStalling(true)
+      requestKeyframe('monitor-stall')
       void handleStreamHealthCheck('monitor-stall', { forceNeutral: true })
     }
 
@@ -2629,7 +2630,84 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         keyframeMonitorIntervalRef.current = null
       }
     }
-  }, [handleStreamHealthCheck, isConnected, resolveWebrtcSessionId, videoRef])
+  }, [handleStreamHealthCheck, isConnected, requestKeyframe, resolveWebrtcSessionId, videoRef])
+
+  // 诊断：每 2 秒把浏览器端视频接收统计回传给后端写日志
+  useEffect(() => {
+    if (!isConnected) {
+      return
+    }
+
+    let previous: { framesDecoded: number; bytesReceived: number; at: number } | null = null
+
+    const report = async () => {
+      const pc = peerConnectionRef.current
+      const sessionId = resolveWebrtcSessionId()
+      if (!pc || !sessionId) {
+        return
+      }
+
+      try {
+        const statsReport = await pc.getStats()
+        let inbound: any = null
+        const codecs = new Map<string, string>()
+        statsReport.forEach((report) => {
+          const anyReport = report as any
+          if (report.type === 'inbound-rtp' && anyReport.kind === 'video') {
+            inbound = anyReport
+          } else if (report.type === 'codec') {
+            codecs.set(report.id, anyReport.mimeType)
+          }
+        })
+        if (!inbound) {
+          return
+        }
+
+        const now = performance.now()
+        const framesDecoded = inbound.framesDecoded ?? 0
+        const bytesReceived = inbound.bytesReceived ?? 0
+        let decodeFps: number | null = null
+        let bitrateKbps: number | null = null
+        if (previous) {
+          const seconds = (now - previous.at) / 1000
+          if (seconds > 0) {
+            decodeFps = (framesDecoded - previous.framesDecoded) / seconds
+            bitrateKbps = ((bytesReceived - previous.bytesReceived) * 8) / seconds / 1000
+          }
+        }
+        previous = { framesDecoded, bytesReceived, at: now }
+
+        const emitted = inbound.jitterBufferEmittedCount ?? 0
+        const stats: ClientVideoStats = {
+          packetsReceived: inbound.packetsReceived ?? null,
+          packetsLost: inbound.packetsLost ?? null,
+          framesReceived: inbound.framesReceived ?? null,
+          framesDecoded,
+          keyFramesDecoded: inbound.keyFramesDecoded ?? null,
+          framesDropped: inbound.framesDropped ?? null,
+          pliCount: inbound.pliCount ?? null,
+          firCount: inbound.firCount ?? null,
+          nackCount: inbound.nackCount ?? null,
+          freezeCount: inbound.freezeCount ?? null,
+          totalFreezesDuration: inbound.totalFreezesDuration ?? null,
+          decodeFps,
+          bitrateKbps,
+          jitterBufferDelayMs: emitted > 0 ? ((inbound.jitterBufferDelay ?? 0) / emitted) * 1000 : null,
+          frameWidth: inbound.frameWidth ?? null,
+          frameHeight: inbound.frameHeight ?? null,
+          decoderImplementation: inbound.decoderImplementation ?? null,
+          codec: inbound.codecId ? codecs.get(inbound.codecId) ?? null : null,
+          connectionState: pc.connectionState,
+        }
+        void streamingHubService.reportClientStats(sessionId, stats)
+      } catch (error) {
+        console.debug('采集浏览器视频统计失败:', error)
+      }
+    }
+
+    const intervalId = window.setInterval(() => void report(), 2000)
+    return () => window.clearInterval(intervalId)
+  }, [isConnected, resolveWebrtcSessionId])
 
   useEffect(() => {
     isStatsEnabledRef.current = isStatsEnabled

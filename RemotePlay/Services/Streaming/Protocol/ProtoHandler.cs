@@ -15,8 +15,7 @@ namespace RemotePlay.Services.Streaming.Protocol
             byte[] sessionId,
             string hostType,
             byte[] handshakeKey,
-            int width,
-            int height,
+            IReadOnlyList<(int Width, int Height)> resolutions,
             int fps,
             int bitrateKbps,
             string videoCodec,
@@ -36,15 +35,18 @@ namespace RemotePlay.Services.Streaming.Protocol
 
                 writer.WritePropertyName("streamResolutions");
                 writer.WriteStartArray();
-                writer.WriteStartObject();
-                writer.WritePropertyName("resolution");
-                writer.WriteStartObject();
-                writer.WriteNumber("width", width);
-                writer.WriteNumber("height", height);
-                writer.WriteEndObject();
-                writer.WriteNumber("maxFps", fps);
-                writer.WriteNumber("score", 10);
-                writer.WriteEndObject();
+                foreach (var (width, height) in resolutions)
+                {
+                    writer.WriteStartObject();
+                    writer.WritePropertyName("resolution");
+                    writer.WriteStartObject();
+                    writer.WriteNumber("width", width);
+                    writer.WriteNumber("height", height);
+                    writer.WriteEndObject();
+                    writer.WriteNumber("maxFps", fps);
+                    writer.WriteNumber("score", 10);
+                    writer.WriteEndObject();
+                }
                 writer.WriteEndArray();
 
                 writer.WritePropertyName("network");
@@ -188,12 +190,6 @@ namespace RemotePlay.Services.Streaming.Protocol
             // Congestion 包 payload 只有 3 字节
             // 简化为最小格式：[0x00, 0x00, 0x01]
             return new byte[] { 0x00, 0x00, 0x01 };
-        }
-
-        public static byte[] CorruptFrame(int start, int end)
-        {
-            string tag = $"CORRUPT|s={start}|e={end}";
-            return Encoding.ASCII.GetBytes(tag);
         }
     }
 }

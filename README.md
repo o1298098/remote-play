@@ -163,6 +163,12 @@ volumes:
 - WebRTC and TURN server settings are now configured through the web interface (Settings page)
 - For remote access, configure port forwarding and TURN servers via the web interface
 - Change the default JWT secret before production deployment
+- For bitrates above 20 Mbps, raise the UDP buffer limits on the **Linux host** (setting them inside the container has no effect), otherwise large keyframes are likely to be dropped:
+  ```bash
+  sudo sysctl -w net.core.rmem_max=8388608 net.core.wmem_max=8388608
+  # Persist in /etc/sysctl.d/99-psrp.conf
+  ```
+  If the backend logs warn that the UDP receive buffer or RTP send buffer is smaller than requested, the setting has not taken effect
 
 ## Contributing
 Contributions via issues, pull requests, or discussions are welcome. Before submitting, please:

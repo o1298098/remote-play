@@ -229,7 +229,11 @@
           "LOW": "낮은 품질 (~4 Mbps)",
           "MEDIUM": "보통 품질 (~6 Mbps)",
           "HIGH": "높은 품질 (~10 Mbps)",
-          "VERY_HIGH": "매우 높은 품질 (~15 Mbps)"
+          "VERY_HIGH": "매우 높은 품질 (~15 Mbps)",
+          "ULTRA_20M": "초고품질 (~20 Mbps)",
+          "ULTRA_30M": "초고품질 (~30 Mbps)",
+          "ULTRA_40M": "최고 품질 (~40 Mbps, 실험적)",
+          "ULTRA_50M": "최고 품질 (~50 Mbps, 실험적)"
         },
         "streamType": {
           "H264": "H.264 코덱",

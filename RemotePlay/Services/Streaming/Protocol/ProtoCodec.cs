@@ -148,6 +148,19 @@ namespace RemotePlay.Services.Streaming.Protocol
             var msg = new TakionMessage { Type = TakionMessage.Types.PayloadType.Idrrequest };
             return msg.ToByteArray();
         }
+
+        /// <summary>
+        /// 构建损坏帧通知，主机据此让后续帧改为参考 start 之前的完好帧。
+        /// </summary>
+        public static byte[] BuildCorruptFrame(uint start, uint end)
+        {
+            var msg = new TakionMessage
+            {
+                Type = TakionMessage.Types.PayloadType.Corruptframe,
+                CorruptPayload = new CorruptFramePayload { Start = start, End = end }
+            };
+            return msg.ToByteArray();
+        }
     }
 }
 

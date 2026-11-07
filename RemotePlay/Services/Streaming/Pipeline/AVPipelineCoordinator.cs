@@ -81,7 +81,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 outputCapacity: 512,
                 enableReorder: true,        
                 reorderWindowSize: 256,
-                reorderTimeoutMs: 300);    
+                // 队首缺包时整条流都会被卡住，超时过长会把每次丢包放大成可见卡顿
+                reorderTimeoutMs: 30);
 
             _audioPipeline = new AudioPipeline(
                 loggerFactory.CreateLogger<AudioPipeline>(),

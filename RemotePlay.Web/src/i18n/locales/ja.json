@@ -229,7 +229,11 @@
           "LOW": "低品質（約4Mbps）",
           "MEDIUM": "中品質（約6Mbps）",
           "HIGH": "高品質（約10Mbps）",
-          "VERY_HIGH": "非常に高品質（約15Mbps）"
+          "VERY_HIGH": "非常に高品質（約15Mbps）",
+          "ULTRA_20M": "超高品質（約20Mbps）",
+          "ULTRA_30M": "超高品質（約30Mbps）",
+          "ULTRA_40M": "最高品質（約40Mbps、実験的）",
+          "ULTRA_50M": "最高品質（約50Mbps、実験的）"
         },
         "streamType": {
           "H264": "H.264コーデック",

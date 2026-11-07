@@ -7,6 +7,7 @@ namespace RemotePlay.Models.Context
     public partial class RPContext
     {
         private static readonly DateTime SeedCreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+        private static readonly DateTime HighBitrateSeedCreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, DateTimeKind.Utc);
 
         partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
         {
@@ -121,6 +122,54 @@ namespace RemotePlay.Models.Context
                     IsActive = true,
                     Description = "非常高画质（约 15Mbps）",
                     CreatedAt = SeedCreatedAt
+                },
+                new EnumEntity
+                {
+                    Id = "quality-ultra-20m",
+                    EnumType = "Quality",
+                    EnumKey = "ULTRA_20M",
+                    EnumValue = "20000",
+                    EnumCode = "ULTRA_20M",
+                    SortOrder = 6,
+                    IsActive = true,
+                    Description = "超高画质（约 20Mbps）",
+                    CreatedAt = HighBitrateSeedCreatedAt
+                },
+                new EnumEntity
+                {
+                    Id = "quality-ultra-30m",
+                    EnumType = "Quality",
+                    EnumKey = "ULTRA_30M",
+                    EnumValue = "30000",
+                    EnumCode = "ULTRA_30M",
+                    SortOrder = 7,
+                    IsActive = true,
+                    Description = "超高画质（约 30Mbps）",
+                    CreatedAt = HighBitrateSeedCreatedAt
+                },
+                new EnumEntity
+                {
+                    Id = "quality-ultra-40m",
+                    EnumType = "Quality",
+                    EnumKey = "ULTRA_40M",
+                    EnumValue = "40000",
+                    EnumCode = "ULTRA_40M",
+                    SortOrder = 8,
+                    IsActive = true,
+                    Description = "极高画质（约 40Mbps，实验性）",
+                    CreatedAt = HighBitrateSeedCreatedAt
+                },
+                new EnumEntity
+                {
+                    Id = "quality-ultra-50m",
+                    EnumType = "Quality",
+                    EnumKey = "ULTRA_50M",
+                    EnumValue = "50000",
+                    EnumCode = "ULTRA_50M",
+                    SortOrder = 9,
+                    IsActive = true,
+                    Description = "极高画质（约 50Mbps，实验性）",
+                    CreatedAt = HighBitrateSeedCreatedAt
                 },
 
                 // FPS

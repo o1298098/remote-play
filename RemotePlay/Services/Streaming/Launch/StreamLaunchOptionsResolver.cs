@@ -26,6 +26,10 @@ namespace RemotePlay.Services.Streaming.Launch
                 ["medium"] = 6000,
                 ["high"] = 10000,
                 ["very_high"] = 15000,
+                ["ultra_20m"] = 20000,
+                ["ultra_30m"] = 30000,
+                ["ultra_40m"] = 40000,
+                ["ultra_50m"] = 50000,
                 ["default"] = 0
             };
 
@@ -37,6 +41,30 @@ namespace RemotePlay.Services.Streaming.Launch
                 ["low"] = 30,
                 ["high"] = 60
             };
+
+        /// <summary>
+        /// 生成 LaunchSpec 的候选分辨率列表：首选分辨率在前，随后是比它低的标准 16:9 档位。
+        /// 主机按此列表生成多个视频 profile，网络变差时通过 adaptive_stream_index 切换。
+        /// </summary>
+        public static IReadOnlyList<(int Width, int Height)> BuildResolutionLadder(int width, int height, bool adaptive)
+        {
+            var ladder = new List<(int Width, int Height)> { (width, height) };
+            if (!adaptive)
+            {
+                return ladder;
+            }
+
+            foreach (var key in new[] { "1080p", "720p", "540p", "360p" })
+            {
+                var preset = ResolutionPresets[key];
+                if (preset.height < height && preset.width < width)
+                {
+                    ladder.Add((preset.width, preset.height));
+                }
+            }
+
+            return ladder;
+        }
 
         public static StreamLaunchOptions Resolve(RemoteSession session)
         {

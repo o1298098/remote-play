@@ -13,6 +13,28 @@ if (/\/api\/?$/i.test(hubBaseUrl.pathname)) {
 
 const STREAMING_HUB_URL = new URL('hubs/streaming', hubBaseUrl).toString()
 
+export interface ClientVideoStats {
+  packetsReceived: number | null
+  packetsLost: number | null
+  framesReceived: number | null
+  framesDecoded: number | null
+  keyFramesDecoded: number | null
+  framesDropped: number | null
+  pliCount: number | null
+  firCount: number | null
+  nackCount: number | null
+  freezeCount: number | null
+  totalFreezesDuration: number | null
+  decodeFps: number | null
+  bitrateKbps: number | null
+  jitterBufferDelayMs: number | null
+  frameWidth: number | null
+  frameHeight: number | null
+  decoderImplementation: string | null
+  codec: string | null
+  connectionState: string | null
+}
+
 export class StreamingHubService {
   private connection: signalR.HubConnection | null = null
   private connectingPromise: Promise<signalR.HubConnection> | null = null
@@ -201,6 +223,22 @@ export class StreamingHubService {
     } catch (error) {
       console.error('建立 StreamingHub 连接失败，无法强制重置 ReorderQueue:', error)
       return false
+    }
+  }
+
+  /**
+   * 回传浏览器视频接收统计（仅用于后端日志诊断，失败时静默忽略）
+   */
+  async reportClientStats(sessionId: string, stats: ClientVideoStats): Promise<void> {
+    if (!sessionId) {
+      return
+    }
+
+    try {
+      const connection = await this.ensureConnection()
+      await connection.send('ReportClientStats', sessionId, stats)
+    } catch (error) {
+      console.debug('回传浏览器视频统计失败:', error)
     }
   }
 

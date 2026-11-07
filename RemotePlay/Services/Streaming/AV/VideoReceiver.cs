@@ -74,18 +74,8 @@ namespace RemotePlay.Services.Streaming.AV
         /// <returns>是否应该尝试解码（true=允许解码，false=应该丢弃）</returns>
         private bool HandleMissingReferenceForPFrame(int frameIndex, int refFrameIndex, ref byte[]? frame, ref bool recovered)
         {
-            // ✅ 检查是否在宽限期内
-            bool inGracePeriod = _lastFrameFailureTime != DateTime.MinValue && 
-                                (DateTime.UtcNow - _lastFrameFailureTime).TotalMilliseconds < FRAME_FAILURE_GRACE_PERIOD_MS;
-            
-            if (inGracePeriod)
-            {
-                // 宽限期内，允许尝试解码，不标记为断裂
-                _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，但在宽限期内，允许尝试解码", 
-                    frameIndex, refFrameIndex);
-                return true; // 允许解码
-            }
-            
+            // 浏览器（WebRTC）解码器遇到缺参考帧的 P 帧会报错并停止解码直到下一个关键帧，
+            // 因此只允许"改写到可用参考帧"后发送，否则丢弃（与 chiaki-ng 一致）
             // ✅ 先尝试查找替代参考帧
             int alternativeRefFrame = _referenceFrameManager.FindAvailableReferenceFrame(frameIndex, (uint)(frameIndex - refFrameIndex - 1));
             if (alternativeRefFrame >= 0 && _bitstreamParser != null)
@@ -103,32 +93,18 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，找到替代但无法修改bitstream",
                         frameIndex, refFrameIndex);
-                    // 继续尝试解码（可能失败，但比直接丢弃好）
                 }
             }
-            
-            // ✅ 没有替代参考帧，根据当前状态决定是否标记为断裂
+
             if (!_referenceChainBroken)
             {
-                // ✅ Bug 1 修复：首次检测到缺参考帧时，标记为断裂并记录时间
                 _referenceChainBroken = true;
                 _referenceChainBrokenTime = DateTime.UtcNow;
-                _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，标记参考链断裂，尝试解码（可能失败，但比直接丢弃好）",
-                    frameIndex, refFrameIndex);
-                
-                // 请求关键帧
-                _requestKeyframeCallback?.Invoke();
-                
-                // 允许尝试解码
-                return true;
+                _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，丢弃并请求关键帧", frameIndex, refFrameIndex);
             }
-            else
-            {
-                // 已经标记为断裂，继续尝试解码
-                _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，参考链已断裂，继续尝试解码",
-                    frameIndex, refFrameIndex);
-                return true; // 允许解码
-            }
+
+            _requestKeyframeCallback?.Invoke();
+            return false;
         }
 
         public VideoReceiver(ILogger<VideoReceiver>? logger = null)
@@ -521,94 +497,27 @@ namespace RemotePlay.Services.Streaming.AV
                     // ✅ 检测是否为IDR帧（使用IsIdr属性）
                     isIdrFrame = parsedSlice.IsIdr;
                     
-                    // ✅ 修复问题2：如果参考链已断裂，且当前帧不是IDR，则尝试恢复
-                    if (_referenceChainBroken && !isIdrFrame)
-                    {
-                        var now = DateTime.UtcNow;
-                        var elapsed = _referenceChainBrokenTime != DateTime.MinValue 
-                            ? (now - _referenceChainBrokenTime).TotalMilliseconds 
-                            : 0;
-                        
-                        // ✅ 检查是否在宽限期内
-                        bool isInGracePeriod = _lastFrameFailureTime != DateTime.MinValue && 
-                                            (DateTime.UtcNow - _lastFrameFailureTime).TotalMilliseconds < FRAME_FAILURE_GRACE_PERIOD_MS;
-                        
-                        // ✅ 修复问题2：使用独立的计数器，避免逻辑冲突
-                        // 判断是否应该允许解码
-                        bool shouldAllowDecode = elapsed > REFERENCE_CHAIN_TIMEOUT_MS || 
-                                                _consecutiveDroppedFrames > MAX_CONSECUTIVE_DROPPED ||
-                                                isInGracePeriod;
-                        
-                        if (shouldAllowDecode)
-                        {
-                            // ✅ 允许尝试解码，增加bypass计数
-                            _consecutiveBypassAttempts++;
-                            
-                            // ✅ 如果连续尝试次数过多，清除断裂标记（可能已经恢复）
-                            if (_consecutiveBypassAttempts > MAX_CONSECUTIVE_BYPASS)
-                            {
-                                _referenceChainBroken = false;
-                                _consecutiveDroppedFrames = 0;
-                                _consecutiveBypassAttempts = 0;
-                                _referenceChainBrokenTime = DateTime.MinValue;
-                                _logger?.LogWarning("⚠️ 参考链断裂恢复：连续尝试 {Count} 次后清除断裂标记", _consecutiveBypassAttempts);
-                            }
-                            
-                            _logger?.LogWarning("⚠️ 参考链断裂恢复：允许尝试解码帧 {Frame}（已等待 {Elapsed}ms，连续丢弃 {Dropped} 帧，宽限期={Grace}）", 
-                                _frameIndexCur, (int)elapsed, _consecutiveDroppedFrames, isInGracePeriod);
-                            
-                            // 继续处理当前帧（尝试解码）
-                        }
-                        else
-                        {
-                            // ✅ 修复问题2：真正丢弃帧时才增加计数
-                            _consecutiveDroppedFrames++;
-                            
-                            if (_consecutiveDroppedFrames <= MAX_CONSECUTIVE_DROPPED)
-                            {
-                                _logger?.LogWarning("🚫 参考链断裂：丢弃P/B帧 {Frame}（等待IDR恢复，已等待 {Elapsed}ms，连续丢弃 {Count}/{Max} 帧）", 
-                                    _frameIndexCur, (int)elapsed, _consecutiveDroppedFrames, MAX_CONSECUTIVE_DROPPED);
-                                success = false;
-                                _framesLost++;
-                                return; // 丢弃帧
-                            }
-                            else
-                            {
-                                // ✅ 强制恢复：超过最大丢弃数，强制尝试解码
-                                _referenceChainBroken = false;
-                                _consecutiveDroppedFrames = 0;
-                                _consecutiveBypassAttempts = 0;
-                                _referenceChainBrokenTime = DateTime.MinValue;
-                                _logger?.LogWarning("⚠️ 参考链断裂强制恢复：已丢弃 {Count} 帧，强制尝试解码帧 {Frame}（避免长时间冻结）", 
-                                    _consecutiveDroppedFrames, _frameIndexCur);
-                                // 继续处理当前帧（尝试解码）
-                            }
-                        }
-                    }
-                    else if (!_referenceChainBroken)
-                    {
-                        // ✅ 参考链正常，重置所有计数
-                        _consecutiveDroppedFrames = 0;
-                        _consecutiveBypassAttempts = 0;
-                    }
-                    
-                    // ✅ 修复问题1：检查P帧的参考帧，使用封装的统一方法
+                    // 只按参考帧是否可用决定 P 帧能否发送；参考链断裂期间，主机收到损坏帧通知后
+                    // 会让后续帧改为参考丢失前的好帧，这些帧能通过检查，从而无需等待 IDR 即可恢复
                     if (parsedSlice.SliceType == SliceType.P)
                     {
                         int refFrameIndex = _frameIndexCur - (int)parsedSlice.ReferenceFrame - 1;
                         if (parsedSlice.ReferenceFrame != 0xFF && !_referenceFrameManager.HasReferenceFrame(refFrameIndex))
                         {
-                            // ✅ 使用封装的方法处理P帧缺参考帧的情况
                             bool shouldDecode = HandleMissingReferenceForPFrame(_frameIndexCur, refFrameIndex, ref frame, ref recovered);
-                            
                             if (!shouldDecode)
                             {
-                                // 应该丢弃此帧
-                                success = false;
+                                // 不更新 _frameIndexPrevComplete：下一帧开始时会把这段报告为损坏帧
                                 _framesLost++;
+                                _frameIndexPrev = _frameIndexCur;
                                 return;
                             }
-                            // 否则继续处理（允许解码）
+                        }
+                        else if (_referenceChainBroken)
+                        {
+                            _referenceChainBroken = false;
+                            _referenceChainBrokenTime = DateTime.MinValue;
+                            _logger?.LogInformation("✅ 参考链恢复：P帧 {Frame} 的参考帧可用", _frameIndexCur);
                         }
                     }
                 }
@@ -635,23 +544,8 @@ namespace RemotePlay.Services.Streaming.AV
                 _referenceFrameManager.Reset();
             }
 
-            // ✅ 关键修复：在宽限期内，即使success=false（可能缺少参考帧），也尝试发送帧
-            // 这可以避免在数据包丢失后，因为参考帧缺失导致完全没有画面输出
-            bool inGracePeriod = _lastFrameFailureTime != DateTime.MinValue && 
-                                (DateTime.UtcNow - _lastFrameFailureTime).TotalMilliseconds < FRAME_FAILURE_GRACE_PERIOD_MS;
-            
-            // ✅ 优化：进一步放宽发送条件，避免画面冻结
-            // 1. success=true：正常发送
-            // 2. 宽限期内：即使success=false也发送
-            // 3. 参考链断裂但已等待一段时间：强制发送，避免长时间冻结
-            bool referenceChainTimeout = _referenceChainBroken && 
-                                         _referenceChainBrokenTime != DateTime.MinValue &&
-                                         (DateTime.UtcNow - _referenceChainBrokenTime).TotalMilliseconds > REFERENCE_CHAIN_TIMEOUT_MS / 2;
-            bool shouldSendFrame = success || 
-                                 (inGracePeriod && frame != null && frameSize > 0) ||
-                                 (referenceChainTimeout && frame != null && frameSize > 0);
-            
-            if (shouldSendFrame && frame != null)
+            // 解码器（尤其是浏览器）收到无法解码的帧会停止输出直到下一个关键帧，因此只发送完整且参考可用的帧
+            if (success && frame != null && frameSize > 0)
             {
                 // 组合 header + frame
                 byte[] composedFrame;
@@ -668,92 +562,18 @@ namespace RemotePlay.Services.Streaming.AV
                     Array.Copy(frame, 0, composedFrame, 0, frameSize);
                 }
 
-                bool frameProcessed = true; // 假设回调成功
-                if (frameProcessed)
+                _framesLost = 0;
+                _referenceFrameManager.AddReferenceFrame(_frameIndexCur);
+                _lastValidFrameIndex = _frameIndexCur;
+                if (isIdrFrame)
                 {
-                    _framesLost = 0;
-                    
-                    // ✅ 只有在success=true时才添加到参考帧管理器
-                    // 在宽限期内，即使success=false也发送，但不添加到参考帧管理器
-                    // ✅ Bug 2 修复：当参考链超时时，也添加到参考帧管理器（即使success=false）
-                    if (success)
-                    {
-                        _referenceFrameManager.AddReferenceFrame(_frameIndexCur);
-                        _lastValidFrameIndex = _frameIndexCur;
-                    }
-                    else if (inGracePeriod)
-                    {
-                        // 宽限期内，即使解码可能失败，也记录为有效帧（用于索引跟踪）
-                        _lastValidFrameIndex = _frameIndexCur;
-                        _logger?.LogWarning("⚠️ 宽限期内发送可能解码失败的帧 {Frame}（缺少参考帧，但尝试显示）", _frameIndexCur);
-                    }
-                    else if (referenceChainTimeout)
-                    {
-                        // ✅ Bug 2 修复：参考链超时时，帧被发送到解码器，需要添加到参考帧管理器
-                        // 即使success=false，如果帧成功解码，后续P帧可能需要引用它
-                        _referenceFrameManager.AddReferenceFrame(_frameIndexCur);
-                        _lastValidFrameIndex = _frameIndexCur;
-                        _logger?.LogWarning("⚠️ 参考链超时：发送帧 {Frame} 到解码器并添加到参考帧管理器（即使success=false）", _frameIndexCur);
-                    }
-                    
-                    // ✅ 如果成功处理了IDR帧，确保清除参考链断裂标记和宽限期
-                    if (isIdrFrame)
-                    {
-                        _referenceChainBroken = false;
-                        _lastFrameFailureTime = DateTime.MinValue; // 清除宽限期
-                    }
-                }
-                else
-                {
-                    success = false;
-                    _logger?.LogWarning("Video callback did not process frame successfully");
+                    _referenceChainBroken = false;
+                    _lastFrameFailureTime = DateTime.MinValue;
                 }
 
-                // ✅ 优化：在宽限期内或参考链超时后，即使success=false，也标记为recovered=true，让解码器尝试解码
-                // 这可以避免因为参考帧缺失导致完全没有画面
-                bool sendAsRecovered = (inGracePeriod || referenceChainTimeout) && !success;
-                // ✅ 优化：收集回调，在锁外调用
-                pendingCallbacks.Add((composedFrame, recovered || sendAsRecovered, success || sendAsRecovered));
-                
-                if (referenceChainTimeout && !success)
-                {
-                    _logger?.LogWarning("⚠️ 参考链超时后强制发送帧 {Frame}（避免长时间冻结，可能解码失败）", _frameIndexCur);
-                }
+                // 回调在锁外执行
+                pendingCallbacks.Add((composedFrame, recovered, true));
             }
-            else if (!success && frame != null && frameSize > 0)
-            {
-                // ✅ 优化：即使不在宽限期内，如果参考链已超时，也强制发送，避免长时间冻结
-                bool referenceChainTimeout2 = _referenceChainBroken && 
-                                             _referenceChainBrokenTime != DateTime.MinValue &&
-                                             (DateTime.UtcNow - _referenceChainBrokenTime).TotalMilliseconds > REFERENCE_CHAIN_TIMEOUT_MS / 2;
-                
-                if (referenceChainTimeout2)
-                {
-                    // 强制发送，避免长时间冻结
-                    _logger?.LogWarning("⚠️ 帧 {Frame} 解码失败，但参考链已超时，强制发送（避免长时间冻结）", _frameIndexCur);
-                    byte[] composedFrame;
-                    if (_profileCur >= 0 && _profileCur < _profiles.Length)
-                    {
-                        var profile = _profiles[_profileCur];
-                        composedFrame = new byte[profile.HeaderWithPadding.Length + frameSize];
-                        Array.Copy(profile.HeaderWithPadding, 0, composedFrame, 0, profile.HeaderWithPadding.Length);
-                        Array.Copy(frame, 0, composedFrame, profile.HeaderWithPadding.Length, frameSize);
-                    }
-                    else
-                    {
-                        composedFrame = new byte[frameSize];
-                        Array.Copy(frame, 0, composedFrame, 0, frameSize);
-                    }
-                    // ✅ 关键修复：在宽限期或参考链超时后强制发送时，将success设置为true，确保AVHandler能够发送帧
-                    // 否则AVHandler会检查success=false而不发送，导致画面冻结
-                    pendingCallbacks.Add((composedFrame, true, true)); // 标记为recovered和success=true，确保发送
-                }
-                else
-                {
-                    _logger?.LogWarning("⚠️ 帧 {Frame} 解码失败，且不在宽限期内，不发送", _frameIndexCur);
-                }
-            }
-
             _frameIndexPrev = _frameIndexCur;
 
             if (success)
