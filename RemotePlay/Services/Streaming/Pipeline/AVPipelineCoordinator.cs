@@ -255,7 +255,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
             // 只有服务端内部丢包才需要关注；单纯的网络缺包由主机的码率自适应处理
             var level = internalDrops ? LogLevel.Warning : LogLevel.Debug;
             _logger.Log(level,
-                "上游视频包统计(5s): 收到={Received} 网络缺包={Gaps} ({Loss:P1}) 音频缺包={AudioGaps} | 服务端内部丢弃: 解密队列={Ingest} 视频队列={Video} 音频队列={Audio}",
+                "Upstream packet stats (5s): received={Received} network gaps={Gaps} ({Loss:P1}) audio gaps={AudioGaps} | server-side drops: decrypt queue={Ingest} video queue={Video} audio queue={Audio}",
                 received, gaps, lossRate, audioGaps, ingestDropped, videoDropped, audioDropped);
         }
 

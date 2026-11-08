@@ -33,7 +33,7 @@ namespace RemotePlay.Services.Streaming.Quality
                 _profiles.AddRange(profiles);
                 _currentProfileIndex = -1;
 
-                _logger.LogInformation("📹 AdaptiveStreamManager: 设置了 {Count} 个 profiles", _profiles.Count);
+                _logger.LogInformation("📹 AdaptiveStreamManager: set {Count} profiles", _profiles.Count);
                 for (int i = 0; i < _profiles.Count; i++)
                 {
                     var p = _profiles[i];
@@ -62,13 +62,13 @@ namespace RemotePlay.Services.Streaming.Quality
                     {
                         _currentProfileIndex = packetIndex;
                         var profile = _profiles[_currentProfileIndex];
-                        _logger.LogInformation("📹 AdaptiveStreamManager: 初始化 Profile[{Index}]: {Width}x{Height}", 
+                        _logger.LogInformation("📹 AdaptiveStreamManager: initialized Profile[{Index}]: {Width}x{Height}", 
                             packetIndex, profile.Width, profile.Height);
                         return (true, profile, true);
                     }
                     else
                     {
-                        _logger.LogWarning("⚠️ AdaptiveStreamManager: 收到无效的 adaptive_stream_index={Index}, profiles_count={Count}", 
+                        _logger.LogWarning("⚠️ AdaptiveStreamManager: received invalid adaptive_stream_index={Index}, profiles_count={Count}", 
                             packetIndex, _profiles.Count);
                         return (false, null, false);
                     }
@@ -79,7 +79,7 @@ namespace RemotePlay.Services.Streaming.Quality
                 {
                     if (packetIndex < 0 || packetIndex >= _profiles.Count)
                     {
-                        _logger.LogError("❌ AdaptiveStreamManager: 收到无效的 adaptive_stream_index={Index}, profiles_count={Count}", 
+                        _logger.LogError("❌ AdaptiveStreamManager: received invalid adaptive_stream_index={Index}, profiles_count={Count}", 
                             packetIndex, _profiles.Count);
                         return (false, null, false);
                     }
@@ -88,7 +88,7 @@ namespace RemotePlay.Services.Streaming.Quality
                     var newProfile = _profiles[packetIndex];
                     _currentProfileIndex = packetIndex;
 
-                    _logger.LogInformation("🔄 AdaptiveStreamManager: Profile 切换 {OldIndex}({OldW}x{OldH}) -> {NewIndex}({NewW}x{NewH})",
+                    _logger.LogInformation("🔄 AdaptiveStreamManager: Profile switched {OldIndex}({OldW}x{OldH}) -> {NewIndex}({NewW}x{NewH})",
                         oldProfile.Index, oldProfile.Width, oldProfile.Height,
                         newProfile.Index, newProfile.Width, newProfile.Height);
 
@@ -146,7 +146,7 @@ namespace RemotePlay.Services.Streaming.Quality
             lock (_lock)
             {
                 _currentProfileIndex = -1;
-                _logger.LogDebug("AdaptiveStreamManager: 已重置");
+                _logger.LogDebug("AdaptiveStreamManager: reset");
             }
         }
     }

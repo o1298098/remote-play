@@ -50,7 +50,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "解析视频头部失败");
+                _logger?.LogWarning(ex, "Failed to parse video header");
             }
 
             return false;
@@ -235,7 +235,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "解析 slice header 失败");
+                _logger?.LogWarning(ex, "Failed to parse slice header");
             }
 
             return false;
@@ -421,7 +421,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
             
             if (_codec != "hevc" && _codec != "h265")
             {
-                _logger?.LogWarning("SetReferenceFrame 仅支持 H.265");
+                _logger?.LogWarning("SetReferenceFrame only supports H.265");
                 return false;
             }
 
@@ -431,7 +431,7 @@ namespace RemotePlay.Services.Streaming.AV.Bitstream
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "修改参考帧失败");
+                _logger?.LogError(ex, "Failed to modify reference frame");
                 return false;
             }
         }

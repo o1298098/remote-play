@@ -2,6 +2,7 @@ import type { StreamingMonitorStats } from '@/hooks/use-streaming-connection'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useDevice } from '@/hooks/use-device'
+import { formatStreamingDuration } from '@/utils/format-duration'
 import { FrameCountChart } from './FrameCountChart'
 
 interface StreamingStatsOverlayProps {
@@ -51,33 +52,6 @@ const formatFps = (t: TFunction, value: number | null) => {
   })
 }
 
-const formatDuration = (t: TFunction, value: number | null) => {
-  if (value === null || Number.isNaN(value) || value < 0) {
-    return '--'
-  }
-  const totalSeconds = Math.floor(value / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  
-  if (hours > 0) {
-    return t('streaming.monitor.units.duration.hms', {
-      hours,
-      minutes,
-      seconds,
-    })
-  } else if (minutes > 0) {
-    return t('streaming.monitor.units.duration.ms', {
-      minutes,
-      seconds,
-    })
-  } else {
-    return t('streaming.monitor.units.duration.s', {
-      seconds,
-    })
-  }
-}
-
 export function StreamingStatsOverlay({ stats }: StreamingStatsOverlayProps) {
   const { t } = useTranslation()
   const { isMobile } = useDevice()
@@ -100,7 +74,7 @@ export function StreamingStatsOverlay({ stats }: StreamingStatsOverlayProps) {
       <div className="space-y-2 text-white/80">
         <div className="flex items-center justify-between">
           <span className="text-white/60">{t('streaming.monitor.labels.duration')}</span>
-          <span>{formatDuration(t, stats?.streamingDurationMs ?? null)}</span>
+          <span>{formatStreamingDuration(stats?.streamingDurationMs ?? null)}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-white/60">{t('streaming.monitor.labels.download')}</span>

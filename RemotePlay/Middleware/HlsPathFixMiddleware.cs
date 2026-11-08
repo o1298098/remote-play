@@ -90,7 +90,7 @@ namespace RemotePlay.Middleware
                             {
                                 // 重试失败 - 文件可能正在被 FFmpeg 重写
                                 // 返回一个有效的空 m3u8 清单，让播放器继续等待
-                                _logger.LogDebug("无法读取 HLS 文件，文件可能正在被写入，返回空清单: {Path}", path);
+                                _logger.LogDebug("Unable to read HLS file (possibly being written), returning empty playlist: {Path}", path);
                                 
                                 var emptyM3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\n";
                                 var emptyEncoding = new System.Text.UTF8Encoding(false);
@@ -166,7 +166,7 @@ namespace RemotePlay.Middleware
                                     {
                                         // 文件正在被写入或被锁定，跳过这个片段
                                         skippedSegments++;
-                                        _logger.LogDebug("跳过正在写入的 .ts 文件: {TsFile}", trimmedLine);
+                                        _logger.LogDebug("Skipping .ts file being written: {TsFile}", trimmedLine);
                                     }
                                     // 清空累积的标签行
                                     segmentPrefixLines.Clear();
@@ -266,7 +266,7 @@ namespace RemotePlay.Middleware
                             // 记录转换统计
                             if (validSegments.Count > 0 || skippedSegments > 0)
                             {
-                                _logger.LogDebug("HLS m3u8 路径转换完成: {Path}, 保留片段: {Valid}, 跳过片段: {Skipped}", 
+                                _logger.LogDebug("HLS m3u8 path rewrite complete: {Path}, kept segments: {Valid}, skipped segments: {Skipped}", 
                                     path, validSegments.Count, skippedSegments);
                             }
                         }
@@ -315,7 +315,7 @@ namespace RemotePlay.Middleware
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "处理 HLS m3u8 文件时发生错误: {Path}", path);
+                        _logger.LogError(ex, "Error processing HLS m3u8 file: {Path}", path);
                         // 发生错误时，返回 500 而不是继续传递请求
                         context.Response.StatusCode = 500;
                         return;
@@ -330,7 +330,7 @@ namespace RemotePlay.Middleware
                     {
                         // 目录存在，说明流还在，返回一个有效的空 m3u8 清单
                         // 这样播放器会继续等待，而不是停止播放
-                        _logger.LogDebug("HLS m3u8 文件暂时不存在，但目录存在，返回空清单: {Path}", path);
+                        _logger.LogDebug("HLS m3u8 file temporarily missing but directory exists, returning empty playlist: {Path}", path);
                         
                         var emptyM3u8 = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\n";
                         var emptyEncoding = new System.Text.UTF8Encoding(false);
@@ -350,7 +350,7 @@ namespace RemotePlay.Middleware
                     else
                     {
                         // 目录也不存在，说明流确实已经结束了，返回 404
-                        _logger.LogDebug("HLS m3u8 文件和目录都不存在，返回 404: {Path}", path);
+                        _logger.LogDebug("HLS m3u8 file and directory not found, returning 404: {Path}", path);
                         context.Response.StatusCode = 404;
                         return;
                     }

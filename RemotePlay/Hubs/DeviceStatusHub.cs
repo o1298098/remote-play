@@ -27,18 +27,18 @@ namespace RemotePlay.Hubs
         public override async Task OnConnectedAsync()
         {
             var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            _logger.LogInformation("设备状态Hub新连接: ConnectionId={ConnectionId}, UserId={UserId}, IsAuthenticated={IsAuthenticated}", 
-                Context.ConnectionId, userId ?? "未认证", Context.User?.Identity?.IsAuthenticated ?? false);
+            _logger.LogInformation("New DeviceStatusHub connection: ConnectionId={ConnectionId}, UserId={UserId}, IsAuthenticated={IsAuthenticated}", 
+                Context.ConnectionId, userId ?? "unauthenticated", Context.User?.Identity?.IsAuthenticated ?? false);
 
             if (!string.IsNullOrEmpty(userId))
             {
                 var groupName = GetUserGroupName(userId);
                 await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
-                _logger.LogDebug("连接 {ConnectionId} 加入用户组 {GroupName}", Context.ConnectionId, groupName);
+                _logger.LogDebug("Connection {ConnectionId} joined user group {GroupName}", Context.ConnectionId, groupName);
             }
             else
             {
-                _logger.LogWarning("无法为未认证连接 {ConnectionId} 加入用户组", Context.ConnectionId);
+                _logger.LogWarning("Cannot add unauthenticated connection {ConnectionId} to user group", Context.ConnectionId);
             }
             
             // 连接时立即发送当前已注册设备的状态
@@ -55,11 +55,11 @@ namespace RemotePlay.Hubs
         {
             if (exception != null)
             {
-                _logger.LogWarning(exception, "设备状态Hub连接断开: ConnectionId={ConnectionId}", Context.ConnectionId);
+                _logger.LogWarning(exception, "DeviceStatusHub connection closed: ConnectionId={ConnectionId}", Context.ConnectionId);
             }
             else
             {
-                _logger.LogInformation("设备状态Hub连接断开: ConnectionId={ConnectionId}", Context.ConnectionId);
+                _logger.LogInformation("DeviceStatusHub connection closed: ConnectionId={ConnectionId}", Context.ConnectionId);
             }
 
             var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -67,7 +67,7 @@ namespace RemotePlay.Hubs
             {
                 var groupName = GetUserGroupName(userId);
                 await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
-                _logger.LogDebug("连接 {ConnectionId} 从用户组 {GroupName} 移除", Context.ConnectionId, groupName);
+                _logger.LogDebug("Connection {ConnectionId} removed from user group {GroupName}", Context.ConnectionId, groupName);
             }
 
             await base.OnDisconnectedAsync(exception);
@@ -97,7 +97,7 @@ namespace RemotePlay.Hubs
 
                 if (string.IsNullOrEmpty(userId))
                 {
-                    _logger.LogWarning("未认证用户尝试获取设备状态: ConnectionId={ConnectionId}", Context.ConnectionId);
+                    _logger.LogWarning("Unauthenticated user attempted to get device status: ConnectionId={ConnectionId}", Context.ConnectionId);
                     await Clients.Caller.SendAsync("Error", new { message = "需要登录后才能获取设备状态" });
                     return;
                 }
@@ -128,12 +128,12 @@ namespace RemotePlay.Hubs
 
                 await Clients.Caller.SendAsync("RegisteredDevicesStatus", userDevices);
 
-                _logger.LogDebug("已发送用户 {UserId} 的已注册设备状态给客户端 {ConnectionId}，共 {Count} 个设备", 
+                _logger.LogDebug("Sent registered device status for user {UserId} to client {ConnectionId}, {Count} device(s)", 
                     userId, Context.ConnectionId, userDevices.Count);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "获取已注册设备状态时发生错误");
+                _logger.LogError(ex, "Error getting registered device status");
                 await Clients.Caller.SendAsync("Error", new { message = "获取设备状态失败" });
             }
         }

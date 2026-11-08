@@ -25,7 +25,7 @@ namespace RemotePlay.Services.Hls
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("HLS 清理服务已启动");
+            _logger.LogInformation("HLS cleanup service started");
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -35,7 +35,7 @@ namespace RemotePlay.Services.Hls
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "清理 HLS 文件时发生错误");
+                    _logger.LogError(ex, "Error cleaning up HLS files");
                 }
 
                 // 等待下一次清理
@@ -49,7 +49,7 @@ namespace RemotePlay.Services.Hls
                 }
             }
 
-            _logger.LogInformation("HLS 清理服务已停止");
+            _logger.LogInformation("HLS cleanup service stopped");
         }
 
         /// <summary>
@@ -97,7 +97,7 @@ namespace RemotePlay.Services.Hls
                             freedSpace += dirSize;
 
                             _logger.LogDebug(
-                                "已删除旧的 HLS 目录: {Directory}, 文件数: {FileCount}, 大小: {Size} MB",
+                                "Deleted old HLS directory: {Directory}, files: {FileCount}, size: {Size} MB",
                                 Path.GetFileName(sessionDir),
                                 files.Length,
                                 dirSize / (1024.0 * 1024.0));
@@ -118,7 +118,7 @@ namespace RemotePlay.Services.Hls
                                     }
                                     catch (Exception ex)
                                     {
-                                        _logger.LogWarning(ex, "无法删除文件: {File}", file.FullName);
+                                        _logger.LogWarning(ex, "Failed to delete file: {File}", file.FullName);
                                     }
                                 }
                             }
@@ -133,21 +133,21 @@ namespace RemotePlay.Services.Hls
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.LogWarning(ex, "无法删除空目录: {Directory}", sessionDir);
+                                    _logger.LogWarning(ex, "Failed to delete empty directory: {Directory}", sessionDir);
                                 }
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "处理目录时出错: {Directory}", sessionDir);
+                        _logger.LogWarning(ex, "Error processing directory: {Directory}", sessionDir);
                     }
                 }
 
                 if (deletedDirs > 0 || deletedFiles > 0)
                 {
                     _logger.LogInformation(
-                        "HLS 清理完成: 删除 {DirCount} 个目录, {FileCount} 个文件, 释放 {Size:F2} MB",
+                        "HLS cleanup complete: deleted {DirCount} directories, {FileCount} files, freed {Size:F2} MB",
                         deletedDirs,
                         deletedFiles,
                         freedSpace / (1024.0 * 1024.0));
@@ -155,7 +155,7 @@ namespace RemotePlay.Services.Hls
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "清理 HLS 目录时发生错误: {Directory}", hlsDirectory);
+                _logger.LogError(ex, "Error cleaning up HLS directory: {Directory}", hlsDirectory);
             }
 
             await Task.CompletedTask;
@@ -163,7 +163,7 @@ namespace RemotePlay.Services.Hls
 
         public override void Dispose()
         {
-            _logger.LogInformation("HLS 清理服务正在释放资源");
+            _logger.LogInformation("HLS cleanup service disposing resources");
             base.Dispose();
         }
     }

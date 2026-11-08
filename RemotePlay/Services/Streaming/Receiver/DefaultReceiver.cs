@@ -34,12 +34,12 @@ namespace RemotePlay.Services.Streaming.Receiver
 
         public void SetVideoCodec(string codec)
         {
-            _logger.LogDebug("📹 视频编码格式: {Codec}", codec);
+            _logger.LogDebug("📹 Video codec: {Codec}", codec);
         }
 
         public void SetAudioCodec(string codec)
         {
-            _logger.LogDebug("🎵 音频编码格式: {Codec}", codec);
+            _logger.LogDebug("🎵 Audio codec: {Codec}", codec);
         }
 
         public void EnterWaitForIdr()

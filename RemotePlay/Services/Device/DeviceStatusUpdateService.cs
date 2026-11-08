@@ -48,7 +48,7 @@ namespace RemotePlay.Services.Device
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("设备状态更新服务已启动，更新间隔: {Interval}秒", _updateInterval.TotalSeconds);
+            _logger.LogInformation("Device status update service started, interval: {Interval}s", _updateInterval.TotalSeconds);
 
             // 等待应用完全启动后再开始第一次更新
             await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
@@ -61,7 +61,7 @@ namespace RemotePlay.Services.Device
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "更新设备状态时发生错误");
+                    _logger.LogError(ex, "Failed to update device status");
                 }
 
                 // 等待下一次更新
@@ -75,7 +75,7 @@ namespace RemotePlay.Services.Device
                 }
             }
 
-            _logger.LogInformation("设备状态更新服务已停止");
+            _logger.LogInformation("Device status update service stopped");
         }
 
         /// <summary>
@@ -110,7 +110,7 @@ namespace RemotePlay.Services.Device
                     return;
                 }
 
-                _logger.LogInformation("开始更新 {Count} 个设备的状态", devices.Count);
+                _logger.LogDebug("Updating status of {Count} devices", devices.Count);
 
                 // 发现网络中的所有在线设备
                 var discoveredDevices = await discoveryService.DiscoverDevicesAsync(
@@ -155,7 +155,7 @@ namespace RemotePlay.Services.Device
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "更新设备 {DeviceId} (HostId: {HostId}) 状态时发生错误", device.Id, device.HostId);
+                        _logger.LogWarning(ex, "Failed to update status of device {DeviceId} (HostId: {HostId})", device.Id, device.HostId);
                         device.Status = "ERROR";
                         statusCounts["ERROR"]++;
                         updatedCount++;
@@ -232,12 +232,12 @@ namespace RemotePlay.Services.Device
                     }
                     catch (Exception hubEx)
                     {
-                        _logger.LogWarning(hubEx, "推送设备状态更新通知时出错（不影响主流程）");
+                        _logger.LogWarning(hubEx, "Failed to push device status notification (non-fatal)");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "保存设备状态更新时发生错误");
+                    _logger.LogError(ex, "Failed to save device status updates");
                 }
 
                 stopwatch.Stop();
@@ -249,7 +249,7 @@ namespace RemotePlay.Services.Device
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "更新设备状态过程中发生错误");
+                _logger.LogError(ex, "Device status update cycle failed");
             }
         }
 
@@ -267,7 +267,7 @@ namespace RemotePlay.Services.Device
             {
                 if (string.IsNullOrEmpty(device.HostId))
                 {
-                    _logger.LogWarning("设备 {DeviceId} 没有 HostId，跳过更新", device.Id);
+                    _logger.LogWarning("Device {DeviceId} has no HostId, skipping", device.Id);
                     return new UpdateResult { HasError = true };
                 }
 
@@ -277,7 +277,7 @@ namespace RemotePlay.Services.Device
                 if (discoveredDevicesMap.TryGetValue(device.HostId, out consoleInfo))
                 {
                     // 设备在广播扫描中被发现
-                    _logger.LogDebug("设备 {DeviceId} (HostId: {HostId}) 在广播扫描中被发现", device.Id, device.HostId);
+                    _logger.LogDebug("Device {DeviceId} (HostId: {HostId}) found by broadcast scan", device.Id, device.HostId);
                 }
                 else
                 {
@@ -285,7 +285,7 @@ namespace RemotePlay.Services.Device
                     if (!string.IsNullOrEmpty(device.IpAddress) && _retryAttempts > 0)
                     {
                         _logger.LogDebug(
-                            "设备 {DeviceId} (HostId: {HostId}, IP: {IpAddress}) 未在广播扫描中发现，开始单独重试",
+                            "Device {DeviceId} (HostId: {HostId}, IP: {IpAddress}) not found by broadcast, probing directly",
                             device.Id, device.HostId, device.IpAddress);
 
                         // 对特定IP进行重试
@@ -305,8 +305,8 @@ namespace RemotePlay.Services.Device
 
                                 if (consoleInfo != null && consoleInfo.Uuid == device.HostId)
                                 {
-                                    _logger.LogInformation(
-                                        "设备 {DeviceId} (HostId: {HostId}) 在第 {Attempt} 次重试中被发现",
+                                    _logger.LogDebug(
+                                        "Device {DeviceId} (HostId: {HostId}) found on direct probe attempt {Attempt}",
                                         device.Id, device.HostId, attempt);
                                     break;
                                 }
@@ -314,7 +314,7 @@ namespace RemotePlay.Services.Device
                             catch (Exception retryEx)
                             {
                                 _logger.LogDebug(retryEx, 
-                                    "设备 {DeviceId} (HostId: {HostId}) 第 {Attempt} 次重试失败",
+                                    "Device {DeviceId} (HostId: {HostId}) direct probe attempt {Attempt} failed",
                                     device.Id, device.HostId, attempt);
                             }
                         }
@@ -342,7 +342,7 @@ namespace RemotePlay.Services.Device
                     if (consoleInfo.Ip != device.IpAddress)
                     {
                         _logger.LogInformation(
-                            "设备 {DeviceId} (HostId: {HostId}) 的IP地址从 {OldIp} 更新为 {NewIp}",
+                            "Device {DeviceId} (HostId: {HostId}) IP changed from {OldIp} to {NewIp}",
                             device.Id, device.HostId, device.IpAddress, consoleInfo.Ip);
                         device.IpAddress = consoleInfo.Ip;
                     }
@@ -369,7 +369,7 @@ namespace RemotePlay.Services.Device
                         if (device.Status != "OFFLINE")
                         {
                             _logger.LogWarning(
-                                "设备 {DeviceId} (HostId: {HostId}, IP: {IpAddress}) 连续 {MissedCount} 次扫描未发现，标记为离线",
+                                "Device {DeviceId} (HostId: {HostId}, IP: {IpAddress}) missed {MissedCount} consecutive scans, marking offline",
                                 device.Id, device.HostId, device.IpAddress, missedCount);
                             device.Status = "OFFLINE";
                         }
@@ -377,7 +377,7 @@ namespace RemotePlay.Services.Device
                     else
                     {
                         _logger.LogDebug(
-                            "设备 {DeviceId} (HostId: {HostId}) 本次未发现，但在宽限期内 ({MissedCount}/{MaxMissed})，保持当前状态: {Status}",
+                            "Device {DeviceId} (HostId: {HostId}) not found this scan ({MissedCount}/{MaxMissed}), keeping status {Status}",
                             device.Id, device.HostId, missedCount, _maxMissedScans, device.Status);
                     }
 
@@ -386,7 +386,7 @@ namespace RemotePlay.Services.Device
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "更新设备 {DeviceId} (HostId: {HostId}) 状态时发生错误", device.Id, device.HostId);
+                _logger.LogWarning(ex, "Failed to update status of device {DeviceId} (HostId: {HostId})", device.Id, device.HostId);
                 device.Status = "ERROR";
                 return new UpdateResult { HasError = true };
             }

@@ -17,14 +17,14 @@ namespace RemotePlay.Services.WebRTC
         {
             if (!_sessions.TryGetValue(sessionId, out var session))
             {
-                _logger.LogWarning("⚠️ 会话不存在，无法执行 ICE Restart: {SessionId}", sessionId);
+                _logger.LogWarning("⚠️ Session not found, cannot perform ICE restart: {SessionId}", sessionId);
                 return false;
             }
             
             var sessionLock = _iceRestartLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
             if (!await sessionLock.WaitAsync(0))
             {
-                _logger.LogInformation("⏳ ICE Restart 正在进行中，跳过重复请求: {SessionId}", sessionId);
+                _logger.LogInformation("⏳ ICE restart already in progress, skipping duplicate request: {SessionId}", sessionId);
                 return false;
             }
             
@@ -45,7 +45,7 @@ namespace RemotePlay.Services.WebRTC
                     
                     if (timeSinceLastAttempt < backoffSeconds)
                     {
-                        _logger.LogInformation("⏳ ICE Restart 退避中: {SessionId}，还需等待 {Seconds} 秒 (尝试次数: {Attempts})", 
+                        _logger.LogInformation("⏳ ICE restart backing off: {SessionId}, {Seconds}s remaining (attempts: {Attempts})", 
                             sessionId, backoffSeconds - (int)timeSinceLastAttempt, attempts);
                         return false;
                     }
@@ -55,7 +55,7 @@ namespace RemotePlay.Services.WebRTC
                 _iceRestartLastAttempt.AddOrUpdate(sessionId, DateTime.UtcNow, (k, v) => DateTime.UtcNow);
                 attempts = _iceRestartAttempts[sessionId];
                 
-                _logger.LogInformation("🔄 开始 ICE Restart: {SessionId} (尝试次数: {Attempts})", sessionId, attempts);
+                _logger.LogInformation("🔄 Starting ICE restart: {SessionId} (attempts: {Attempts})", sessionId, attempts);
                 
                 session.Receiver?.StopKeepalive();
                 
@@ -66,13 +66,13 @@ namespace RemotePlay.Services.WebRTC
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "❌ 创建 ICE Restart Offer 异常: {SessionId}", sessionId);
+                    _logger.LogError(ex, "❌ Exception creating ICE restart offer: {SessionId}", sessionId);
                     return false;
                 }
                 
                 if (newOffer == null)
                 {
-                    _logger.LogWarning("⚠️ 创建 ICE Restart Offer 返回 null: {SessionId}", sessionId);
+                    _logger.LogWarning("⚠️ Creating ICE restart offer returned null: {SessionId}", sessionId);
                     return false;
                 }
                 
@@ -82,7 +82,7 @@ namespace RemotePlay.Services.WebRTC
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "❌ 设置 ICE Restart LocalDescription 失败: {SessionId}", sessionId);
+                    _logger.LogError(ex, "❌ Failed to set ICE restart local description: {SessionId}", sessionId);
                     return false;
                 }
                 
@@ -101,12 +101,12 @@ namespace RemotePlay.Services.WebRTC
                     if (newKeepaliveChannel != null)
                     {
                         session.Receiver?.SetKeepaliveDataChannel(newKeepaliveChannel);
-                        _logger.LogInformation("✅ ICE Restart 后重新创建 Keepalive DataChannel: {SessionId}", sessionId);
+                        _logger.LogInformation("✅ Recreated keepalive DataChannel after ICE restart: {SessionId}", sessionId);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "⚠️ ICE Restart 后创建 DataChannel 失败: {SessionId}", sessionId);
+                    _logger.LogWarning(ex, "⚠️ Failed to create DataChannel after ICE restart: {SessionId}", sessionId);
                 }
                 
                 var originalSdp = newOffer.sdp.ToString();
@@ -119,13 +119,13 @@ namespace RemotePlay.Services.WebRTC
                     
                     if (!finalSdp.Contains("ice-ufrag") || !finalSdp.Contains("ice-pwd"))
                     {
-                        _logger.LogWarning("⚠️ SDP 优化后缺少 ICE credentials，使用原始 SDP: {SessionId}", sessionId);
+                        _logger.LogWarning("⚠️ ICE credentials missing after SDP optimization, using original SDP: {SessionId}", sessionId);
                         finalSdp = originalSdp;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "⚠️ SDP 优化失败，使用原始 SDP: {SessionId}", sessionId);
+                    _logger.LogWarning(ex, "⚠️ SDP optimization failed, using original SDP: {SessionId}", sessionId);
                     finalSdp = originalSdp;
                 }
                 
@@ -136,7 +136,7 @@ namespace RemotePlay.Services.WebRTC
                 _iceRestartLastAttempt.TryRemove(sessionId, out _);
                 
                 var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                _logger.LogInformation("✅ ICE Restart Offer 已创建: {SessionId}，耗时 {ElapsedMs}ms，等待前端重新协商", 
+                _logger.LogInformation("✅ ICE restart offer created: {SessionId} in {ElapsedMs}ms, awaiting frontend renegotiation", 
                     sessionId, (int)elapsedMs);
                 
                 return true;
@@ -144,7 +144,7 @@ namespace RemotePlay.Services.WebRTC
             catch (Exception ex)
             {
                 var elapsedMs = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                _logger.LogError(ex, "❌ ICE Restart 失败: {SessionId}，耗时 {ElapsedMs}ms (尝试次数: {Attempts})", 
+                _logger.LogError(ex, "❌ ICE restart failed: {SessionId} after {ElapsedMs}ms (attempts: {Attempts})", 
                     sessionId, (int)elapsedMs, _iceRestartAttempts.GetOrAdd(sessionId, 0));
                 return false;
             }
@@ -167,7 +167,7 @@ namespace RemotePlay.Services.WebRTC
                     var offer = session.GetPendingIceRestartOffer();
                     if (!string.IsNullOrWhiteSpace(offer))
                     {
-                        _logger.LogWarning("⏰ 清理过期的 ICE Restart Offer: {SessionId} (超过 30 秒未处理)", sessionId);
+                        _logger.LogWarning("⏰ Cleaning up expired ICE restart offer: {SessionId} (unhandled for over 30s)", sessionId);
                         _iceRestartPendingOfferTime.TryRemove(sessionId, out _);
                     }
                 }

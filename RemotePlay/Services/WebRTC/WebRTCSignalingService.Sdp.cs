@@ -91,7 +91,7 @@ namespace RemotePlay.Services.WebRTC
 
                 if (!result.Contains("v=0") || !result.Contains("m="))
                 {
-                    _logger.LogWarning("⚠️ SDP 优化后结构不完整，使用原始 SDP");
+                    _logger.LogWarning("⚠️ SDP incomplete after optimization, using original SDP");
                     return sdp;
                 }
 
@@ -99,7 +99,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ SDP 优化失败，使用原始 SDP");
+                _logger.LogWarning(ex, "⚠️ SDP optimization failed, using original SDP");
                 return sdp;
             }
         }
@@ -162,7 +162,7 @@ namespace RemotePlay.Services.WebRTC
 
                 if (updated)
                 {
-                    _logger.LogInformation("🌐 已应用 WebRTC PublicIp 配置: {PublicIp}", publicIp);
+                    _logger.LogInformation("🌐 Applied WebRTC PublicIp: {PublicIp}", publicIp);
                     return string.Join("\r\n", lines);
                 }
 
@@ -170,7 +170,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ 应用 PublicIp 到 SDP 失败，使用原始 SDP");
+                _logger.LogWarning(ex, "⚠️ Failed to apply PublicIp to SDP, using original SDP");
                 return sdp;
             }
         }
@@ -240,7 +240,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ 优化候选地址顺序失败，使用原始 SDP");
+                _logger.LogWarning(ex, "⚠️ Failed to reorder candidates, using original SDP");
                 return sdp;
             }
         }
@@ -441,12 +441,12 @@ namespace RemotePlay.Services.WebRTC
                 }
                 else
                 {
-                    _logger.LogWarning("⚠️ 无法从 SDP 中提取 ice-ufrag，candidate 将缺少 ufrag");
+                    _logger.LogWarning("⚠️ Unable to extract ice-ufrag from SDP; candidate will lack ufrag");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ 提取 ice-ufrag 失败，使用原始 candidate");
+                _logger.LogWarning(ex, "⚠️ Failed to extract ice-ufrag, using original candidate");
             }
 
             return candidateStr;

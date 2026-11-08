@@ -66,7 +66,7 @@ namespace RemotePlay.Services.Auth
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("新用户注册成功: {Username}, Email: {Email}", user.Username, user.Email);
+            _logger.LogInformation("New user registered: {Username}, Email: {Email}", user.Username, user.Email);
 
             // 生成JWT令牌
             var token = GenerateJwtToken(user);
@@ -90,13 +90,13 @@ namespace RemotePlay.Services.Auth
 
             if (user == null || !VerifyHashedPassword(user.PasswordHash,request.Password))
             {
-                _logger.LogWarning("登录失败: 用户名或密码错误 - {UsernameOrEmail}", request.UsernameOrEmail);
+                _logger.LogWarning("Login failed: invalid username or password - {UsernameOrEmail}", request.UsernameOrEmail);
                 return null;
             }
 
             if (!user.IsActive)
             {
-                _logger.LogWarning("登录失败: 用户已被禁用 - {Username}", user.Username);
+                _logger.LogWarning("Login failed: user is disabled - {Username}", user.Username);
                 return null;
             }
 
@@ -104,7 +104,7 @@ namespace RemotePlay.Services.Auth
             user.LastLoginAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("用户登录成功: {Username}", user.Username);
+            _logger.LogInformation("User logged in: {Username}", user.Username);
 
             // 生成JWT令牌
             var token = GenerateJwtToken(user);
@@ -153,7 +153,7 @@ namespace RemotePlay.Services.Auth
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "JWT令牌验证失败");
+                _logger.LogWarning(ex, "JWT token validation failed");
                 return null;
             }
         }
@@ -286,7 +286,7 @@ namespace RemotePlay.Services.Auth
             {
                 // 开发环境默认密钥（生产环境必须配置）
                 secret = "YourSuperSecretKeyForJWTTokenGenerationMustBeAtLeast32Characters!";
-                _logger.LogWarning("使用默认JWT密钥，生产环境请务必配置JWT:Secret");
+                _logger.LogWarning("Using default JWT secret; configure JWT:Secret in production");
             }
             return secret;
         }

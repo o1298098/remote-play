@@ -47,7 +47,7 @@ namespace RemotePlay.Services.Session
         public async Task<RegisterResult> RegisterDeviceAsync(string hostIp, string accountId, string pin, CancellationToken cancellationToken = default)
         {
             var startTime = DateTime.UtcNow;
-            _logger.LogInformation("开始设备注册 - 主机: {HostIp}, 账户: {AccountId}", hostIp, accountId);
+            _logger.LogInformation("Starting device registration - host: {HostIp}, account: {AccountId}", hostIp, accountId);
 
             try
             {
@@ -67,22 +67,22 @@ namespace RemotePlay.Services.Session
                     if (deviceInfo != null && !string.IsNullOrEmpty(deviceInfo.HostType))
                     {
                         hostType = deviceInfo.HostType.ToUpper();
-                        _logger.LogInformation("检测到主机类型: {HostType}", hostType);
+                        _logger.LogInformation("Detected host type: {HostType}", hostType);
                     }
                     else
                     {
-                        _logger.LogWarning("无法确定主机类型，使用默认值: {Default}", hostType);
+                        _logger.LogWarning("Could not determine host type, using default: {Default}", hostType);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "设备发现失败，使用默认主机类型 {Default}", hostType);
+                    _logger.LogWarning(ex, "Device discovery failed, using default host type {Default}", hostType);
                 }
 
                 // 检查设备是否处于注册模式
                 if (!await RegistInitAsync(hostIp, hostType, cancellationToken))
                 {
-                    _logger.LogError("设备未处于注册模式，请在设备上启用远程连接");
+                    _logger.LogError("Device is not in registration mode; enable Remote Play on the device");
                     return new RegisterResult
                     {
                         Success = false,
@@ -104,18 +104,18 @@ namespace RemotePlay.Services.Session
 
                 if (result.Success)
                 {
-                    _logger.LogInformation("设备注册成功 - 主机: {HostName} ({HostId})", result.HostName, result.HostId);
+                    _logger.LogInformation("Device registered successfully - host: {HostName} ({HostId})", result.HostName, result.HostId);
                 }
                 else
                 {
-                    _logger.LogWarning("设备注册失败 - 主机: {HostIp}, 错误: {ErrorMessage}", hostIp, result.ErrorMessage);
+                    _logger.LogWarning("Device registration failed - host: {HostIp}, error: {ErrorMessage}", hostIp, result.ErrorMessage);
                 }
 
                 return result;
             }
             catch (OperationCanceledException)
             {
-                _logger.LogWarning("设备注册被取消 - 主机: {HostIp}", hostIp);
+                _logger.LogWarning("Device registration cancelled - host: {HostIp}", hostIp);
                 return new RegisterResult
                 {
                     Success = false,
@@ -125,7 +125,7 @@ namespace RemotePlay.Services.Session
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设备注册时发生错误 - 主机: {HostIp}", hostIp);
+                _logger.LogError(ex, "Error during device registration - host: {HostIp}", hostIp);
                 return new RegisterResult
                 {
                     Success = false,
@@ -147,7 +147,7 @@ namespace RemotePlay.Services.Session
             {
                 var targetEndPoint = new IPEndPoint(IPAddress.Parse(host), RP_PORT);
                 await udpClient.SendAsync(initCommand, initCommand.Length, targetEndPoint);
-                _logger.LogDebug("已发送注册初始化命令: {Command}", Encoding.ASCII.GetString(initCommand));
+                _logger.LogDebug("Sent registration init command: {Command}", Encoding.ASCII.GetString(initCommand));
 
                 var endTime = DateTime.UtcNow.AddMilliseconds(timeoutMs);
                 while (DateTime.UtcNow < endTime && !cancellationToken.IsCancellationRequested)
@@ -161,39 +161,39 @@ namespace RemotePlay.Services.Session
                         if (completed == receiveTask)
                         {
                             var response = receiveTask.Result;
-                            _logger.LogDebug("收到响应，长度: {Length} 字节", response.Buffer.Length);
+                            _logger.LogDebug("Received response, length: {Length} bytes", response.Buffer.Length);
 
                             if (response.Buffer.Length >= 4)
                             {
                                 var responseStr = Encoding.ASCII.GetString(response.Buffer, 0, 4);
-                                _logger.LogDebug("响应内容: {Response}", responseStr);
+                                _logger.LogDebug("Response content: {Response}", responseStr);
 
                                 if (responseStr == expectedResponse)
                                 {
-                                    _logger.LogInformation("注册已开始");
+                                    _logger.LogInformation("Registration started");
                                     return true;
                                 }
                             }
                         }
                         else
                         {
-                            _logger.LogWarning("等待响应超时");
+                            _logger.LogWarning("Timed out waiting for response");
                             break;
                         }
                     }
                     catch (SocketException ex)
                     {
-                        _logger.LogDebug("接收数据时发生Socket异常: {Message}", ex.Message);
+                        _logger.LogDebug("Socket exception while receiving data: {Message}", ex.Message);
                         break;
                     }
                 }
 
-                _logger.LogError("未收到预期的注册响应，期望: {Expected}", expectedResponse);
+                _logger.LogError("Did not receive expected registration response, expected: {Expected}", expectedResponse);
                 return false;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "注册初始化失败");
+                _logger.LogError(ex, "Registration init failed");
                 return false;
             }
         }
@@ -206,34 +206,34 @@ namespace RemotePlay.Services.Session
             var key1 = GenKey1(hostType, nonce);
             var payload = GetRegistPayload(key1);
 
-            _logger.LogInformation("注册密钥生成 - Nonce: {Nonce}, Key0: {Key0}, Key1: {Key1}",
+            _logger.LogInformation("Registration key generated - Nonce: {Nonce}, Key0: {Key0}, Key1: {Key1}",
                 Convert.ToHexString(nonce), Convert.ToHexString(key0), Convert.ToHexString(key1).ToLower());
 
             // Validate and debug user_rpid format (Base64)
-            _logger.LogInformation("=== AccountId验证 ===");
-            _logger.LogInformation("输入psnId: {PsnId}", psnId);
+            _logger.LogInformation("=== AccountId validation ===");
+            _logger.LogInformation("Input psnId: {PsnId}", psnId);
 
             try
             {
                 var decodedBytes = Convert.FromBase64String(psnId);
-                _logger.LogInformation("解码后字节: {Hex}", Convert.ToHexString(decodedBytes));
-                _logger.LogInformation("解码后长度: {Length} (应为8字节)", decodedBytes.Length);
+                _logger.LogInformation("Decoded bytes: {Hex}", Convert.ToHexString(decodedBytes));
+                _logger.LogInformation("Decoded length: {Length} (expected 8 bytes)", decodedBytes.Length);
 
                 if (decodedBytes.Length != 8)
                 {
-                    _logger.LogError("❌ AccountId长度错误！应为8字节，实际为{Length}字节", decodedBytes.Length);
+                    _logger.LogError("❌ Invalid AccountId length! Expected 8 bytes, got {Length} bytes", decodedBytes.Length);
                 }
                 else
                 {
-                    _logger.LogInformation("✅ AccountId长度正确");
+                    _logger.LogInformation("✅ AccountId length is valid");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ AccountId不是有效的Base64字符串！");
+                _logger.LogError(ex, "❌ AccountId is not a valid Base64 string!");
             }
 
-            _logger.LogInformation("=== 验证完成 ===");
+            _logger.LogInformation("=== Validation complete ===");
 
             // 使用SessionCipher加密PSN ID并追加到payload
             var cipher = new SessionCipher(hostType, key0, nonce, 0);
@@ -243,19 +243,19 @@ namespace RemotePlay.Services.Session
             var payloadString = $"Client-Type: {CLIENT_TYPE}\r\nNp-AccountId: {psnId}\r\n";
             var psnIdBytes = Encoding.UTF8.GetBytes(payloadString);
 
-            _logger.LogInformation("PSN ID加密前 - 长度: {PlainLen}, 内容: {PlainContent}",
+            _logger.LogInformation("PSN ID before encryption - length: {PlainLen}, content: {PlainContent}",
                 psnIdBytes.Length, Convert.ToHexString(psnIdBytes).ToLower());
 
             var encPayload = cipher.Encrypt(psnIdBytes);
 
-            _logger.LogInformation("PSN ID加密后 - 长度: {EncLen}, 内容: {EncContent}",
+            _logger.LogInformation("PSN ID after encryption - length: {EncLen}, content: {EncContent}",
                 encPayload.Length, Convert.ToHexString(encPayload).ToLower());
 
             var fullPayload = new List<byte>(payload);
             fullPayload.AddRange(encPayload);
             payload = fullPayload.ToArray();
 
-            _logger.LogInformation("完整Payload - 总长度: {TotalLen}, 内容: {Payload}",
+            _logger.LogInformation("Full payload - total length: {TotalLen}, content: {Payload}",
                 payload.Length, Convert.ToHexString(payload).ToLower());
 
             var headers = GetRegistHeaders(hostType, payload.Length);
@@ -279,9 +279,9 @@ namespace RemotePlay.Services.Session
             Buffer.BlockCopy(headers, 0, requestBytes, 0, headers.Length);
             Buffer.BlockCopy(payload, 0, requestBytes, headers.Length, payload.Length);
 
-            _logger.LogDebug("发送注册请求 - Headers长度: {HeadersLen}, Payload长度: {PayloadLen}, 总长度: {TotalLen}",
+            _logger.LogDebug("Sending registration request - headers length: {HeadersLen}, payload length: {PayloadLen}, total length: {TotalLen}",
                 headers.Length, payload.Length, requestBytes.Length);
-            _logger.LogDebug("请求头:\n{Headers}", Encoding.UTF8.GetString(headers));
+            _logger.LogDebug("Request headers:\n{Headers}", Encoding.UTF8.GetString(headers));
 
             await stream.WriteAsync(requestBytes, 0, requestBytes.Length, cancellationToken);
             await stream.FlushAsync(cancellationToken);
@@ -314,13 +314,13 @@ namespace RemotePlay.Services.Session
             }
 
             var responseBytes = responseBuffer.ToArray();
-            _logger.LogDebug("已读取HTTP头部，当前总字节数: {Len}", responseBytes.Length);
+            _logger.LogDebug("HTTP headers read, total bytes so far: {Len}", responseBytes.Length);
 
             int contentLength = 0;
             if (headerEndIndex > 0)
             {
                 var headerText = Encoding.ASCII.GetString(responseBytes, 0, headerEndIndex);
-                _logger.LogDebug("响应头:\n{Headers}", headerText);
+                _logger.LogDebug("Response headers:\n{Headers}", headerText);
 
                 foreach (var line in headerText.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries))
                 {
@@ -345,7 +345,7 @@ namespace RemotePlay.Services.Session
             }
 
             var fullResponse = responseBuffer.ToArray();
-            _logger.LogDebug("收到响应，长度: {Length} 字节", fullResponse.Length);
+            _logger.LogDebug("Received response, length: {Length} bytes", fullResponse.Length);
 
             return fullResponse;
         }
@@ -373,7 +373,7 @@ namespace RemotePlay.Services.Session
 
                 if (statusLine.Contains("200 OK"))
                 {
-                    _logger.LogInformation("注册成功");
+                    _logger.LogInformation("Registration succeeded");
 
                     var cipherText = response.AsSpan(headerEndIndex).ToArray();
                     if (cipherText.Length > 0)
@@ -393,21 +393,21 @@ namespace RemotePlay.Services.Session
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "解密响应时发生错误");
+                            _logger.LogError(ex, "Error decrypting response");
                         }
                     }
                 }
                 else
                 {
-                    _logger.LogError("注册失败，状态: {Status}", statusLine);
-                    _logger.LogDebug("响应: {Raw}", Encoding.UTF8.GetString(response));
+                    _logger.LogError("Registration failed, status: {Status}", statusLine);
+                    _logger.LogDebug("Response: {Raw}", Encoding.UTF8.GetString(response));
                 }
             }
             else
             {
-                _logger.LogError("响应格式无效 (未找到 \\r\\n\\r\\n)");
+                _logger.LogError("Invalid response format (\\r\\n\\r\\n not found)");
             }
-            _logger.LogInformation("注册信息: {Info}", string.Join(", ", info.Select(kv => $"{kv.Key}={kv.Value}")));
+            _logger.LogInformation("Registration info: {Info}", string.Join(", ", info.Select(kv => $"{kv.Key}={kv.Value}")));
             return info;
         }
 

@@ -44,17 +44,17 @@ namespace RemotePlay.Services.Streaming.Core
                         // 检测瓶颈
                         if (stats.Ingest.InputQueueSize > 1000)
                         {
-                            _logger.LogWarning("⚠️ Ingest 积压: {Size} 个包", stats.Ingest.InputQueueSize);
+                            _logger.LogWarning("⚠️ Ingest backlog: {Size} packets", stats.Ingest.InputQueueSize);
                         }
                         
                         if (stats.Video.ReorderBufferSize > 150)
                         {
-                            _logger.LogWarning("⚠️ Video ReorderQueue 积压: {Size} 个包", stats.Video.ReorderBufferSize);
+                            _logger.LogWarning("⚠️ Video ReorderQueue backlog: {Size} packets", stats.Video.ReorderBufferSize);
                         }
                         
                         if (stats.Output.VideoQueueSize > 100)
                         {
-                            _logger.LogWarning("⚠️ Output Video 积压: {Size} 帧", stats.Output.VideoQueueSize);
+                            _logger.LogWarning("⚠️ Output video backlog: {Size} frames", stats.Output.VideoQueueSize);
                         }
                         
                         // 检查丢包率
@@ -64,7 +64,7 @@ namespace RemotePlay.Services.Streaming.Core
                             if (dropRate > 5)
                             {
                                 _logger.LogWarning(
-                                    "⚠️ 视频丢包率: {DropRate:F2}% ({Dropped}/{Total})",
+                                    "⚠️ Video packet loss rate: {DropRate:F2}% ({Dropped}/{Total})",
                                     dropRate,
                                     (long)stats.Video.TotalDropped + (long)stats.Video.ReorderDropped,
                                     stats.Video.TotalReceived
@@ -75,13 +75,13 @@ namespace RemotePlay.Services.Streaming.Core
                         // 检查解析错误
                         if (stats.Ingest.ParseErrors > 10)
                         {
-                            _logger.LogWarning("⚠️ 解析错误: {Errors} 个包", stats.Ingest.ParseErrors);
+                            _logger.LogWarning("⚠️ Parse errors: {Errors} packets", stats.Ingest.ParseErrors);
                         }
                         
                         // 检查解密错误
                         if (stats.Ingest.DecryptErrors > 5)
                         {
-                            _logger.LogWarning("⚠️ 解密错误: {Errors} 个包", stats.Ingest.DecryptErrors);
+                            _logger.LogWarning("⚠️ Decrypt errors: {Errors} packets", stats.Ingest.DecryptErrors);
                         }
                     }
                 }

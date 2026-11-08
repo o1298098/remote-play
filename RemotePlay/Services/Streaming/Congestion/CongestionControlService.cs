@@ -115,12 +115,12 @@ namespace RemotePlay.Services.Streaming
                 
                 if (completedTask == timeoutTask)
                 {
-                    _logger.LogWarning("CongestionControl StopAsync 超时（1秒），强制继续释放");
+                    _logger.LogWarning("CongestionControl StopAsync timed out (1s), continuing dispose");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "CongestionControl Dispose 异常，继续释放");
+                _logger.LogWarning(ex, "CongestionControl dispose error, continuing");
             }
             
             _cts?.Dispose();

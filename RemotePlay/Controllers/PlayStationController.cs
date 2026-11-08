@@ -70,7 +70,7 @@ namespace RemotePlay.Controllers
         {
             try
             {
-                _logger.LogInformation("开始设备发现，超时时间: {TimeoutMs}ms", timeoutMs ?? 2000);
+                _logger.LogInformation("Starting device discovery, timeout: {TimeoutMs}ms", timeoutMs ?? 2000);
 
                 var consoles = await _remotePlayService.DiscoverDevicesAsync(timeoutMs);
 
@@ -83,7 +83,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设备发现失败");
+                _logger.LogError(ex, "Device discovery failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -206,7 +206,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "加载设备设置失败");
+                _logger.LogError(ex, "Failed to load device settings");
                 if (ex is InvalidOperationException)
                 {
                     return NotFound(new ApiErrorResponse
@@ -266,7 +266,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "保存设备设置失败");
+                _logger.LogError(ex, "Failed to save device settings");
                 if (ex is InvalidOperationException)
                 {
                     return NotFound(new ApiErrorResponse
@@ -515,7 +515,7 @@ namespace RemotePlay.Controllers
             bool useTcp = true,
             bool enableVideo = true)  // 是否输出视频（false = 纯音频模式，节省带宽）
         {
-            _logger.LogInformation("开始设置 HLS 推流 - SessionId: {SessionId}, TCP: {UseTcp}, Video: {Video}, Audio: {Audio}", 
+            _logger.LogInformation("Setting up HLS streaming - SessionId: {SessionId}, TCP: {UseTcp}, Video: {Video}, Audio: {Audio}", 
                 sessionId, useTcp, enableVideo, enableVideo ? enableAudio : true);
 
             // 使用 WebRoot 确保静态文件中可见
@@ -529,8 +529,8 @@ namespace RemotePlay.Controllers
             Directory.CreateDirectory(absDir);
             var m3u8 = Path.Combine(absDir, "index.m3u8");
 
-            _logger.LogInformation("📁 HLS 输出目录: {Dir}", absDir);
-            _logger.LogInformation("📋 M3U8 文件: {M3u8}", m3u8);
+            _logger.LogInformation("📁 HLS output directory: {Dir}", absDir);
+            _logger.LogInformation("📋 M3U8 file: {M3u8}", m3u8);
 
             // 构造 HLS 额外参数
             var segPattern = Path.Combine(absDir, "seg_%05d.ts");
@@ -556,7 +556,7 @@ namespace RemotePlay.Controllers
             var ok = await _streamingService.AttachReceiverAsync(sessionId, receiver);
             if (!ok)
             {
-                _logger.LogError("❌ 绑定 HLS 接收器失败 - SessionId: {SessionId}", sessionId);
+                _logger.LogError("❌ Failed to attach HLS receiver - SessionId: {SessionId}", sessionId);
                 return Ok(new ApiErrorResponse
                 {
                     Success = false,
@@ -565,7 +565,7 @@ namespace RemotePlay.Controllers
                 });
             }
 
-            _logger.LogInformation("✅ HLS 接收器已绑定成功");
+            _logger.LogInformation("✅ HLS receiver attached");
 
             // 返回可直接访问的 URL（静态文件已启用）
             var publicUrl = $"/hls/{sessionId:N}/index.m3u8";
@@ -627,7 +627,7 @@ namespace RemotePlay.Controllers
                         ErrorCode = ErrorCode.PinRequired
                     });
 
-                _logger.LogInformation("开始设备注册 - 主机: {HostIp}, 账户: {AccountId}", request.HostIp, request.AccountId);
+                _logger.LogInformation("Starting device registration - host: {HostIp}, account: {AccountId}", request.HostIp, request.AccountId);
 
                 var result = await _remotePlayService.RegisterDeviceAsync(request.HostIp, request.AccountId, request.Pin);
 
@@ -651,7 +651,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设备注册失败");
+                _logger.LogError(ex, "Device registration failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -679,7 +679,7 @@ namespace RemotePlay.Controllers
                         ErrorCode = ErrorCode.CredentialRequired
                     });
 
-                _logger.LogInformation("验证设备凭据 - 主机: {HostName}", credentials.HostName);
+                _logger.LogInformation("Validating device credentials - host: {HostName}", credentials.HostName);
 
                 var isValid = await _remotePlayService.ValidateCredentialsAsync(credentials);
 
@@ -692,7 +692,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "验证凭据失败");
+                _logger.LogError(ex, "Credential validation failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -992,7 +992,7 @@ namespace RemotePlay.Controllers
                 RegisterResult? registerResult = null;
                 if (!string.IsNullOrEmpty(request.AccountId) && !string.IsNullOrEmpty(request.Pin))
                 {
-                    _logger.LogInformation("开始设备注册 - 主机: {HostIp}, 账户: {AccountId}", request.HostIp, request.AccountId);
+                    _logger.LogInformation("Starting device registration - host: {HostIp}, account: {AccountId}", request.HostIp, request.AccountId);
                     registerResult = await _remotePlayService.RegisterDeviceAsync(request.HostIp, request.AccountId, request.Pin);
                     
                     if (!registerResult.Success)
@@ -1123,7 +1123,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设备绑定失败");
+                _logger.LogError(ex, "Device binding failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -1165,7 +1165,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "获取用户设备列表失败");
+                _logger.LogError(ex, "Failed to get user device list");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -1223,7 +1223,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设备解绑失败");
+                _logger.LogError(ex, "Device unbinding failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,

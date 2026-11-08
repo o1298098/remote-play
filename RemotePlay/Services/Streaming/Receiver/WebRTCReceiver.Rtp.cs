@@ -45,7 +45,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "停止音频发送循环时异常");
+                _logger.LogDebug(ex, "Exception while stopping audio send loop");
             }
             finally
             {
@@ -75,7 +75,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         if (Interlocked.Increment(ref _audioSendFailureCount) % 100 == 1)
                         {
-                            _logger.LogWarning(ex, "⚠️ 音频 RTP 发送失败 (累计 {Count} 次)", _audioSendFailureCount);
+                            _logger.LogWarning(ex, "⚠️ Audio RTP send failed ({Count} failures total)", _audioSendFailureCount);
                         }
                     }
                 }
@@ -83,7 +83,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 音频发送循环异常退出");
+                _logger.LogError(ex, "❌ Audio send loop exited unexpectedly");
             }
         }
 
@@ -111,7 +111,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送 PCM 到 WebRTC 失败");
+                _logger.LogError(ex, "❌ Failed to send PCM to WebRTC");
             }
         }
         
@@ -134,7 +134,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送 PCM RTP 包失败");
+                _logger.LogError(ex, "❌ Failed to send PCM RTP packet");
             }
         }
 
@@ -162,12 +162,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                         try
                         {
                             _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
-                            _logger.LogInformation("✅ Opus 解码器已初始化: {SampleRate}Hz, {Channels} 声道 (使用 OpusCodecFactory)",
+                            _logger.LogInformation("✅ Opus decoder initialized: {SampleRate}Hz, {Channels} channels (via OpusCodecFactory)",
                                 _audioSampleRate, _audioChannels);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "❌ 初始化 Opus 解码器失败");
+                            _logger.LogError(ex, "❌ Failed to initialize Opus decoder");
                             SendAudioOpusDirect(opusFrame);
                             return;
                         }
@@ -191,7 +191,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         if (_audioPacketCount < 5)
                         {
-                            _logger.LogWarning("⚠️ Opus 解码返回 0 个样本");
+                            _logger.LogWarning("⚠️ Opus decode returned 0 samples");
                         }
                         return;
                     }
@@ -204,7 +204,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送音频 PCM 失败");
+                _logger.LogError(ex, "❌ Failed to send audio PCM");
             }
         }
 
@@ -237,7 +237,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
                     {
-                        _logger.LogDebug("⏳ 等待音频通道就绪: signaling={Signaling}, connection={Connection}, ICE={Ice}", 
+                        _logger.LogDebug("⏳ Waiting for audio channel to be ready: signaling={Signaling}, connection={Connection}, ICE={Ice}", 
                             signalingState, connectionState, iceState);
                     }
                     return;
@@ -264,7 +264,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送 PCMA RTP 包失败");
+                _logger.LogError(ex, "❌ Failed to send PCMA RTP packet");
             }
         }
         
@@ -319,7 +319,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送 PCMU RTP 包失败");
+                _logger.LogError(ex, "❌ Failed to send PCMU RTP packet");
             }
         }
     }

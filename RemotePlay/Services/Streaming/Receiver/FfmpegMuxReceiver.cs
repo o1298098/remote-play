@@ -348,7 +348,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             // 记录 HLS 切片时长参数（如果可用）
             if (isHls && !string.IsNullOrEmpty(hlsTimeValue))
             {
-                _logger?.LogInformation("HLS segment time (切片时长): {SegmentTime} seconds", hlsTimeValue);
+                _logger?.LogInformation("HLS segment time: {SegmentTime} seconds", hlsTimeValue);
             }
 
             _logger?.LogInformation("Starting FFmpeg with command: {Command} {Args}", _ffmpegPath, args);

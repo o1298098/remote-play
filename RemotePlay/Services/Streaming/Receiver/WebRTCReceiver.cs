@@ -130,7 +130,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             _latencyStats = latencyStats;
             _preferredVideoCodec = NormalizePreferredVideoCodec(preferredVideoCodec);
             
-            _logger.LogInformation("🎬 WebRTCReceiver 初始化 - SessionId: {SessionId}", _sessionId);
+            _logger.LogInformation("🎬 WebRTCReceiver initialized - SessionId: {SessionId}", _sessionId);
             
             // 生成随机 SSRC
             var random = new Random();
@@ -145,7 +145,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 _cachedConnectionState = state;
                 _lastStateCheckTime = DateTime.UtcNow;
-                _logger.LogInformation("📡 WebRTC 连接状态变化: {State} (当前视频包数: {Count}, ICE状态: {IceState})", 
+                _logger.LogInformation("📡 WebRTC connection state changed: {State} (video packets: {Count}, ICE state: {IceState})", 
                     state, _videoPacketCount, _peerConnection.iceConnectionState);
                 if (state == RTCPeerConnectionState.connected)
                 {
@@ -159,10 +159,10 @@ namespace RemotePlay.Services.Streaming.Receiver
                     
                     // ✅ 初始化新的模块化视频处理管道（在 SDP 协商完成后）
                     // 如果已经在 Answer 设置后提前初始化，这里不会重复初始化
-                _logger.LogInformation("🔍 连接建立，准备初始化视频管道: _videoTrack={Track}, _peerConnection={Pc}", 
+                _logger.LogInformation("🔍 Connection established, initializing video pipeline: _videoTrack={Track}, _peerConnection={Pc}", 
                     _videoTrack != null, _peerConnection != null);
                     InitializeVideoPipeline();
-                _logger.LogInformation("🔍 视频管道初始化完成: _videoPipeline={Pipeline}", _videoPipeline != null);
+                _logger.LogInformation("🔍 Video pipeline initialization done: _videoPipeline={Pipeline}", _videoPipeline != null);
                     
                     // ✅ 启动连接保活机制
                     StartKeepalive();
@@ -171,7 +171,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     state == RTCPeerConnectionState.disconnected ||
                     state == RTCPeerConnectionState.closed)
                 {
-                    _logger.LogWarning("⚠️ WebRTC 连接断开: {State}", state);
+                    _logger.LogWarning("⚠️ WebRTC connection lost: {State}", state);
                     // ✅ 停止保活机制
                     StopKeepalive();
                     OnDisconnected?.Invoke(this, EventArgs.Empty);
@@ -183,7 +183,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     if (_cachedConnectionState == RTCPeerConnectionState.disconnected ||
                         _cachedConnectionState == RTCPeerConnectionState.failed)
                     {
-                        _logger.LogInformation("🔄 连接已恢复，请求关键帧以同步视频流");
+                        _logger.LogInformation("🔄 Connection restored, requesting keyframe to resync video");
                         OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
                     }
                 }
@@ -199,14 +199,14 @@ namespace RemotePlay.Services.Streaming.Receiver
                 if (state == RTCIceConnectionState.connected &&
                     _peerConnection.connectionState == RTCPeerConnectionState.@new)
                 {
-                    _logger.LogWarning("⚠️ ICE 已连接但 connectionState 仍是 new，这可能影响视频发送");
+                    _logger.LogWarning("⚠️ ICE connected but connectionState is still new; video sending may be affected");
                 }
                 
                 // ✅ 如果 ICE 断开，延迟后尝试 ICE Restart（避免短暂抖动）
                 if (state == RTCIceConnectionState.disconnected || 
                     state == RTCIceConnectionState.failed)
                 {
-                    _logger.LogWarning("⚠️ ICE 连接断开: {State}，将在延迟后尝试 ICE Restart", state);
+                    _logger.LogWarning("⚠️ ICE disconnected: {State}, will attempt ICE restart after a delay", state);
                     StopKeepalive();
                     
                     // ✅ 延迟触发 ICE Restart（避免短暂抖动，disconnected 持续 > 10秒才触发）
@@ -221,7 +221,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                             if (currentIceState == RTCIceConnectionState.disconnected || 
                                 currentIceState == RTCIceConnectionState.failed)
                             {
-                                _logger.LogInformation("🔄 ICE 连接持续断开，触发 ICE Restart");
+                                _logger.LogInformation("🔄 ICE still disconnected, triggering ICE restart");
                                 OnIceRestartRequested?.Invoke(this, EventArgs.Empty);
                             }
                         }
@@ -229,7 +229,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
                 else if (state == RTCIceConnectionState.closed)
                 {
-                    _logger.LogWarning("⚠️ ICE 连接已关闭: {State}", state);
+                    _logger.LogWarning("⚠️ ICE connection closed: {State}", state);
                     StopKeepalive();
                 }
                 else if (state == RTCIceConnectionState.connected &&
@@ -297,18 +297,18 @@ namespace RemotePlay.Services.Streaming.Receiver
                     if (codecPart.StartsWith("h264/"))
                     {
                         _negotiatedPtH264 = pt;
-                        _logger.LogInformation("✅ 协商的 H264 PayloadType: {Pt}", pt);
+                        _logger.LogInformation("✅ Negotiated H264 PayloadType: {Pt}", pt);
                     }
                     else if (codecPart.StartsWith("h265/") || codecPart.StartsWith("hevc/"))
                     {
                         _negotiatedPtHevc = pt;
-                        _logger.LogInformation("✅ 协商的 HEVC PayloadType: {Pt}", pt);
+                        _logger.LogInformation("✅ Negotiated HEVC PayloadType: {Pt}", pt);
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "⚠️ 解析视频 PayloadType 失败，继续使用默认值 (H264=96, HEVC=97)");
+                _logger.LogDebug(ex, "⚠️ Failed to parse video PayloadType, using defaults (H264=96, HEVC=97)");
             }
         }
         
@@ -325,7 +325,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 var remoteDescription = _peerConnection.remoteDescription;
                 if (remoteDescription == null || remoteDescription.sdp == null)
                 {
-                    _logger.LogWarning("⚠️ 无法检测音频编解码器：remote description 为空");
+                    _logger.LogWarning("⚠️ Cannot detect audio codec: remote description is null");
                     _useOpusDirect = false; // 回退到转码
                     return;
                 }
@@ -334,7 +334,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 string sdp = remoteDescription.sdp.ToString() ?? "";
                 if (string.IsNullOrEmpty(sdp))
                 {
-                    _logger.LogWarning("⚠️ 无法检测音频编解码器：SDP 字符串为空");
+                    _logger.LogWarning("⚠️ Cannot detect audio codec: SDP string is empty");
                     _useOpusDirect = false; // 回退到转码
                     return;
                 }
@@ -343,7 +343,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 bool hasOpus = sdp.Contains("opus") || sdp.Contains("111");
                 bool hasPCMU = sdp.Contains("PCMU") || sdp.Contains("a=rtpmap:0");
                 
-                _logger.LogInformation("🔊 检测到的音频编解码器: Opus={Opus}, PCMU={PCMU}", hasOpus, hasPCMU);
+                _logger.LogInformation("🔊 Detected audio codecs: Opus={Opus}, PCMU={PCMU}", hasOpus, hasPCMU);
                 
                 // 查找 m=audio 行，检查浏览器选择的编解码器
                 var lines = sdp.Split('\n');
@@ -362,7 +362,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         if (parts.Length > 3)
                         {
                             selectedPayloadType = parts[3]; // 第一个格式（浏览器选择的）
-                            _logger.LogInformation("🔊 m=audio 行第一个格式（浏览器选择）: {Format}", selectedPayloadType);
+                            _logger.LogInformation("🔊 First format in m=audio line (browser choice): {Format}", selectedPayloadType);
                         }
                     }
                     else if (trimmed.StartsWith("m=") && !trimmed.StartsWith("m=audio"))
@@ -382,17 +382,17 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 if (trimmed.Contains("opus"))
                                 {
                                     _opusCodecDetected = true;
-                                    _logger.LogInformation("✅ 浏览器选择了 Opus（高质量）: {Line}", trimmed);
+                                    _logger.LogInformation("✅ Browser selected Opus (high quality): {Line}", trimmed);
                                 }
                                 else if (trimmed.Contains("PCMU") || payloadTypeStr == "0")
                                 {
                                     _opusCodecDetected = false;
-                                    _logger.LogWarning("⚠️ 浏览器选择了 PCMU: {Line}", trimmed);
+                                    _logger.LogWarning("⚠️ Browser selected PCMU: {Line}", trimmed);
                                 }
                                 else
                                 {
                                     _opusCodecDetected = false;
-                                    _logger.LogWarning("⚠️ 浏览器选择了其他编解码器: {Line}", trimmed);
+                                    _logger.LogWarning("⚠️ Browser selected another codec: {Line}", trimmed);
                                 }
                             }
                         }
@@ -409,7 +409,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     _opusCodecDetected = false;
                     // 不强制使用转码，而是尝试发送 Opus（高质量）
                     _useOpusDirect = false; // 标记为 false，但会在发送时尝试 Opus
-                    _logger.LogInformation("🔄 浏览器选择了 PCMU，但将尝试发送 Opus 以获得高质量音质");
+                    _logger.LogInformation("🔄 Browser selected PCMU, but will try sending Opus for higher audio quality");
                 }
                 
                 // ✅ 如果检测到 Opus，直接使用；否则标记为需要尝试 Opus
@@ -425,16 +425,16 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 if (!_useOpusDirect)
                 {
-                    _logger.LogWarning("⚠️ 浏览器选择了 PCMU（8kHz），将尝试发送 Opus 以获得高质量音质，如果失败则使用转码方案");
+                    _logger.LogWarning("⚠️ Browser selected PCMU (8kHz); will try sending Opus for higher quality, falling back to transcoding on failure");
                 }
                 else
                 {
-                    _logger.LogInformation("✅ 浏览器选择了 Opus（48kHz，高质量编码），将直接发送 Opus 数据，无需转码");
+                    _logger.LogInformation("✅ Browser selected Opus (48kHz, high quality); sending Opus directly without transcoding");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 检测音频编解码器失败，默认使用转码方案");
+                _logger.LogError(ex, "❌ Failed to detect audio codec, defaulting to transcoding");
                 _useOpusDirect = false; // 出错时回退到转码
             }
         }
@@ -552,12 +552,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                     pipeline.SetDiagnosticsSuffix(GetRtcpDiagnostics);
                     _videoPipeline = pipeline;
 
-                    _logger.LogInformation("✅ 视频发送管道已初始化 (Codec={Codec}, H264 PT={H264}, HEVC PT={Hevc})",
+                    _logger.LogInformation("✅ Video send pipeline initialized (Codec={Codec}, H264 PT={H264}, HEVC PT={Hevc})",
                         _detectedVideoFormat, _negotiatedPtH264, _negotiatedPtHevc);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "❌ 初始化视频发送管道失败");
+                    _logger.LogError(ex, "❌ Failed to initialize video send pipeline");
                 }
             }
         }
@@ -579,13 +579,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                 int effective = socket.SendBufferSize;
                 if (effective < RTP_SOCKET_BUFFER_SIZE)
                 {
-                    _logger.LogWarning("⚠️ WebRTC RTP 发送缓冲区仅 {Effective} 字节（请求 {Requested}），高码率下可能丢包，请调大宿主机 net.core.wmem_max",
+                    _logger.LogWarning("⚠️ WebRTC RTP send buffer is only {Effective} bytes (requested {Requested}); packets may drop at high bitrates, increase host net.core.wmem_max",
                         effective, RTP_SOCKET_BUFFER_SIZE);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ 设置 WebRTC RTP 发送缓冲区失败");
+                _logger.LogWarning(ex, "⚠️ Failed to set WebRTC RTP send buffer");
             }
         }
 
@@ -613,13 +613,13 @@ namespace RemotePlay.Services.Streaming.Receiver
         {
             if (_preferredVideoCodec != null && (_preferredVideoCodec.ToLower() == "h264" || _preferredVideoCodec.ToLower() == "avc"))
             {
-                _logger.LogInformation("🎯 WebRTC 视频轨道使用首选编码：H.264");
+                _logger.LogInformation("🎯 WebRTC video track using preferred codec: H.264");
                 return new List<SDPAudioVideoMediaFormat> { h264Format };
             }
 
             if (_preferredVideoCodec != null && (_preferredVideoCodec.ToLower() == "h265" || _preferredVideoCodec.ToLower() == "hevc"))
             {
-                _logger.LogInformation("🎯 WebRTC 视频轨道使用首选编码：H.265/HEVC");
+                _logger.LogInformation("🎯 WebRTC video track using preferred codec: H.265/HEVC");
                 return new List<SDPAudioVideoMediaFormat> { hevcFormat,h264Format };
             }
 
@@ -631,7 +631,7 @@ namespace RemotePlay.Services.Streaming.Receiver
         {
             _detectedVideoFormat = codec.ToLower();
             _videoPipeline?.SetCodec(_detectedVideoFormat);
-            _logger.LogInformation("📹 视频编码格式: {Codec}", codec);
+            _logger.LogInformation("📹 Video codec: {Codec}", codec);
         }
         
         public void SetAudioCodec(string codec)
@@ -642,7 +642,7 @@ namespace RemotePlay.Services.Streaming.Receiver
         public void EnterWaitForIdr()
         {
             // 通常发生在切换接收器或重新连接时
-            _logger.LogInformation("🎬 进入等待 IDR 模式，请求关键帧");
+            _logger.LogInformation("🎬 Entering wait-for-IDR mode, requesting keyframe");
             var pipeline = _videoPipeline;
             if (pipeline != null)
             {
@@ -674,11 +674,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     if (audioHeader == null)
                     {
-                        _logger.LogWarning("⚠️ OnStreamInfo: audioHeader 为 null，跳过音频初始化");
+                        _logger.LogWarning("⚠️ OnStreamInfo: audioHeader is null, skipping audio init");
                     }
                     else
                     {
-                        _logger.LogWarning("⚠️ OnStreamInfo: audioHeader 长度不足 ({Length} < 10)，跳过音频初始化", audioHeader.Length);
+                        _logger.LogWarning("⚠️ OnStreamInfo: audioHeader too short ({Length} < 10), skipping audio init", audioHeader.Length);
                     }
                     return;
                 }
@@ -700,12 +700,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     if (_audioPacketCount < 5 || previousSourceChannels != channels)
                     {
-                        _logger.LogInformation("🔊 音频参数：channels={Channels}, bits={Bits}, rate={Rate}Hz, frameSize={FrameSize}", channels, bitsPerSample, rate, frameSize);
+                        _logger.LogInformation("🔊 Audio params: channels={Channels}, bits={Bits}, rate={Rate}Hz, frameSize={FrameSize}", channels, bitsPerSample, rate, frameSize);
                     }
 
                     if (channels != 2 && (_audioPacketCount < 5 || previousSourceChannels != channels))
                     {
-                        _logger.LogWarning("⚠️ 主机报告音频声道数为 {Channels}，建议在主机端开启立体声下混或设置为 2 声道输出", channels);
+                        _logger.LogWarning("⚠️ Host reports {Channels} audio channels; consider enabling stereo downmix or 2-channel output on the host", channels);
                     }
 
                     _audioChannels = Math.Clamp(channels, 1, 2);
@@ -747,7 +747,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "❌ 初始化 Opus 解码器失败");
+                                _logger.LogError(ex, "❌ Failed to initialize Opus decoder");
                                 _opusDecoder = null;
                             }
                         }
@@ -756,7 +756,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 处理 StreamInfo 失败");
+                _logger.LogError(ex, "❌ Failed to process StreamInfo");
             }
         }
 
@@ -795,7 +795,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             if (_disposed) return;
             _disposed = true;
             
-            _logger.LogInformation("🛑 WebRTCReceiver 正在释放资源 - 视频包: {Video}, 音频包: {Audio}", 
+            _logger.LogInformation("🛑 WebRTCReceiver disposing - video packets: {Video}, audio packets: {Audio}", 
                 _videoPacketCount, _audioPacketCount);
             
             try
@@ -840,7 +840,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "⚠️ 释放视频发送管道时发生异常");
+                    _logger.LogWarning(ex, "⚠️ Exception while disposing video send pipeline");
                 }
                 
                 StopAudioSendLoop();
@@ -860,22 +860,22 @@ namespace RemotePlay.Services.Streaming.Receiver
                         
                         if (completedTask == timeoutTask)
                         {
-                            _logger.LogWarning("⚠️ WebRTC 连接释放超时（1秒），强制继续");
+                            _logger.LogWarning("⚠️ WebRTC connection dispose timed out (1s), continuing anyway");
                         }
                         else
                         {
-                            _logger.LogDebug("✅ WebRTC 连接已释放");
+                            _logger.LogDebug("✅ WebRTC connection disposed");
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "⚠️ 释放 WebRTC 连接时发生异常");
+                        _logger.LogWarning(ex, "⚠️ Exception while disposing WebRTC connection");
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 释放 WebRTC 连接失败");
+                _logger.LogError(ex, "❌ Failed to dispose WebRTC connection");
             }
         }
     }

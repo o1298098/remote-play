@@ -34,7 +34,7 @@ namespace RemotePlay.Hubs
                 {
                     await Groups.AddToGroupAsync(Context.ConnectionId, GetGroupName(sessionId));
                     await Clients.Caller.SendAsync("ControllerConnected", true);
-                    _logger.LogInformation("控制器通过SignalR连接: SessionId={SessionId}, ConnectionId={ConnectionId}", 
+                    _logger.LogInformation("Controller connected via SignalR: SessionId={SessionId}, ConnectionId={ConnectionId}", 
                         sessionId, Context.ConnectionId);
                 }
                 else
@@ -48,7 +48,7 @@ namespace RemotePlay.Hubs
                         // 控制器已经存在且可用，认为是成功（可能是其他连接或之前的连接）
                         await Groups.AddToGroupAsync(Context.ConnectionId, GetGroupName(sessionId));
                         await Clients.Caller.SendAsync("ControllerConnected", true);
-                        _logger.LogInformation("控制器已存在且可用，视为连接成功: SessionId={SessionId}, ConnectionId={ConnectionId}, Ready={Ready}, Running={Running}", 
+                        _logger.LogInformation("Controller already exists and is usable, treating as connected: SessionId={SessionId}, ConnectionId={ConnectionId}, Ready={Ready}, Running={Running}", 
                             sessionId, Context.ConnectionId, isReady, isRunning);
                     }
                     else
@@ -61,7 +61,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "连接控制器时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error connecting controller: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("ControllerConnected", false);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
@@ -77,12 +77,12 @@ namespace RemotePlay.Hubs
                 await _controllerService.DisconnectAsync(sessionId);
                 await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetGroupName(sessionId));
                 await Clients.Caller.SendAsync("ControllerDisconnected", true);
-                _logger.LogInformation("控制器通过SignalR断开: SessionId={SessionId}, ConnectionId={ConnectionId}", 
+                _logger.LogInformation("Controller disconnected via SignalR: SessionId={SessionId}, ConnectionId={ConnectionId}", 
                     sessionId, Context.ConnectionId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "断开控制器时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error disconnecting controller: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -99,7 +99,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "启动控制器时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error starting controller: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -116,7 +116,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "停止控制器时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error stopping controller: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -153,7 +153,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "发送按键时出错: SessionId={SessionId}, Button={Button}", sessionId, button);
+                _logger.LogError(ex, "Error sending button: SessionId={SessionId}, Button={Button}", sessionId, button);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -183,7 +183,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设置摇杆时出错: SessionId={SessionId}, StickName={StickName}", sessionId, stickName);
+                _logger.LogError(ex, "Error setting stick: SessionId={SessionId}, StickName={StickName}", sessionId, stickName);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -199,7 +199,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设置扳机时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error setting trigger: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -226,7 +226,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "获取摇杆状态时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error getting stick state: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -247,7 +247,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "获取控制器状态时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error getting controller status: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -264,7 +264,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "获取可用按键时出错");
+                _logger.LogError(ex, "Error getting available buttons");
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -281,7 +281,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设置左摇杆时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error setting left stick: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -298,7 +298,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设置右摇杆时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error setting right stick: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -335,7 +335,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "批量更新摇杆时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error batch-updating sticks: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -366,7 +366,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设置摇杆时出错: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "Error setting sticks: SessionId={SessionId}", sessionId);
                 _ = Clients.Caller.SendAsync("Error", ex.Message);
             }
         }
@@ -375,7 +375,7 @@ namespace RemotePlay.Hubs
         {
             if (exception != null)
             {
-                _logger.LogWarning(exception, "SignalR连接断开: ConnectionId={ConnectionId}", Context.ConnectionId);
+                _logger.LogWarning(exception, "SignalR connection closed: ConnectionId={ConnectionId}", Context.ConnectionId);
             }
             await base.OnDisconnectedAsync(exception);
         }

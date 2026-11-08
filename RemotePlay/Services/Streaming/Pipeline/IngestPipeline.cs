@@ -31,6 +31,18 @@ namespace RemotePlay.Services.Streaming.Pipeline
         private long _totalReceived;
         private long _totalParsed;
         private long _totalDecrypted;
+        private int _loggedKeyPosWraps;
+
+        // key_pos 回绕后的位置模型判断：回绕前学习音频源单元的首字节（Opus TOC，整场基本不变），
+        // 回绕后分别用两种模型解密音频包，哪种能解出该字节就采用哪种
+        private const int AudioFirstByteStreakRequired = 20;
+        private const int KeyPosModelVotesRequired = 3;
+        private int _audioFirstByteCandidate = -1;
+        private int _audioFirstByteStreak;
+        private int _expectedAudioFirstByte = -1;
+        private bool _keyPosModelDecided;
+        private int _currentModelVotes;
+        private int _alternateModelVotes;
         private long _parseErrors;
         private long _decryptErrors;
 
@@ -102,6 +114,62 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
         #endregion
 
+        /// <summary>
+        /// 回绕前学习音频首字节；回绕后用它判断应采用哪种 key_pos 模型。返回本包应使用的解密结果。
+        /// </summary>
+        private byte[] ObserveAudioForKeyPosModel(AVPacket packet, byte[] decrypted, int wraps)
+        {
+            if (wraps == 0)
+            {
+                if (_expectedAudioFirstByte < 0)
+                {
+                    int first = decrypted[0];
+                    if (first == _audioFirstByteCandidate)
+                    {
+                        if (++_audioFirstByteStreak >= AudioFirstByteStreakRequired)
+                        {
+                            _expectedAudioFirstByte = first;
+                        }
+                    }
+                    else
+                    {
+                        _audioFirstByteCandidate = first;
+                        _audioFirstByteStreak = 1;
+                    }
+                }
+                return decrypted;
+            }
+
+            if (_keyPosModelDecided || _expectedAudioFirstByte < 0 || _cipher == null)
+            {
+                return decrypted;
+            }
+
+            bool currentExtended = _cipher.RemoteExtendedKeyPos;
+            var alternate = _cipher.DecryptWithModel(packet.Data, packet.KeyPos, !currentExtended);
+            bool currentOk = decrypted[0] == _expectedAudioFirstByte;
+            bool alternateOk = alternate.Length > 0 && alternate[0] == _expectedAudioFirstByte;
+
+            if (currentOk && !alternateOk) _currentModelVotes++;
+            else if (alternateOk && !currentOk) _alternateModelVotes++;
+
+            if (_alternateModelVotes >= KeyPosModelVotesRequired)
+            {
+                _cipher.RemoteExtendedKeyPos = !currentExtended;
+                _keyPosModelDecided = true;
+                _logger.LogWarning("🔐 key_pos wrapped, switching to {Model} position model to continue decrypting", !currentExtended ? "64-bit continuous" : "32-bit wrapping");
+                return alternate;
+            }
+
+            if (_currentModelVotes >= KeyPosModelVotesRequired)
+            {
+                _keyPosModelDecided = true;
+                _logger.LogWarning("🔐 key_pos wrapped, confirmed {Model} position model", currentExtended ? "64-bit continuous" : "32-bit wrapping");
+            }
+
+            return alternateOk && !currentOk ? alternate : decrypted;
+        }
+
         #region Worker Loop
 
         private async Task WorkerLoop()
@@ -125,6 +193,17 @@ namespace RemotePlay.Services.Streaming.Pipeline
                             try
                             {
                                 var decryptedData = _cipher.Decrypt(packet.Data, packet.KeyPos);
+                                int wraps = _cipher.RemoteKeyPosWrapCount;
+                                if (wraps != _loggedKeyPosWraps)
+                                {
+                                    _loggedKeyPosWraps = wraps;
+                                    _logger.LogWarning("🔁 Host key_pos wrapped (wrap #{Count}, roughly once per 4 GB of data) keyPos={KeyPos}, expected audio first byte={Toc}",
+                                        wraps, packet.KeyPos, _expectedAudioFirstByte >= 0 ? $"0x{_expectedAudioFirstByte:X2}" : "unknown");
+                                }
+                                if (packet.Type == HeaderType.AUDIO && packet.UnitsSrc > 0 && decryptedData.Length > 0)
+                                {
+                                    decryptedData = ObserveAudioForKeyPosModel(packet, decryptedData, wraps);
+                                }
                                     if (decryptedData != null && decryptedData.Length == packet.Data.Length)
                                     {
                                         int dataStart = rawData.Length - packet.Data.Length;

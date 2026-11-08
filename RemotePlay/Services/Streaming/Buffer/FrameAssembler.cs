@@ -74,7 +74,7 @@ namespace RemotePlay.Services.Streaming.Buffer
                 if (_currentVideoFrame != -1 && 
                     (DateTime.UtcNow - _videoFrameStartTime).TotalMilliseconds > MaxFrameWaitMs)
                 {
-                    _logger.LogWarning("⚠️ 视频帧 {Frame} 超时丢弃", _currentVideoFrame);
+                    _logger.LogWarning("⚠️ Video frame {Frame} timed out, dropped", _currentVideoFrame);
                     ResetFrame(true);
                 }
             }
@@ -83,7 +83,7 @@ namespace RemotePlay.Services.Streaming.Buffer
                 if (_currentAudioFrame != -1 &&
                     (DateTime.UtcNow - _audioFrameStartTime).TotalMilliseconds > MaxFrameWaitMs)
                 {
-                    _logger.LogWarning("⚠️ 音频帧 {Frame} 超时丢弃", _currentAudioFrame);
+                    _logger.LogWarning("⚠️ Audio frame {Frame} timed out, dropped", _currentAudioFrame);
                     ResetFrame(false);
                 }
             }

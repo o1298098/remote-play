@@ -1,6 +1,7 @@
 import type { StreamingMonitorStats } from '@/hooks/use-streaming-connection'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
+import { formatStreamingDuration } from '@/utils/format-duration'
 
 interface MobileStatsBarProps {
   stats: StreamingMonitorStats | null
@@ -49,25 +50,6 @@ const formatFps = (t: TFunction, value: number | null) => {
   })
 }
 
-const formatDuration = (_t: TFunction, value: number | null) => {
-  if (value === null || Number.isNaN(value) || value < 0) {
-    return '--'
-  }
-  const totalSeconds = Math.floor(value / 1000)
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
-  
-  // 移动端使用更紧凑的格式
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-  } else if (minutes > 0) {
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`
-  } else {
-    return `${seconds}s`
-  }
-}
-
 export function MobileStatsBar({ stats }: MobileStatsBarProps) {
   const { t } = useTranslation()
 
@@ -105,7 +87,7 @@ export function MobileStatsBar({ stats }: MobileStatsBarProps) {
                 width: '48px'
               }}
             >
-              {formatDuration(t, stats?.streamingDurationMs ?? null)}
+              {formatStreamingDuration(stats?.streamingDurationMs ?? null)}
             </span>
           </div>
 

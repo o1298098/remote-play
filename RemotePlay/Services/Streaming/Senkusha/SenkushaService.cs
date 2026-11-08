@@ -487,7 +487,7 @@ namespace RemotePlay.Services.Streaming.Senkusha
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Senkusha: Disconnect error (可忽略)");
+                _logger.LogDebug(ex, "Senkusha: Disconnect error (ignorable)");
             }
         }
         

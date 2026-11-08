@@ -17,10 +17,14 @@ namespace RemotePlay.Utils.Crypto
         protected byte[]? CurrentKey;
         protected int Index;
         protected int BaseIndex;
-        protected List<(int, byte[])> Keystreams = new List<(int, byte[])>();
-        protected int KeystreamIndex;
 
         public const int KeyStreamLen = 0x1000;
+
+        // 按块号缓存密钥流（AES-CTR 中每个位置的密钥流是确定的），与包到达顺序无关
+        private const int MaxCachedKeyStreamBlocks = 8;
+        private readonly Dictionary<ulong, byte[]> _keyStreamBlocks = new();
+        private readonly Queue<ulong> _keyStreamBlockOrder = new();
+        private readonly object _keyStreamLock = new();
 
         protected BaseCipher(byte[] handshakeKey, byte[] secret)
         {
@@ -32,71 +36,42 @@ namespace RemotePlay.Utils.Crypto
         {
             (BaseKey, BaseIv) = GetBaseKeyIv(Secret, HandshakeKey, BaseIndex);
             CurrentKey = BaseGmacKey = GetGmacKey(Index, BaseKey, BaseIv);
-            NextKeyStream();
         }
 
-        protected void NextKeyStream()
+        protected byte[] GetKeyStream(ulong keyPos, int dataLen)
         {
-            while (Keystreams.Count < 3)
+            var result = new byte[dataLen];
+            lock (_keyStreamLock)
             {
-                ulong keyPosLong = (ulong)KeystreamIndex * KeyStreamLen;
-                if (keyPosLong > uint.MaxValue)
+                int written = 0;
+                while (written < dataLen)
                 {
-                    keyPosLong = uint.MaxValue;
+                    ulong pos = keyPos + (ulong)written;
+                    ulong block = pos / KeyStreamLen;
+                    int offset = (int)(pos % KeyStreamLen);
+                    int count = Math.Min(KeyStreamLen - offset, dataLen - written);
+                    System.Buffer.BlockCopy(GetKeyStreamBlock(block), offset, result, written, count);
+                    written += count;
                 }
-                uint keyPos = (uint)keyPosLong;
-                var keyStream = GetKeyStream(BaseKey!, BaseIv!, keyPos, KeyStreamLen);
-                Keystreams.Add((KeystreamIndex, keyStream));
-                KeystreamIndex++;
             }
+            return result;
         }
 
-        protected byte[] GetKeyStream(uint keyPos, int dataLen)
+        private byte[] GetKeyStreamBlock(ulong block)
         {
-            NextKeyStream();
-            // Remove old blocks
-            for (int i = 0; i < Keystreams.Count; i++)
+            if (_keyStreamBlocks.TryGetValue(block, out var cached))
             {
-                var ksIndex = Keystreams[i].Item1;
-                uint streamIndex = keyPos / KeyStreamLen;
-                if (streamIndex > int.MaxValue)
-                {
-                    break;
-                }
-                if ((int)streamIndex > ksIndex)
-                {
-                    Keystreams.RemoveAt(i);
-                    i--;
-                }
-                else break;
+                return cached;
             }
 
-            if (Keystreams.Count == 0) return Array.Empty<byte>();
-
-            bool requiresAdditional = false;
-            int startPos = (int)(keyPos % KeyStreamLen);
-            int endPos = startPos + dataLen;
-
-            if (endPos > KeyStreamLen)
+            var stream = GetKeyStream(BaseKey!, BaseIv!, block * KeyStreamLen, KeyStreamLen);
+            _keyStreamBlocks[block] = stream;
+            _keyStreamBlockOrder.Enqueue(block);
+            while (_keyStreamBlockOrder.Count > MaxCachedKeyStreamBlocks)
             {
-                requiresAdditional = true;
-                if (Keystreams.Count < 2) return Array.Empty<byte>();
-                endPos = dataLen - (KeyStreamLen - startPos);
+                _keyStreamBlocks.Remove(_keyStreamBlockOrder.Dequeue());
             }
-
-            byte[] keyStream;
-            if (requiresAdditional)
-            {
-                var first = Keystreams[0].Item2;
-                Keystreams.RemoveAt(0);
-                keyStream = first[startPos..].Concat(Keystreams[0].Item2[..endPos]).ToArray();
-            }
-            else
-            {
-                keyStream = Keystreams[0].Item2[startPos..endPos];
-            }
-
-            return keyStream;
+            return stream;
         }
 
         public byte[] GetGmac(byte[] data, uint keyPos)
@@ -133,15 +108,15 @@ namespace RemotePlay.Utils.Crypto
         }
 
         // -------------------- Helpers --------------------
-        protected static byte[] CounterAdd(int counter, byte[] iv)
+        protected static byte[] CounterAdd(long counter, byte[] iv)
         {
             byte[] result = new byte[iv.Length];
             iv.CopyTo(result, 0);
             for (int i = 0; i < result.Length; i++)
             {
-                long add = (long)result[i] + counter;
+                long add = result[i] + counter;
                 result[i] = (byte)(add & 0xFF);
-                counter = (int)(add >> 8);
+                counter = add >> 8;
                 if (counter <= 0 || i >= 15) break;
             }
             return result;
@@ -223,25 +198,16 @@ namespace RemotePlay.Utils.Crypto
             return outBuf[..4];
         }
 
-        protected static byte[] GetKeyStream(byte[] key, byte[] initVector, uint keyPos, int length)
+        protected static byte[] GetKeyStream(byte[] key, byte[] initVector, ulong keyPos, int length)
         {
             int padding = (int)(keyPos % 16);
-            keyPos -= (uint)padding;
+            keyPos -= (ulong)padding;
             int keyStreamLen = ((padding + length + 16 - 1) / 16) * 16;
             byte[] buffer = new byte[keyStreamLen];
             
-            ulong counterStartUlong = (keyPos / 16) + 1;
-            if (counterStartUlong > int.MaxValue)
-            {
-                counterStartUlong = int.MaxValue;
-            }
-            int counterStart = (int)counterStartUlong;
+            long counterStart = (long)(keyPos / 16) + 1;
             for (int i = 0; i < keyStreamLen / 16; i++)
             {
-                if (counterStart > int.MaxValue - i)
-                {
-                    throw new OverflowException($"Counter overflow: counterStart={counterStart}, i={i}");
-                }
                 CounterAdd(counterStart + i, initVector).CopyTo(buffer, i * 16);
             }
             

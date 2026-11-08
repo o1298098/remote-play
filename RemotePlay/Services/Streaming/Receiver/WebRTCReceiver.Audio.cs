@@ -35,7 +35,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送音频包失败");
+                _logger.LogError(ex, "❌ Failed to send audio packet");
             }
         }
 
@@ -58,7 +58,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         var now = DateTime.UtcNow;
                         var timeSinceStart = (now - _epochStart).TotalSeconds;
                         _audioTimestamp = (uint)(timeSinceStart * AUDIO_CLOCK_RATE);
-                        _logger.LogDebug("🔄 首次初始化音频时间戳: {Timestamp}", _audioTimestamp);
+                        _logger.LogDebug("🔄 Audio timestamp initialized: {Timestamp}", _audioTimestamp);
                     }
                     else
                     {
@@ -66,7 +66,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         // 关键：RTP时间戳不能回退，必须保持单调递增
                         // 即使丢失了大量帧，也要保持时间戳连续性，通过跳过更多帧来清空浏览器端缓冲区
                         // 这样浏览器端会自然丢弃旧的音频数据，新数据会平滑接续
-                        _logger.LogDebug("🔄 检测到帧丢失（{LostFrames}帧），保持时间戳连续性 {Timestamp}，后续帧将自然递增，通过跳过帧来清空缓冲区", 
+                        _logger.LogDebug("🔄 Detected frame loss ({LostFrames} frames), keeping timestamp continuous at {Timestamp}; subsequent frames increment normally and frames are skipped to drain the buffer", 
                             lostFrames, _audioTimestamp);
                     }
                     
@@ -96,12 +96,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                     }
                     _audioFramesToSkip = skipFrames;
                     
-                    _logger.LogWarning("🔄 音频解码器已重置（检测到帧丢失 {LostFrames} 帧），时间戳 {Timestamp}，将跳过 {SkipFrames} 帧以清空浏览器端缓冲区并重新同步",
+                    _logger.LogWarning("🔄 Audio decoder reset (detected {LostFrames} lost frames), timestamp {Timestamp}; skipping {SkipFrames} frames to drain the browser buffer and resync",
                         lostFrames, _audioTimestamp, _audioFramesToSkip);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "❌ 重置音频解码器失败");
+                    _logger.LogError(ex, "❌ Failed to reset audio decoder");
                     _opusDecoder = null;
                 }
             }
@@ -119,7 +119,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 var payloadType = (HeaderType)packet[0];
                 if (payloadType != HeaderType.AUDIO)
                 {
-                    _logger.LogWarning("⚠️ 非音频包传入 OnAudioPacket，已忽略");
+                    _logger.LogWarning("⚠️ Non-audio packet passed to OnAudioPacket, ignored");
                     return;
                 }
 
@@ -132,11 +132,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                         if (_audioFramesToSkip == 0)
                         {
                             _audioResetting = false;
-                            _logger.LogInformation("✅ 音频重新同步完成，恢复正常发送");
+                            _logger.LogInformation("✅ Audio resync complete, resuming normal sending");
                         }
                         else
                         {
-                            _logger.LogDebug("⏭️ 跳过音频帧以重新同步，剩余 {Remaining} 帧", _audioFramesToSkip);
+                            _logger.LogDebug("⏭️ Skipping audio frame to resync, {Remaining} frames remaining", _audioFramesToSkip);
                         }
                         return; // 跳过此帧
                     }
@@ -165,7 +165,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 处理音频包失败");
+                _logger.LogError(ex, "❌ Failed to process audio packet");
             }
         }
 
@@ -191,7 +191,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
                     {
-                        _logger.LogDebug("⏳ 等待音频通道就绪: signaling={Signaling}, connection={Connection}, ICE={Ice}", 
+                        _logger.LogDebug("⏳ Waiting for audio channel to be ready: signaling={Signaling}, connection={Connection}, ICE={Ice}", 
                             signalingState, connectionState, iceState);
                     }
                     return;
@@ -222,7 +222,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
                 {
-                    _logger.LogDebug("📤 发送 Opus RTP 包: seq={Seq}, ts={Ts}, samples={Samples}, size={Size} bytes", 
+                    _logger.LogDebug("📤 Sending Opus RTP packet: seq={Seq}, ts={Ts}, samples={Samples}, size={Size} bytes", 
                         currentSeqNum, currentTimestamp, samplesPerFrame, opusFrame.Length);
                 }
                 
@@ -233,7 +233,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 发送 Opus 数据失败");
+                _logger.LogError(ex, "❌ Failed to send Opus data");
             }
         }
 
@@ -250,7 +250,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 if (_audioPacketCount < 10)
                 {
-                    _logger.LogInformation("✅ 即使浏览器选择了 PCMU，也发送 Opus 以获得高质量音质");
+                    _logger.LogInformation("✅ Sending Opus for higher audio quality even though browser selected PCMU");
                 }
                 
                 return true;
@@ -259,7 +259,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 if (_audioPacketCount < 10)
                 {
-                    _logger.LogWarning(ex, "⚠️ Opus 重新编码失败，将使用转码方案");
+                    _logger.LogWarning(ex, "⚠️ Opus re-encoding failed, falling back to transcoding");
                 }
                 return false;
             }
@@ -289,7 +289,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     if (_opusDecoder == null)
                     {
                         _opusDecoder = OpusCodecFactory.CreateDecoder(_audioSampleRate, _audioChannels);
-                        _logger.LogInformation("✅ 下混音频：初始化 Opus 解码器 {Rate}Hz / {Channels}ch", _audioSampleRate, _audioChannels);
+                        _logger.LogInformation("✅ Audio downmix: initialized Opus decoder {Rate}Hz / {Channels}ch", _audioSampleRate, _audioChannels);
                     }
 
                     samplesDecoded = _opusDecoder.Decode(opusFrame.AsSpan(), pcmBufferFloat.AsSpan(), _audioFrameSize, false);
@@ -299,7 +299,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 {
                     if (_audioPacketCount < 5)
                     {
-                        _logger.LogWarning("⚠️ 下混音频：解码返回 0 个样本");
+                        _logger.LogWarning("⚠️ Audio downmix: decode returned 0 samples");
                     }
                     return false;
                 }
@@ -314,7 +314,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         if (_audioPacketCount < 5 || _audioPacketCount % 100 == 0)
                         {
-                            _logger.LogWarning("⚠️ 下混音频：声道矩阵无效（channels={Channels}），放弃下混", _audioChannels);
+                            _logger.LogWarning("⚠️ Audio downmix: invalid channel matrix (channels={Channels}), skipping downmix", _audioChannels);
                         }
                         return false;
                     }
@@ -332,7 +332,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                 _stereoOpusEncoder = new OpusEncoder(_audioSampleRate, 2, OpusApplication.OPUS_APPLICATION_AUDIO);
                                 _stereoEncoderSampleRate = _audioSampleRate;
                                 _stereoOpusEncoder.Bitrate = Math.Min(256000, _audioSampleRate * 4);
-                                _logger.LogInformation("✅ 下混音频：初始化立体声 Opus 编码器 {Rate}Hz / 2ch", _audioSampleRate);
+                                _logger.LogInformation("✅ Audio downmix: initialized stereo Opus encoder {Rate}Hz / 2ch", _audioSampleRate);
                             }
 
                             encodedBytes = _stereoOpusEncoder.Encode(stereoSamplesBuffer, 0, stereoSamples, encodeBuffer, 0, encodeBuffer.Length);
@@ -342,7 +342,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         {
                             if (_audioPacketCount < 5)
                             {
-                                _logger.LogWarning("⚠️ 下混音频：Opus 编码失败，返回 {Bytes} 字节", encodedBytes);
+                                _logger.LogWarning("⚠️ Audio downmix: Opus encode failed, returned {Bytes} bytes", encodedBytes);
                             }
                             return false;
                         }
@@ -366,7 +366,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 if (_audioPacketCount < 5 || _audioPacketCount % 100 == 0)
                 {
-                    _logger.LogWarning(ex, "⚠️ 下混音频失败，将回退发送原始音频");
+                    _logger.LogWarning(ex, "⚠️ Audio downmix failed, falling back to original audio");
                 }
                 downmixedFrame = default;
                 return false;

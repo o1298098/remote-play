@@ -17,6 +17,13 @@
         public uint KeyPos => _local.KeyPos;
 
         public byte[] Decrypt(byte[] data, uint keyPos) => _remote.Decrypt(data, keyPos);
+        public int RemoteKeyPosWrapCount => _remote.KeyPosWrapCount;
+        public bool RemoteExtendedKeyPos
+        {
+            get => _remote.ExtendedKeyPos;
+            set => _remote.ExtendedKeyPos = value;
+        }
+        public byte[] DecryptWithModel(byte[] data, uint keyPos, bool extended) => _remote.DecryptWithModel(data, keyPos, extended);
         public byte[] GetGmac(byte[] data) => _local.GetGmac(data);
         public byte[] GetGmacAtKeyPos(byte[] data, uint keyPos) => _local.GetGmacAtKeyPos(data, keyPos);
         public bool VerifyGmac(byte[] data, uint keyPos, byte[] gmac) => _remote.VerifyGmac(data, keyPos, gmac);

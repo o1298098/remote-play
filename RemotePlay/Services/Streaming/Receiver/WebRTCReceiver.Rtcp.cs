@@ -113,7 +113,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "⚠️ 处理 RTCP 报告时发生异常");
+                _logger.LogDebug(ex, "⚠️ Exception while processing RTCP report");
             }
         }
 
@@ -134,12 +134,12 @@ namespace RemotePlay.Services.Streaming.Receiver
                     .Select(l => l.Trim())
                     .Where(l => l.StartsWith("a=rtcp-fb:", StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                _logger.LogDebug("浏览器协商的 RTCP 反馈: {Lines}",
-                    feedbackLines.Count > 0 ? string.Join(" | ", feedbackLines) : "（无）");
+                _logger.LogDebug("Browser-negotiated RTCP feedback: {Lines}",
+                    feedbackLines.Count > 0 ? string.Join(" | ", feedbackLines) : "(none)");
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "读取协商的 RTCP 反馈失败");
+                _logger.LogDebug(ex, "Failed to read negotiated RTCP feedback");
             }
         }
 
@@ -151,8 +151,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                 stats = _browserVideoStats;
             }
 
-            return $"| RTCP报告={Interlocked.Read(ref _rtcpReportCount)} PLI/FIR={Interlocked.Read(ref _rtcpKeyframeFeedbackCount)} " +
-                $"RR丢包触发={Interlocked.Read(ref _rtcpLossKeyframeCount)} 浏览器累计丢包={stats?.CumulativePacketsLost.ToString() ?? "无RR"}";
+            return $"| RTCPReports={Interlocked.Read(ref _rtcpReportCount)} PLI/FIR={Interlocked.Read(ref _rtcpKeyframeFeedbackCount)} " +
+                $"RRLossTriggers={Interlocked.Read(ref _rtcpLossKeyframeCount)} BrowserTotalLost={stats?.CumulativePacketsLost.ToString() ?? "noRR"}";
         }
 
         private void LogRtcpSummaryIfDue()
@@ -169,7 +169,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 stats = _browserVideoStats;
             }
 
-            _logger.LogDebug("RTCP 统计: 报告={Reports}, PLI/FIR={Pli}, 丢包触发关键帧={LossKeyframes}, 浏览器累计丢包={Lost}, 最近丢包率={Fraction:P1}",
+            _logger.LogDebug("RTCP stats: reports={Reports}, PLI/FIR={Pli}, loss-triggered keyframes={LossKeyframes}, browser total lost={Lost}, recent loss rate={Fraction:P1}",
                 Interlocked.Read(ref _rtcpReportCount),
                 Interlocked.Read(ref _rtcpKeyframeFeedbackCount),
                 Interlocked.Read(ref _rtcpLossKeyframeCount),
@@ -191,7 +191,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 _lastKeyframeRequestTime = now;
             }
 
-            _logger.LogDebug("🎯 收到浏览器 RTCP {Source}，请求关键帧", source);
+            _logger.LogDebug("🎯 Received browser RTCP {Source}, requesting keyframe", source);
             OnKeyframeRequested?.Invoke(this, EventArgs.Empty);
         }
     }

@@ -74,7 +74,7 @@ namespace RemotePlay.Controllers
 
                 await stream.RequestKeyframeAsync();
 
-                _logger.LogInformation("🎯 StreamingController 请求关键帧成功: {SessionId}", sessionId);
+                _logger.LogInformation("🎯 StreamingController keyframe request succeeded: {SessionId}", sessionId);
 
                 return Ok(new ApiSuccessResponse<bool>
                 {
@@ -85,7 +85,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ StreamingController 请求关键帧失败: {SessionId}", sessionId);
+                _logger.LogError(ex, "❌ StreamingController keyframe request failed: {SessionId}", sessionId);
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -244,7 +244,7 @@ namespace RemotePlay.Controllers
                     }
                     catch (JsonException ex)
                     {
-                        _logger.LogWarning(ex, "⚠️ 解析 TURN 配置 JSON 失败，使用空配置");
+                        _logger.LogWarning(ex, "⚠️ Failed to parse TURN config JSON, using empty config");
                     }
                 }
 
@@ -298,7 +298,7 @@ namespace RemotePlay.Controllers
                         }
                         catch (JsonException ex)
                         {
-                            _logger.LogWarning(ex, "⚠️ 从 WebRTC 配置读取 forceUseTurn 失败");
+                            _logger.LogWarning(ex, "⚠️ Failed to read forceUseTurn from WebRTC config");
                         }
                     }
                 }
@@ -312,7 +312,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ StreamingController 获取 TURN 配置失败");
+                _logger.LogError(ex, "❌ StreamingController failed to get TURN config");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -385,7 +385,7 @@ namespace RemotePlay.Controllers
 
                 await _context.SaveChangesAsync(cancellationToken);
 
-                _logger.LogInformation("✅ TURN 配置已保存到 Settings 表: {Count} 个服务器", 
+                _logger.LogInformation("✅ TURN config saved to Settings table: {Count} servers", 
                     config.TurnServers?.Count ?? 0);
 
                 return Ok(new ApiSuccessResponse<bool>
@@ -397,7 +397,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ StreamingController 保存 TURN 配置失败");
+                _logger.LogError(ex, "❌ StreamingController failed to save TURN config");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -453,7 +453,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 解析 TURN 配置 JSON 对象失败");
+                _logger.LogError(ex, "❌ Failed to parse TURN config JSON object");
                 return null;
             }
         }
@@ -529,7 +529,7 @@ namespace RemotePlay.Controllers
                     }
                     catch (JsonException ex)
                     {
-                        _logger.LogWarning(ex, "⚠️ 解析 WebRTC 配置 JSON 失败，使用默认配置");
+                        _logger.LogWarning(ex, "⚠️ Failed to parse WebRTC config JSON, using defaults");
                     }
                 }
 
@@ -556,7 +556,7 @@ namespace RemotePlay.Controllers
                     }
                     catch (JsonException ex)
                     {
-                        _logger.LogWarning(ex, "⚠️ 解析 TURN 配置 JSON 失败");
+                        _logger.LogWarning(ex, "⚠️ Failed to parse TURN config JSON");
                     }
                 }
 
@@ -569,7 +569,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ StreamingController 获取 WebRTC 配置失败");
+                _logger.LogError(ex, "❌ StreamingController failed to get WebRTC config");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -673,7 +673,7 @@ namespace RemotePlay.Controllers
 
                 await _context.SaveChangesAsync(cancellationToken);
 
-                _logger.LogInformation("✅ WebRTC 配置已保存到 Settings 表: PublicIp={PublicIp}, IcePortMin={IcePortMin}, IcePortMax={IcePortMax}, TurnServers={Count}",
+                _logger.LogInformation("✅ WebRTC config saved to Settings table: PublicIp={PublicIp}, IcePortMin={IcePortMin}, IcePortMax={IcePortMax}, TurnServers={Count}",
                     config.PublicIp, config.IcePortMin, config.IcePortMax, config.TurnServers?.Count ?? 0);
 
                 return Ok(new ApiSuccessResponse<bool>
@@ -685,7 +685,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ StreamingController 保存 WebRTC 配置失败");
+                _logger.LogError(ex, "❌ StreamingController failed to save WebRTC config");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -767,7 +767,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 解析 WebRTC 配置 JSON 对象失败");
+                _logger.LogError(ex, "❌ Failed to parse WebRTC config JSON object");
                 return null;
             }
         }

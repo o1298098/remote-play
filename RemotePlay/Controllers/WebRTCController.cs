@@ -58,7 +58,7 @@ namespace RemotePlay.Controllers
 
                 var (sessionId, offer) = await _signalingService.CreateSessionAsync(preferredCodec, preferLanCandidates);
                 
-                _logger.LogInformation("🎯 WebRTC Offer 已创建: {SessionId}", sessionId);
+                _logger.LogInformation("🎯 WebRTC offer created: {SessionId}", sessionId);
                 
                 return Ok(new ApiSuccessResponse<object>
                 {
@@ -74,7 +74,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 创建 WebRTC Offer 失败");
+                _logger.LogError(ex, "❌ Failed to create WebRTC offer");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -112,13 +112,13 @@ namespace RemotePlay.Controllers
                     });
                 }
                 
-                _logger.LogInformation("📥 收到 Answer 请求: SessionId={SessionId}, SDP长度={Length}", 
+                _logger.LogInformation("📥 Received Answer request: SessionId={SessionId}, SdpLength={Length}", 
                     request.SessionId, request.Sdp?.Length ?? 0);
                 
                 // ⚠️ 检查 SDP 是否为空
                 if (string.IsNullOrWhiteSpace(request.Sdp))
                 {
-                    _logger.LogError("❌ Answer SDP 为空！");
+                    _logger.LogError("❌ Answer SDP is empty!");
                     return BadRequest(new ApiErrorResponse
                     {
                         Success = false,
@@ -131,7 +131,7 @@ namespace RemotePlay.Controllers
                 var sessionExists = _signalingService.GetSession(request.SessionId) != null;
                 if (!sessionExists)
                 {
-                    _logger.LogError("❌ WebRTC 会话不存在: {SessionId}", request.SessionId);
+                    _logger.LogError("❌ WebRTC session not found: {SessionId}", request.SessionId);
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
@@ -144,7 +144,7 @@ namespace RemotePlay.Controllers
                 
                 if (success)
                 {
-                    _logger.LogInformation("✅ WebRTC Answer 已接收并处理: {SessionId}", request.SessionId);
+                    _logger.LogInformation("✅ WebRTC Answer received and processed: {SessionId}", request.SessionId);
                     return Ok(new ApiSuccessResponse<bool>
                     {
                         Success = true,
@@ -164,7 +164,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 处理 WebRTC Answer 失败");
+                _logger.LogError(ex, "❌ Failed to process WebRTC Answer");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -194,7 +194,7 @@ namespace RemotePlay.Controllers
 
                 var candidates = _signalingService.GetPendingIceCandidates(sessionId);
                 
-                _logger.LogInformation("📤 获取待处理的 ICE Candidate: SessionId={SessionId}, Count={Count}",
+                _logger.LogInformation("📤 Fetched pending ICE candidates: SessionId={SessionId}, Count={Count}",
                     sessionId, candidates.Count);
                 
                 if (candidates.Count > 0)
@@ -235,7 +235,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 获取待处理的 ICE Candidate 失败");
+                _logger.LogError(ex, "❌ Failed to fetch pending ICE candidates");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -272,7 +272,7 @@ namespace RemotePlay.Controllers
                     });
                 }
                 
-                _logger.LogInformation("📥 收到 ICE Candidate 请求: SessionId={SessionId}, Candidate={Candidate}, SdpMid={SdpMid}, SdpMLineIndex={SdpMLineIndex}",
+                _logger.LogInformation("📥 Received ICE candidate request: SessionId={SessionId}, Candidate={Candidate}, SdpMid={SdpMid}, SdpMLineIndex={SdpMLineIndex}",
                     request.SessionId, request.Candidate, request.SdpMid, request.SdpMLineIndex);
                 
                 var success = await _signalingService.AddIceCandidateAsync(
@@ -285,7 +285,7 @@ namespace RemotePlay.Controllers
                 if (success)
                 {
                     var session = _signalingService.GetSession(request.SessionId);
-                    _logger.LogInformation("✅ ICE Candidate 已接收并添加: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}",
+                    _logger.LogInformation("✅ ICE candidate received and added: SessionId={SessionId}, ConnectionState={ConnectionState}, IceConnectionState={IceConnectionState}",
                         request.SessionId,
                         session?.PeerConnection?.connectionState,
                         session?.PeerConnection?.iceConnectionState);
@@ -299,7 +299,7 @@ namespace RemotePlay.Controllers
                 }
                 else
                 {
-                    _logger.LogWarning("⚠️ ICE Candidate 添加失败: SessionId={SessionId}", request.SessionId);
+                    _logger.LogWarning("⚠️ Failed to add ICE candidate: SessionId={SessionId}", request.SessionId);
                     return NotFound(new ApiErrorResponse
                     {
                         Success = false,
@@ -310,7 +310,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 处理 ICE Candidate 失败");
+                _logger.LogError(ex, "❌ Failed to process ICE candidate");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -371,7 +371,7 @@ namespace RemotePlay.Controllers
                 }
 
                 await stream.RequestKeyframeAsync();
-                _logger.LogInformation("🎯 已主动请求关键帧: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}",
+                _logger.LogInformation("🎯 Keyframe requested: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}",
                     sessionId, session.StreamingSessionId);
 
                 return Ok(new ApiSuccessResponse<bool>
@@ -383,7 +383,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 主动请求关键帧失败: {SessionId}", sessionId);
+                _logger.LogError(ex, "❌ Keyframe request failed: {SessionId}", sessionId);
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -443,10 +443,10 @@ namespace RemotePlay.Controllers
                 if (webrtcSession != null)
                 {
                     webrtcSession.StreamingSessionId = sessionGuid;
-                    _logger.LogInformation("✅ 已设置 StreamingSessionId: {StreamingSessionId}", sessionGuid);
+                    _logger.LogInformation("✅ StreamingSessionId set: {StreamingSessionId}", sessionGuid);
                 }
                 
-                _logger.LogInformation("🔗 WebRTC 会话已连接到远程播放: WebRTC={WebRTC}, RemotePlay={RemotePlay}", 
+                _logger.LogInformation("🔗 WebRTC session connected to Remote Play: WebRTC={WebRTC}, RemotePlay={RemotePlay}", 
                     webrtcSessionId, remotePlaySessionId);
                 
                 return Ok(new ApiSuccessResponse<bool>
@@ -458,7 +458,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 连接会话失败");
+                _logger.LogError(ex, "❌ Failed to connect session");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -505,7 +505,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 获取会话状态失败");
+                _logger.LogError(ex, "❌ Failed to get session status");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -543,7 +543,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 获取会话列表失败");
+                _logger.LogError(ex, "❌ Failed to get session list");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -566,7 +566,7 @@ namespace RemotePlay.Controllers
                 // 清理延时统计
                 _latencyStats?.RemoveSession(sessionId);
                 
-                _logger.LogInformation("🗑️ WebRTC 会话已删除: {SessionId}", sessionId);
+                _logger.LogInformation("🗑️ WebRTC session deleted: {SessionId}", sessionId);
                 return Ok(new ApiSuccessResponse<bool>
                 {
                     Success = true,
@@ -576,7 +576,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 删除会话失败");
+                _logger.LogError(ex, "❌ Failed to delete session");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -624,7 +624,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 获取延时统计失败: {SessionId}", sessionId);
+                _logger.LogError(ex, "❌ Failed to get latency stats: {SessionId}", sessionId);
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -668,7 +668,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 记录接收时间失败");
+                _logger.LogError(ex, "❌ Failed to record receive time");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,

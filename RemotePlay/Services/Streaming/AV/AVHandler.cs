@@ -168,7 +168,7 @@ namespace RemotePlay.Services.Streaming.AV
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "❌ 重置音频解码器失败");
+                        _logger.LogError(ex, "❌ Failed to reset audio decoder");
                     }
                 }
             });
@@ -298,7 +298,7 @@ namespace RemotePlay.Services.Streaming.AV
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "❌ OnVideoPacket 异常");
+                            _logger.LogError(ex, "❌ OnVideoPacket error");
                         }
                     }
                 });
@@ -324,7 +324,7 @@ namespace RemotePlay.Services.Streaming.AV
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "❌ OnAudioPacket 异常");
+                            _logger.LogError(ex, "❌ OnAudioPacket error");
                         }
                     }
                 });
@@ -421,14 +421,14 @@ namespace RemotePlay.Services.Streaming.AV
                     if (shouldReset)
                     {
                         var reason = _consecutiveDrops >= MAX_CONSECUTIVE_DROPS 
-                            ? $"连续丢弃 {_consecutiveDrops} 个包" 
-                            : $"持续丢包 {dropDuration:F0}ms ({_consecutiveDrops} 个包)";
+                            ? $"{_consecutiveDrops} consecutive packets dropped" 
+                            : $"Packets dropped for {dropDuration:F0}ms ({_consecutiveDrops} packets)";
                         
-                        _logger.LogError("🚨 {Reason}，重置 ReorderQueue 以恢复视频流（最后丢弃的包: seq={LastSeq}, frame={LastFrame}）", 
+                        _logger.LogError("🚨 {Reason}, resetting ReorderQueue to recover video (last dropped packet: seq={LastSeq}, frame={LastFrame})", 
                             reason, droppedPacket.Index, droppedPacket.FrameIndex);
                         
                         var statsBeforeReset = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
-                        _logger.LogWarning("重置前ReorderQueue统计: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
+                        _logger.LogWarning("ReorderQueue stats before reset: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
                             statsBeforeReset.processed, statsBeforeReset.dropped, statsBeforeReset.timeoutDropped, statsBeforeReset.bufferSize);
                         
                         ResetVideoReorderQueue();
@@ -445,11 +445,11 @@ namespace RemotePlay.Services.Streaming.AV
                                 try
                                 {
                                     await _requestKeyframeCallback();
-                                    _logger.LogInformation("✅ 重置后已请求关键帧恢复视频流");
+                                    _logger.LogInformation("✅ Requested keyframe after reset to recover video");
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.LogError(ex, "❌ 重置后请求关键帧失败");
+                                    _logger.LogError(ex, "❌ Failed to request keyframe after reset");
                                 }
                             });
                         }
@@ -507,7 +507,7 @@ namespace RemotePlay.Services.Streaming.AV
             // 如果连续超时次数超过阈值，请求关键帧恢复
             if (_consecutiveTimeouts >= MAX_CONSECUTIVE_TIMEOUTS)
             {
-                _logger.LogWarning("⚠️ 连续超时 {Count} 次，请求关键帧恢复视频流", _consecutiveTimeouts);
+                _logger.LogWarning("⚠️ {Count} consecutive timeouts, requesting keyframe to recover video", _consecutiveTimeouts);
                 
                 // 重置计数，避免重复请求
                 _consecutiveTimeouts = 0;
@@ -521,17 +521,17 @@ namespace RemotePlay.Services.Streaming.AV
                         try
                         {
                             await _requestKeyframeCallback();
-                            _logger.LogInformation("✅ 已请求关键帧恢复视频流");
+                            _logger.LogInformation("✅ Requested keyframe to recover video");
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "❌ 请求关键帧失败");
+                            _logger.LogError(ex, "❌ Failed to request keyframe");
                         }
                     });
                 }
                 else
                 {
-                    _logger.LogWarning("⚠️ 未设置 RequestKeyframeCallback，无法请求关键帧");
+                    _logger.LogWarning("⚠️ RequestKeyframeCallback not set, cannot request keyframe");
                 }
             }
         }
@@ -590,7 +590,7 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     dropped++;
                 }
-                _logger.LogWarning("🚨 队列已满 ({QueueCount} 个包)，丢弃 {Dropped} 个旧包以降低延迟", 
+                _logger.LogWarning("🚨 Queue full ({QueueCount} packets), dropped {Dropped} old packets to reduce latency", 
                     queueCount, dropped);
             }
             else if (queueCount >= DROP_THRESHOLD)
@@ -598,7 +598,7 @@ namespace RemotePlay.Services.Streaming.AV
                 // 队列接近满，丢弃最旧的包
                 if (_queue.TryDequeue(out var _))
                 {
-                    _logger.LogDebug("⚠️ 队列积压 ({QueueCount} 个包)，丢弃 1 个旧包", queueCount);
+                    _logger.LogDebug("⚠️ Queue backlog ({QueueCount} packets), dropped 1 old packet", queueCount);
                 }
             }
             
@@ -608,11 +608,11 @@ namespace RemotePlay.Services.Streaming.AV
             // ✅ 当队列积压时，输出警告日志
             if (queueCount > 200)
             {
-                _logger.LogError("🚨 队列严重积压: {QueueCount} 个包等待处理", queueCount);
+                _logger.LogError("🚨 Severe queue backlog: {QueueCount} packets pending", queueCount);
             }
             else if (queueCount > 100 && queueCount % 50 == 0) // 每50个包输出一次，避免日志过多
             {
-                _logger.LogWarning("⚠️ 队列积压: {QueueCount} 个包等待处理", queueCount);
+                _logger.LogWarning("⚠️ Queue backlog: {QueueCount} packets pending", queueCount);
             }
 
             if (queueCount > 100 && (_workerTask == null || _workerTask.IsCompleted) && _cipher != null)
@@ -751,7 +751,7 @@ namespace RemotePlay.Services.Streaming.AV
                             }
                             if (dropped > 0)
                             {
-                                _logger.LogWarning("🧹 队列持续积压，主动清理 {Dropped} 个旧包（队列大小: {Before} -> {After}）", 
+                                _logger.LogWarning("🧹 Persistent queue backlog, purged {Dropped} old packets (queue size: {Before} -> {After})", 
                                     dropped, queueCount, _queue.Count);
                             }
                         }
@@ -759,17 +759,17 @@ namespace RemotePlay.Services.Streaming.AV
                         // 根据队列大小选择日志级别
                         if (queueCount > 200)
                         {
-                            _logger.LogError("🚨 队列严重积压: 主队列={QueueCount}, 视频重排序队列: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker已处理={ProcessedCount}",
+                            _logger.LogError("🚨 Severe queue backlog: main queue={QueueCount}, video reorder queue: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker processed={ProcessedCount}",
                                 queueCount, videoReorderStats.processed, videoReorderStats.dropped, videoReorderStats.timeoutDropped, videoReorderStats.bufferSize, processedCount);
                         }
                         else if (queueCount > 100)
                         {
-                            _logger.LogWarning("⚠️ 队列积压: 主队列={QueueCount}, 视频重排序队列: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker已处理={ProcessedCount}",
+                            _logger.LogWarning("⚠️ Queue backlog: main queue={QueueCount}, video reorder queue: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker processed={ProcessedCount}",
                                 queueCount, videoReorderStats.processed, videoReorderStats.dropped, videoReorderStats.timeoutDropped, videoReorderStats.bufferSize, processedCount);
                         }
                         else if (queueCount > 0 || videoReorderStats.bufferSize > 0)
                         {
-                            _logger.LogInformation("📊 队列状态: 主队列={QueueCount}, 视频重排序队列: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker已处理={ProcessedCount}",
+                            _logger.LogInformation("📊 Queue status: main queue={QueueCount}, video reorder queue: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}, worker processed={ProcessedCount}",
                                 queueCount, videoReorderStats.processed, videoReorderStats.dropped, videoReorderStats.timeoutDropped, videoReorderStats.bufferSize, processedCount);
                         }
                         
@@ -838,12 +838,12 @@ namespace RemotePlay.Services.Streaming.AV
                     var completedTask = Task.WhenAny(_workerTask, timeoutTask).GetAwaiter().GetResult();
                     if (completedTask == timeoutTask)
                     {
-                        _logger.LogWarning("⚠️ AVHandler2 worker 退出超时（200ms），强制继续");
+                        _logger.LogWarning("⚠️ AVHandler2 worker exit timed out (200ms), continuing");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "⚠️ 等待 AVHandler2 worker 退出时发生异常");
+                    _logger.LogWarning(ex, "⚠️ Error while waiting for AVHandler2 worker to exit");
                 }
             }
         }
@@ -875,10 +875,10 @@ namespace RemotePlay.Services.Streaming.AV
         /// </summary>
         public void ForceResetReorderQueue()
         {
-            _logger.LogWarning("🔄 用户主动触发重置 ReorderQueue");
+            _logger.LogWarning("🔄 User requested ReorderQueue reset");
             
             var statsBeforeReset = _videoReorderQueue?.GetStats() ?? (0, 0, 0, 0);
-            _logger.LogWarning("重置前ReorderQueue统计: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
+            _logger.LogWarning("ReorderQueue stats before reset: processed={Processed}, dropped={Dropped}, timeout={Timeout}, bufferSize={BufferSize}", 
                 statsBeforeReset.processed, statsBeforeReset.dropped, statsBeforeReset.timeoutDropped, statsBeforeReset.bufferSize);
             
             // 重置队列
@@ -899,11 +899,11 @@ namespace RemotePlay.Services.Streaming.AV
                     try
                     {
                         await _requestKeyframeCallback();
-                        _logger.LogInformation("✅ 重置后已请求关键帧恢复视频流");
+                        _logger.LogInformation("✅ Requested keyframe after reset to recover video");
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "❌ 重置后请求关键帧失败");
+                        _logger.LogError(ex, "❌ Failed to request keyframe after reset");
                     }
                 });
             }
@@ -964,7 +964,7 @@ namespace RemotePlay.Services.Streaming.AV
                 
                 if (cleaned > 0 && _logger.IsEnabled(LogLevel.Trace))
                 {
-                    _logger.LogTrace("清理了 {Cleaned} 个过期的帧记录，当前队列大小: {Count}", cleaned, _recentFrames.Count);
+                    _logger.LogTrace("Cleaned {Cleaned} expired frame records, current queue size: {Count}", cleaned, _recentFrames.Count);
                 }
                 
                 // ✅ 计算帧间隔（优化：使用循环缓冲区避免频繁移除）

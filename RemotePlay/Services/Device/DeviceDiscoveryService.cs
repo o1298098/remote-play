@@ -60,7 +60,7 @@ namespace RemotePlay.Services.Device
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设备发现过程中发生错误");
+                _logger.LogError(ex, "Device discovery failed");
                 throw;
             }
 
@@ -83,7 +83,8 @@ namespace RemotePlay.Services.Device
 
                 if (response is null)
                 {
-                    _logger.LogWarning("在指定时间内未发现设备: {HostIp}", hostIp);
+                    // 主机关机/离线时属于正常情况，由 DeviceStatusUpdateService 汇总判断离线
+                    _logger.LogDebug("No discovery response from {HostIp} within timeout", hostIp);
                     return null;
                 }
 
@@ -94,12 +95,12 @@ namespace RemotePlay.Services.Device
                     return deviceInfo;
                 }
 
-                _logger.LogWarning("收到无效响应: {HostIp}", hostIp);
+                _logger.LogWarning("Invalid discovery response from {HostIp}", hostIp);
                 return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "发现设备时发生错误: {HostIp}", hostIp);
+                _logger.LogError(ex, "Failed to discover device {HostIp}", hostIp);
                 throw;
             }
         }
@@ -192,7 +193,7 @@ namespace RemotePlay.Services.Device
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "在网络接口 {LocalAddress} 上发现设备时发生错误", localAddress);
+                _logger.LogError(ex, "Device discovery failed on interface {LocalAddress}", localAddress);
             }
             finally
             {
@@ -370,7 +371,7 @@ namespace RemotePlay.Services.Device
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "解析设备响应时发生错误");
+                _logger.LogWarning(ex, "Failed to parse device discovery response");
                 return null;
             }
         }

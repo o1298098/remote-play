@@ -118,12 +118,12 @@ namespace RemotePlay.Services.Streaming.Feedback
                 
                 if (completedTask == timeoutTask)
                 {
-                    _logger.LogWarning("⚠️ FeedbackSender StopAsync 超时（1秒），强制继续释放");
+                    _logger.LogWarning("⚠️ FeedbackSender StopAsync timed out (1s), continuing dispose");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ FeedbackSender Dispose 异常，继续释放");
+                _logger.LogWarning(ex, "⚠️ FeedbackSender dispose error, continuing");
             }
             
             _cts?.Dispose();

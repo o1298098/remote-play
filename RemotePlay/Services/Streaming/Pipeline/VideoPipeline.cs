@@ -377,7 +377,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
             {
                 if (stats.bufferSize > 80)
                 {
-                    _logger.LogWarning("⚠️ ReorderQueue 积压严重（{Size}），强制 flush 以恢复画面", stats.bufferSize);
+                    _logger.LogWarning("⚠️ ReorderQueue severely backlogged ({Size}), forcing flush to recover video", stats.bufferSize);
                     _reorderQueue.Flush(force: true);  // 强制 flush，跳过所有等待的包
                 }
                 else

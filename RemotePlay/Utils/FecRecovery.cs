@@ -38,7 +38,7 @@ namespace RemotePlay.Utils
 
             if (missingIndices.Count > unitsFec)
             {
-                logger.LogWarning("⚠️ FEC 不足：缺失 {Missing} 个包，但只有 {Fec} 个 FEC 包",
+                logger.LogWarning("⚠️ Insufficient FEC: {Missing} packets missing but only {Fec} FEC packets",
                     missingIndices.Count, unitsFec);
                 return false;
             }
@@ -54,7 +54,7 @@ namespace RemotePlay.Utils
 
             if (maxSize == 0)
             {
-                logger.LogWarning("⚠️ 所有包都为空，无法进行 FEC 恢复");
+                logger.LogWarning("⚠️ All packets are empty, cannot perform FEC recovery");
                 return false;
             }
 
@@ -95,7 +95,7 @@ namespace RemotePlay.Utils
 
             try
             {
-                logger.LogDebug("🧩 尝试 FEC 解码：缺失 {Missing} 个包，对齐大小 {Size}，源包 {Src}，FEC {Fec}",
+                logger.LogDebug("🧩 Attempting FEC decode: {Missing} missing packets, aligned size {Size}, source {Src}, FEC {Fec}",
                     missingIndices.Count, alignedSize, unitsSrc, unitsFec);
 
                 var codec = ReedSolomon.NET.ReedSolomon.Create(unitsSrc, unitsFec);
@@ -133,18 +133,18 @@ namespace RemotePlay.Utils
 
                 if (anyRestored)
                 {
-                    logger.LogDebug("✅ FEC 成功恢复 {Count} 个缺失包", missingIndices.Count);
+                    logger.LogDebug("✅ FEC recovered {Count} missing packets", missingIndices.Count);
                     return true;
                 }
                 else
                 {
-                    logger.LogWarning("⚠️ FEC 解码未恢复任何包");
+                    logger.LogWarning("⚠️ FEC decode recovered no packets");
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "❌ FEC 恢复失败");
+                logger.LogWarning(ex, "❌ FEC recovery failed");
                 return false;
             }
         }

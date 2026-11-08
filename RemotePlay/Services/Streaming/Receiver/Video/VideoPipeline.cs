@@ -131,7 +131,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                     Interlocked.Increment(ref _droppedCount);
                     if (Stopwatch.GetElapsedTime(_waitingSinceTicks, now) > MaxWaitForIdr)
                     {
-                        _logger?.LogWarning("⚠️ 等待 IDR 超过 {Seconds}s 仍未收到关键帧，恢复发送普通帧", MaxWaitForIdr.TotalSeconds);
+                        _logger?.LogWarning("⚠️ No keyframe after waiting {Seconds}s for IDR, resuming non-key frames", MaxWaitForIdr.TotalSeconds);
                         _waitingForIdr = false;
                     }
                     else
@@ -166,7 +166,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                 Interlocked.Increment(ref _droppedCount);
                 _waitingForIdr = true;
                 _waitingSinceTicks = now;
-                _logger?.LogWarning("⚠️ WebRTC 视频发送队列已满 ({Capacity} 帧)，进入等待关键帧状态", QUEUE_CAPACITY);
+                _logger?.LogWarning("⚠️ WebRTC video send queue full ({Capacity} frames), waiting for keyframe", QUEUE_CAPACITY);
             }
 
             RequestKeyframe("send-queue-full", force: true);
@@ -189,14 +189,14 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             }
             Interlocked.Exchange(ref _lastKeyframeRequestTicks, now);
 
-            _logger?.LogDebug("🎯 视频管道请求关键帧: {Reason}", reason);
+            _logger?.LogDebug("🎯 Video pipeline requesting keyframe: {Reason}", reason);
             try
             {
                 callback();
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "触发关键帧请求回调时出错");
+                _logger?.LogWarning(ex, "Error invoking keyframe request callback");
             }
         }
 
@@ -233,14 +233,14 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
                         if (sendTime > SlowSendThreshold && Stopwatch.GetElapsedTime(_lastSlowSendLogTicks) > StatsLogInterval)
                         {
                             _lastSlowSendLogTicks = Stopwatch.GetTimestamp();
-                            _logger?.LogWarning("⚠️ SendVideo 耗时 {Ms:F0}ms（帧大小 {Size} 字节，IDR={Idr}），发送端可能阻塞",
+                            _logger?.LogWarning("⚠️ SendVideo took {Ms:F0}ms (frame size {Size} bytes, IDR={Idr}); sender may be blocked",
                                 sendTime.TotalMilliseconds, frame.Data.Length, frame.IsIdr);
                         }
                     }
                     catch (Exception ex)
                     {
                         Interlocked.Increment(ref _failedCount);
-                        _logger?.LogWarning(ex, "SendVideo 失败: FrameIndex={Index}", frame.FrameIndex);
+                        _logger?.LogWarning(ex, "SendVideo failed: FrameIndex={Index}", frame.FrameIndex);
                         EnterWaitForIdr("send-failed");
                     }
 
@@ -250,7 +250,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "WebRTC 视频发送循环异常退出");
+                _logger?.LogError(ex, "WebRTC video send loop exited unexpectedly");
             }
         }
 
@@ -290,12 +290,12 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "获取诊断附加信息失败");
+                _logger?.LogDebug(ex, "Failed to get diagnostics suffix");
             }
 
             _logger?.LogDebug(
-                "WebRTC 发送诊断: 帧={Frames} (发出IDR={IdrSent}, 收到IDR={IdrReceived}) 码率={Kbps:F0}kbps 最大帧={MaxFrame}B " +
-                "RTP帧间隔={MinDur}-{MaxDur} SendVideo最长={MaxSendMs:F1}ms 累计发送/丢弃/失败={Sent}/{Dropped}/{Failed} 队列={Queue} 等待IDR={Waiting} {Suffix}",
+                "WebRTC send diagnostics: frames={Frames} (IDR sent={IdrSent}, IDR received={IdrReceived}) bitrate={Kbps:F0}kbps maxFrame={MaxFrame}B " +
+                "RTP frame interval={MinDur}-{MaxDur} SendVideo max={MaxSendMs:F1}ms total sent/dropped/failed={Sent}/{Dropped}/{Failed} queue={Queue} waitingForIdr={Waiting} {Suffix}",
                 _windowFrames, _windowIdrSent, Interlocked.Exchange(ref _windowIdrReceived, 0),
                 _windowBytes * 8 / 1000.0 / elapsed.TotalSeconds, _windowMaxFrameBytes,
                 _windowFrames > 0 ? _windowMinDuration : 0, _windowMaxDuration, _windowMaxSendMs,
@@ -383,7 +383,7 @@ namespace RemotePlay.Services.Streaming.Receiver.Video
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "VideoPipeline 等待发送任务退出时异常");
+                _logger?.LogDebug(ex, "VideoPipeline: exception while waiting for send task to exit");
             }
             _cts.Dispose();
         }

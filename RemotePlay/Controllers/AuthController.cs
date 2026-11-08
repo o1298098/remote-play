@@ -62,7 +62,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "用户注册失败");
+                _logger.LogError(ex, "User registration failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -112,7 +112,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "用户登录失败");
+                _logger.LogError(ex, "User login failed");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,
@@ -178,7 +178,7 @@ namespace RemotePlay.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "获取用户信息失败");
+                _logger.LogError(ex, "Failed to get user info");
                 return StatusCode(500, new ApiErrorResponse
                 {
                     Success = false,

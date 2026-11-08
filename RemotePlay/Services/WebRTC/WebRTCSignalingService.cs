@@ -57,14 +57,14 @@ namespace RemotePlay.Services.WebRTC
 
             if (_portRange != null)
             {
-                _logger.LogInformation("WebRTC 自定义端口范围: {Min}-{Max} (Shuffle={Shuffle})",
+                _logger.LogInformation("WebRTC custom port range: {Min}-{Max} (Shuffle={Shuffle})",
                     _config.IcePortMin,
                     _config.IcePortMax,
                     _config.ShufflePorts);
             }
             else if (_config.IcePortMin.HasValue || _config.IcePortMax.HasValue)
             {
-                _logger.LogWarning("WebRTC 端口范围配置无效，将回退为系统随机端口 (min={Min}, max={Max})",
+                _logger.LogWarning("Invalid WebRTC port range, falling back to system-assigned ports (min={Min}, max={Max})",
                     _config.IcePortMin,
                     _config.IcePortMax);
             }
@@ -94,7 +94,7 @@ namespace RemotePlay.Services.WebRTC
                     }
                     else
                     {
-                        _logger.LogWarning("启用了 ForceUseTurn 但未配置 TURN 服务器，将回退为 all: SessionId={SessionId}", sessionId);
+                        _logger.LogWarning("ForceUseTurn is enabled but no TURN servers are configured, falling back to 'all': SessionId={SessionId}", sessionId);
                     }
                 }
                 
@@ -139,7 +139,7 @@ namespace RemotePlay.Services.WebRTC
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "创建 Keepalive DataChannel 失败: {SessionId}", sessionId);
+                    _logger.LogWarning(ex, "Failed to create keepalive DataChannel: {SessionId}", sessionId);
                 }
                 
                 var receiver = new WebRTCReceiver(
@@ -191,7 +191,7 @@ namespace RemotePlay.Services.WebRTC
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "请求关键帧失败");
+                            _logger.LogError(ex, "Failed to request keyframe");
                         }
                     }
                 };
@@ -267,7 +267,7 @@ namespace RemotePlay.Services.WebRTC
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "存储 ICE candidate 失败: SessionId={SessionId}", sessionId);
+                            _logger.LogWarning(ex, "Failed to store ICE candidate: SessionId={SessionId}", sessionId);
                         }
                     }
                     else
@@ -310,41 +310,41 @@ namespace RemotePlay.Services.WebRTC
 
                 if (!gatheringComplete)
                 {
-                    _logger.LogWarning("ICE Gathering 未完成（等待{Timeout}ms），已收集 {Count} 个 candidates (host={Host}, srflx={Srflx}, relay={Relay})", 
+                    _logger.LogWarning("ICE gathering incomplete (waited {Timeout}ms), collected {Count} candidates (host={Host}, srflx={Srflx}, relay={Relay})", 
                         waitTimeoutMs, candidateCount, hostCandidateCount, srflxCandidateCount, relayCandidateCount);
                     
                     if (hasTurnServers)
                     {
                         if (relayCandidateCount == 0)
                         {
-                            _logger.LogWarning("配置了 {TurnCount} 个 TURN 服务器但未收集到任何 relay 候选地址", turnServers.Count);
+                            _logger.LogWarning("{TurnCount} TURN servers configured but no relay candidates were gathered", turnServers.Count);
                         }
                         else if (relayCandidateCount < turnServers.Count)
                         {
-                            _logger.LogWarning("配置了 {TurnCount} 个 TURN 服务器，但只收集到 {RelayCount} 个 relay 候选地址", 
+                            _logger.LogWarning("{TurnCount} TURN servers configured but only {RelayCount} relay candidates were gathered", 
                                 turnServers.Count, relayCandidateCount);
                         }
                         
                         if (isForceUseTurn && relayCandidateCount == 0)
                         {
-                            _logger.LogError("强制使用 TURN 模式，但未收集到任何 relay 候选地址，这会导致 ICE 连接失败");
-                            _logger.LogError("可能的原因：TURN 服务器 URL/用户名/密码错误、无法访问、不支持指定协议或等待时间不足");
-                            _logger.LogError("已配置的 TURN 服务器数量: {Count}", turnServers.Count);
+                            _logger.LogError("Force-TURN mode is enabled but no relay candidates were gathered; ICE connection will fail");
+                            _logger.LogError("Possible causes: wrong TURN URL/username/password, server unreachable, unsupported protocol, or insufficient wait time");
+                            _logger.LogError("Configured TURN servers: {Count}", turnServers.Count);
                             foreach (var turn in turnServers)
                             {
-                                _logger.LogError("   - URL: {Url}, 用户名: {Username}", 
-                                    turn.Url, string.IsNullOrWhiteSpace(turn.Username) ? "无" : "已设置");
+                                _logger.LogError("   - URL: {Url}, Username: {Username}", 
+                                    turn.Url, string.IsNullOrWhiteSpace(turn.Username) ? "none" : "set");
                             }
                         }
                     }
                 }
                 else if (isForceUseTurn && relayCandidateCount == 0)
                 {
-                    _logger.LogError("强制使用 TURN 模式，但 ICE Gathering 完成后仍未收集到任何 relay 候选地址");
+                    _logger.LogError("Force-TURN mode is enabled but ICE gathering completed with no relay candidates");
                 }
                 else if (isForceUseTurn && relayCandidateCount < turnServers.Count)
                 {
-                    _logger.LogWarning("强制使用 TURN 模式，ICE Gathering 完成但只收集到 {RelayCount}/{TurnCount} 个 relay 候选地址", 
+                    _logger.LogWarning("Force-TURN mode: ICE gathering completed with only {RelayCount}/{TurnCount} relay candidates", 
                         relayCandidateCount, turnServers.Count);
                 }
 
@@ -356,7 +356,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "创建 WebRTC 会话失败");
+                _logger.LogError(ex, "Failed to create WebRTC session");
                 _sessions.TryRemove(sessionId, out _);
                 throw;
             }
@@ -406,7 +406,7 @@ namespace RemotePlay.Services.WebRTC
         {
             if (!_sessions.TryGetValue(sessionId, out var session))
             {
-                _logger.LogWarning("⚠️ 会话不存在: {SessionId}", sessionId);
+                _logger.LogWarning("⚠️ Session not found: {SessionId}", sessionId);
                 return false;
             }
 
@@ -414,12 +414,12 @@ namespace RemotePlay.Services.WebRTC
             {
                 if (!answerSdp.Contains("m=video"))
                 {
-                    _logger.LogWarning("Answer SDP 中没有找到 m=video 行");
+                    _logger.LogWarning("No m=video line found in Answer SDP");
                 }
 
                 if (!answerSdp.Contains("m=audio"))
                 {
-                    _logger.LogWarning("Answer SDP 中没有找到 m=audio 行");
+                    _logger.LogWarning("No m=audio line found in Answer SDP");
                 }
 
                 var answer = new RTCSessionDescriptionInit
@@ -438,7 +438,7 @@ namespace RemotePlay.Services.WebRTC
                 {
                     if (signalingState != RTCSignalingState.stable)
                     {
-                        _logger.LogWarning("Answer 设置返回 OK，但信令状态是 {Signaling}，不是 stable", signalingState);
+                        _logger.LogWarning("Answer set returned OK, but signaling state is {Signaling} instead of stable", signalingState);
                     }
                     
                     try
@@ -447,7 +447,7 @@ namespace RemotePlay.Services.WebRTC
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "提前初始化视频管道失败: SessionId={SessionId}", sessionId);
+                        _logger.LogWarning(ex, "Failed to pre-initialize video pipeline: SessionId={SessionId}", sessionId);
                     }
                     
                     session.PeerConnection.onicecandidate += (candidate) =>
@@ -503,12 +503,12 @@ namespace RemotePlay.Services.WebRTC
                             var hasTurnServers = config?.iceServers?.Any(s => 
                                 s.urls != null && s.urls.Contains("turn:", StringComparison.OrdinalIgnoreCase)) ?? false;
                             
-                            _logger.LogWarning("ICE 连接失败: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}, IceGatheringState={IceGatheringState}, HasTurnServers={HasTurnServers}",
+                            _logger.LogWarning("ICE connection failed: SessionId={SessionId}, ConnectionState={ConnectionState}, SignalingState={SignalingState}, IceGatheringState={IceGatheringState}, HasTurnServers={HasTurnServers}",
                                 sessionId, connectionState, signalingState, iceGatheringState, hasTurnServers);
                             
                             if (hasTurnServers)
                             {
-                                _logger.LogWarning("TURN 服务器已配置但 ICE 连接失败，可能的原因：TURN 服务器无法访问、用户名/密码错误、候选地址不匹配、不支持指定协议或强制 TURN 模式配置问题");
+                                _logger.LogWarning("TURN servers are configured but ICE connection failed. Possible causes: TURN server unreachable, wrong username/password, candidate mismatch, unsupported protocol, or force-TURN misconfiguration");
                             }
                             
                             _ = Task.Run(async () =>
@@ -527,7 +527,7 @@ namespace RemotePlay.Services.WebRTC
                         }
                         else if (currentIceState == RTCIceConnectionState.disconnected)
                         {
-                            _logger.LogWarning("ICE 连接断开: SessionId={SessionId}，将在延迟后尝试 ICE Restart", sessionId);
+                            _logger.LogWarning("ICE disconnected: SessionId={SessionId}, will attempt ICE restart after a delay", sessionId);
                             
                             _ = Task.Run(async () =>
                             {
@@ -553,7 +553,7 @@ namespace RemotePlay.Services.WebRTC
                         
                         if (currentConnectionState == RTCPeerConnectionState.failed)
                         {
-                            _logger.LogWarning("WebRTC 连接失败: SessionId={SessionId}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
+                            _logger.LogWarning("WebRTC connection failed: SessionId={SessionId}, IceConnectionState={IceConnectionState}, SignalingState={SignalingState}",
                                 sessionId, iceConnectionState, signalingState);
                         }
                     };
@@ -562,19 +562,19 @@ namespace RemotePlay.Services.WebRTC
                 }
                 else
                 {
-                    _logger.LogWarning("设置 Answer 返回非 OK 状态: {SessionId}, 结果: {Result}", sessionId, result);
+                    _logger.LogWarning("Setting Answer returned non-OK status: {SessionId}, Result: {Result}", sessionId, result);
 
                     if (result == SetDescriptionResultEnum.VideoIncompatible)
                     {
                         if (signalingState == RTCSignalingState.have_remote_pranswer ||
                             signalingState == RTCSignalingState.stable)
                         {
-                            _logger.LogWarning("视频不兼容，但信令状态已改变为 {Signaling}，允许连接继续", signalingState);
+                            _logger.LogWarning("Video incompatible, but signaling state changed to {Signaling}; allowing connection to continue", signalingState);
                             return true;
                         }
                         else
                         {
-                            _logger.LogError("视频不兼容且 Answer 未被设置，信令状态: {Signaling}", signalingState);
+                            _logger.LogError("Video incompatible and Answer was not applied, signaling state: {Signaling}", signalingState);
                             return true;
                         }
                     }
@@ -600,7 +600,7 @@ namespace RemotePlay.Services.WebRTC
 
                                     if (!answerHasOpus && answerHasTelephoneEvent)
                                     {
-                                        _logger.LogError("浏览器 Answer 中只包含 telephone-event，没有 Opus");
+                                        _logger.LogError("Browser Answer contains only telephone-event, no Opus");
                                     }
 
                                     try
@@ -646,7 +646,7 @@ namespace RemotePlay.Services.WebRTC
                                     }
                                     catch (Exception forceEx)
                                     {
-                                        _logger.LogError(forceEx, "强制设置 remote description 失败");
+                                        _logger.LogError(forceEx, "Failed to force-set remote description");
                                     }
 
                                     try
@@ -665,19 +665,19 @@ namespace RemotePlay.Services.WebRTC
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "检查 remote description 时出错");
+                                _logger.LogError(ex, "Error checking remote description");
                                 return true;
                             }
                         }
                     }
 
-                    _logger.LogError("设置 Answer 失败: {SessionId}, 结果: {Result}", sessionId, result);
+                    _logger.LogError("Failed to set Answer: {SessionId}, Result: {Result}", sessionId, result);
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 设置 Answer 失败: {SessionId}", sessionId);
+                _logger.LogError(ex, "❌ Failed to set Answer: {SessionId}", sessionId);
                 return false;
             }
         }
@@ -689,7 +689,7 @@ namespace RemotePlay.Services.WebRTC
         {
             if (!_sessions.TryGetValue(sessionId, out var webrtcSession))
             {
-                _logger.LogWarning("会话不存在: {SessionId}", sessionId);
+                _logger.LogWarning("Session not found: {SessionId}", sessionId);
                 return new List<RTCIceCandidateInit>();
             }
 
@@ -707,7 +707,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "提取后端 ufrag 失败，将返回所有 candidate");
+                _logger.LogWarning(ex, "Failed to extract backend ufrag, returning all candidates");
             }
             
             List<RTCIceCandidateInit> filteredCandidates;
@@ -733,7 +733,7 @@ namespace RemotePlay.Services.WebRTC
             else
             {
                 filteredCandidates = allCandidates;
-                _logger.LogWarning("无法提取后端 ufrag，返回所有 {Count} 个 candidate", allCandidates.Count);
+                _logger.LogWarning("Unable to extract backend ufrag, returning all {Count} candidates", allCandidates.Count);
             }
             
             
@@ -747,7 +747,7 @@ namespace RemotePlay.Services.WebRTC
         {
             if (!_sessions.TryGetValue(sessionId, out var session))
             {
-                _logger.LogWarning("会话不存在: {SessionId}", sessionId);
+                _logger.LogWarning("Session not found: {SessionId}", sessionId);
                 return false;
             }
 
@@ -755,7 +755,7 @@ namespace RemotePlay.Services.WebRTC
             {
                 if (string.IsNullOrWhiteSpace(candidate))
                 {
-                    _logger.LogWarning("收到空的 ICE Candidate: SessionId={SessionId}", sessionId);
+                    _logger.LogWarning("Received empty ICE candidate: SessionId={SessionId}", sessionId);
                     return false;
                 }
                 
@@ -771,7 +771,7 @@ namespace RemotePlay.Services.WebRTC
                         
                         if (!string.IsNullOrWhiteSpace(answerUfrag) && frontendUfrag != answerUfrag)
                         {
-                            _logger.LogWarning("前端 candidate 的 ufrag ({FrontendUfrag}) 与 Answer SDP 的 ufrag ({AnswerUfrag}) 不匹配，已自动修正",
+                            _logger.LogWarning("Frontend candidate ufrag ({FrontendUfrag}) does not match Answer SDP ufrag ({AnswerUfrag}); corrected automatically",
                                 frontendUfrag, answerUfrag);
                             
                             candidate = System.Text.RegularExpressions.Regex.Replace(
@@ -796,12 +796,12 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "添加 ICE Candidate 失败: SessionId={SessionId}, Candidate={Candidate}", 
+                _logger.LogError(ex, "Failed to add ICE candidate: SessionId={SessionId}, Candidate={Candidate}", 
                     sessionId, candidate?.Length > 200 ? candidate.Substring(0, 200) + "..." : candidate);
                 
                 if (ex.Message.Contains("InvalidStateError") || ex.Message.Contains("InvalidState"))
                 {
-                    _logger.LogWarning("PeerConnection 状态可能不正确: ConnectionState={ConnectionState}, SignalingState={SignalingState}, IceConnectionState={IceConnectionState}",
+                    _logger.LogWarning("PeerConnection may be in an unexpected state: ConnectionState={ConnectionState}, SignalingState={SignalingState}, IceConnectionState={IceConnectionState}",
                         session.PeerConnection.connectionState, session.PeerConnection.signalingState, session.PeerConnection.iceConnectionState);
                 }
                 
@@ -868,7 +868,7 @@ namespace RemotePlay.Services.WebRTC
                         }
                         catch (Exception streamEx)
                         {
-                            _logger.LogWarning(streamEx, "停止流会话时出错: {StreamingSessionId}", session.StreamingSessionId.Value);
+                            _logger.LogWarning(streamEx, "Error stopping streaming session: {StreamingSessionId}", session.StreamingSessionId.Value);
                         }
                     }
 
@@ -880,7 +880,7 @@ namespace RemotePlay.Services.WebRTC
                         }
                         catch (Exception controllerEx)
                         {
-                            _logger.LogWarning(controllerEx, "断开控制器时出错: {SessionId}", sessionId);
+                            _logger.LogWarning(controllerEx, "Error disconnecting controller: {SessionId}", sessionId);
                         }
                     }
 
@@ -890,7 +890,7 @@ namespace RemotePlay.Services.WebRTC
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "移除会话时出错: {SessionId}", sessionId);
+                    _logger.LogError(ex, "Error removing session: {SessionId}", sessionId);
                 }
             }
         }
@@ -1002,7 +1002,7 @@ namespace RemotePlay.Services.WebRTC
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "解析 WebRTC 配置 JSON 失败，使用默认配置");
+                        _logger.LogWarning(ex, "Failed to parse WebRTC config JSON, using defaults");
                     }
                 }
 
@@ -1019,7 +1019,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "从 Settings 表读取 WebRTC 配置失败，使用默认配置");
+                _logger.LogWarning(ex, "Failed to read WebRTC config from Settings table, using defaults");
                 return new WebRTCConfig
                 {
                     PublicIp = _config.PublicIp,
@@ -1103,7 +1103,7 @@ namespace RemotePlay.Services.WebRTC
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "从 Settings 表读取 TURN 配置失败，使用空配置");
+                _logger.LogWarning(ex, "Failed to read TURN config from Settings table, using empty config");
                 return new List<TurnServerConfig>();
             }
         }
@@ -1119,7 +1119,7 @@ namespace RemotePlay.Services.WebRTC
 
             foreach (var session in expired)
             {
-                _logger.LogInformation("🧹 清理过期会话: {SessionId}", session.Key);
+                _logger.LogInformation("🧹 Cleaning up expired session: {SessionId}", session.Key);
                 RemoveSession(session.Key);
             }
         }

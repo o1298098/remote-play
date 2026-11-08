@@ -115,13 +115,13 @@ namespace RemotePlay.Services.Streaming
                 var session = await _sessionService.GetSessionAsync(sessionId);
                 if (session == null)
                 {
-                    _logger.LogWarning("无法通知客户端：未找到会话 {SessionId}", sessionId);
+                    _logger.LogWarning("Cannot notify client: session {SessionId} not found", sessionId);
                     return;
                 }
 
                 if (string.IsNullOrEmpty(session.HostId))
                 {
-                    _logger.LogWarning("无法通知客户端：会话 {SessionId} 的 HostId 为空", sessionId);
+                    _logger.LogWarning("Cannot notify client: session {SessionId} has no HostId", sessionId);
                     return;
                 }
 
@@ -136,7 +136,7 @@ namespace RemotePlay.Services.Streaming
 
                 if (userIds.Count == 0)
                 {
-                    _logger.LogWarning("未找到绑定主机 {HostId} 的用户，跳过断开通知：SessionId={SessionId}", session.HostId, sessionId);
+                    _logger.LogWarning("No user bound to host {HostId}, skipping disconnect notification: SessionId={SessionId}", session.HostId, sessionId);
                     return;
                 }
 
@@ -151,7 +151,7 @@ namespace RemotePlay.Services.Streaming
                 {
                     var groupName = DeviceStatusHub.GetUserGroupName(userId);
                     await hubContext.Clients.Group(groupName).SendAsync("SessionDisconnected", payload);
-                    _logger.LogDebug("已向用户组 {GroupName} 发送断开通知：SessionId={SessionId}", groupName, sessionId);
+                    _logger.LogDebug("Sent disconnect notification to group {GroupName}: SessionId={SessionId}", groupName, sessionId);
                 }
                 
                 _logger.LogInformation("Disconnect notification sent to clients for session {SessionId}", sessionId);
@@ -175,7 +175,7 @@ namespace RemotePlay.Services.Streaming
                     
                     if (completedTask == timeoutTask)
                     {
-                        _logger.LogWarning("停止流 {SessionId} 超时（5秒），强制继续", sessionId);
+                        _logger.LogWarning("Stopping stream {SessionId} timed out (5s), continuing", sessionId);
                     }
                     else
                     {
@@ -184,11 +184,11 @@ namespace RemotePlay.Services.Streaming
                 } 
                 catch (OperationCanceledException)
                 {
-                    _logger.LogWarning("停止流 {SessionId} 被取消", sessionId);
+                    _logger.LogWarning("Stopping stream {SessionId} was canceled", sessionId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "停止流 {SessionId} 时发生异常", sessionId);
+                    _logger.LogError(ex, "Error stopping stream {SessionId}", sessionId);
                 }
                 return true;
             }
@@ -202,12 +202,12 @@ namespace RemotePlay.Services.Streaming
         {
             if (_streams.IsEmpty)
             {
-                _logger.LogInformation("没有活动的流需要停止");
+                _logger.LogInformation("No active streams to stop");
                 return;
             }
 
             var streamCount = _streams.Count;
-            _logger.LogInformation("开始停止所有 {Count} 个活动流...", streamCount);
+            _logger.LogInformation("Stopping all {Count} active streams...", streamCount);
 
             // 获取所有流并清空字典
             var streamsToStop = new List<(Guid SessionId, RPStreamV2 Stream)>();
@@ -225,7 +225,7 @@ namespace RemotePlay.Services.Streaming
                 await semaphore.WaitAsync(cts.Token);
                 try
                 {
-                    _logger.LogDebug("正在停止流 {SessionId}...", kvp.SessionId);
+                    _logger.LogDebug("Stopping stream {SessionId}...", kvp.SessionId);
                     
                     // 每个流使用共享的 CancellationToken，确保在总超时时间内完成
                     var stopTask = kvp.Stream.StopAsync();
@@ -234,21 +234,21 @@ namespace RemotePlay.Services.Streaming
                     
                     if (completedTask == timeoutTask || cts.Token.IsCancellationRequested)
                     {
-                        _logger.LogWarning("停止流 {SessionId} 超时或被取消，强制继续", kvp.SessionId);
+                        _logger.LogWarning("Stopping stream {SessionId} timed out or was canceled, continuing", kvp.SessionId);
                     }
                     else
                     {
                         await stopTask;
-                        _logger.LogDebug("流 {SessionId} 已停止", kvp.SessionId);
+                        _logger.LogDebug("Stream {SessionId} stopped", kvp.SessionId);
                     }
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger.LogWarning("停止流 {SessionId} 被取消", kvp.SessionId);
+                    _logger.LogWarning("Stopping stream {SessionId} was canceled", kvp.SessionId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "停止流 {SessionId} 时发生异常", kvp.SessionId);
+                    _logger.LogError(ex, "Error stopping stream {SessionId}", kvp.SessionId);
                 }
                 finally
                 {
@@ -260,16 +260,16 @@ namespace RemotePlay.Services.Streaming
             try
             {
                 await Task.WhenAll(stopTasks).WaitAsync(timeout);
-                _logger.LogInformation("所有 {Count} 个流已停止", streamCount);
+                _logger.LogInformation("All {Count} streams stopped", streamCount);
             }
             catch (TimeoutException)
             {
                 cts.Cancel();
-                _logger.LogWarning("停止所有流超时（{Timeout}秒），强制继续关闭", timeout.TotalSeconds);
+                _logger.LogWarning("Stopping all streams timed out ({Timeout}s), continuing shutdown", timeout.TotalSeconds);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "停止流时发生异常");
+                _logger.LogError(ex, "Error while stopping streams");
             }
             finally
             {

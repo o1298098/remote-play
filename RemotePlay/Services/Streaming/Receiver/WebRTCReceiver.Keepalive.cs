@@ -45,7 +45,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     lock (_dataChannelLock)
                     {
                         _dataChannelOpen = true;
-                        _logger.LogInformation("✅ Keepalive DataChannel 已打开");
+                        _logger.LogInformation("✅ Keepalive DataChannel opened");
                     }
                 };
                 
@@ -55,13 +55,13 @@ namespace RemotePlay.Services.Streaming.Receiver
                     {
                         _dataChannelOpen = false;
                         _keepaliveDataChannel = null;
-                        _logger.LogInformation("⚠️ Keepalive DataChannel 已关闭");
+                        _logger.LogInformation("⚠️ Keepalive DataChannel closed");
                     }
                 };
                 
                 dataChannel.onerror += (error) =>
                 {
-                    _logger.LogWarning("Keepalive DataChannel 错误: {Error}", error);
+                    _logger.LogWarning("Keepalive DataChannel error: {Error}", error);
                 };
                 
                 // ✅ 接收前端的 pong 响应 (0x02)
@@ -74,18 +74,18 @@ namespace RemotePlay.Services.Streaming.Receiver
                             byte messageType = data[0];
                             if (messageType == 0x02) // PONG
                             {
-                                _logger.LogDebug("📥 收到前端 PONG 响应");
+                                _logger.LogDebug("📥 Received PONG from client");
                                 _lastKeepaliveTime = DateTime.UtcNow;
                             }
                             else
                             {
-                                _logger.LogDebug("📥 收到未知 DataChannel 消息类型: 0x{Type:X2}", messageType);
+                                _logger.LogDebug("📥 Received unknown DataChannel message type: 0x{Type:X2}", messageType);
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug(ex, "处理 DataChannel 消息时出错");
+                        _logger.LogDebug(ex, "Error handling DataChannel message");
                     }
                 };
                 
@@ -119,7 +119,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "检查 Keepalive DataChannel 时出错");
+                _logger.LogWarning(ex, "Error checking keepalive DataChannel");
             }
         }
         
@@ -142,7 +142,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "停止保活机制时出错");
+                _logger.LogWarning(ex, "Error stopping keepalive");
             }
         }
         
@@ -203,7 +203,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                                     }
                                     catch (Exception ex)
                                     {
-                                        _logger.LogDebug(ex, "发送静音音频包失败");
+                                        _logger.LogDebug(ex, "Failed to send silent audio packet");
                                     }
                                 }
                             }
@@ -236,11 +236,11 @@ namespace RemotePlay.Services.Streaming.Receiver
                                         sent = true;
                                         lastDataChannelKeepalive = now;
                                         _lastKeepaliveTime = now;
-                                        _logger.LogDebug("📤 发送 DataChannel PING");
+                                        _logger.LogDebug("📤 Sending DataChannel PING");
                                     }
                                     catch (Exception ex)
                                     {
-                                        _logger.LogDebug(ex, "DataChannel PING 发送失败");
+                                        _logger.LogDebug(ex, "Failed to send DataChannel PING");
                                         lock (_dataChannelLock)
                                         {
                                             _dataChannelOpen = false;
@@ -256,7 +256,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "发送 keepalive 包时出错");
+                        _logger.LogWarning(ex, "Error sending keepalive packet");
                     }
                 }
             }
@@ -265,7 +265,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "保活循环异常");
+                _logger.LogError(ex, "Keepalive loop error");
             }
         }
         
@@ -290,7 +290,7 @@ namespace RemotePlay.Services.Streaming.Receiver
             {
                 if (_videoPacketCount % 1000 == 0)
                 {
-                    _logger.LogDebug(ex, "发送静音音频包失败");
+                    _logger.LogDebug(ex, "Failed to send silent audio packet");
                 }
             }
         }

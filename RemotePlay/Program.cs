@@ -329,7 +329,7 @@ var logger = loggerFactory.CreateLogger<Program>();
 
 lifetime.ApplicationStopping.Register(() =>
 {
-    logger.LogInformation("应用程序正在关闭，开始清理所有活动流...");
+    logger.LogInformation("Application is shutting down, stopping all active streams...");
 
     try
     {
@@ -341,20 +341,20 @@ lifetime.ApplicationStopping.Register(() =>
             try
             {
                 service.StopAllStreamsAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
-                logger.LogInformation("所有流已成功停止");
+                logger.LogInformation("All streams stopped successfully");
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "停止所有流时发生异常，继续关闭流程");
+                logger.LogError(ex, "Error stopping all streams, continuing shutdown");
             }
         }
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "清理流时发生异常，继续关闭流程");
+        logger.LogError(ex, "Error cleaning up streams, continuing shutdown");
     }
 
-    logger.LogInformation("流清理完成，继续关闭流程");
+    logger.LogInformation("Stream cleanup complete, continuing shutdown");
 });
 
 app.Run();

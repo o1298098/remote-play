@@ -105,7 +105,7 @@ namespace RemotePlay.Controllers
 
             if (records.Count == 0)
             {
-                _logger.LogWarning("未找到枚举类型 {EnumType}", enumType);
+                _logger.LogWarning("Enum type not found: {EnumType}", enumType);
                 return NotFound(new ApiErrorResponse
                 {
                     ErrorMessage = $"未找到枚举类型: {enumType}",

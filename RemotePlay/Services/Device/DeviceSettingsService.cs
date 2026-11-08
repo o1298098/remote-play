@@ -237,7 +237,7 @@ namespace RemotePlay.Services.Device
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogWarning(ex, "解析分辨率枚举失败: {EnumKey}", item.EnumKey);
+                                _logger.LogWarning(ex, "Failed to parse resolution enum: {EnumKey}", item.EnumKey);
                             }
                         }
                         break;

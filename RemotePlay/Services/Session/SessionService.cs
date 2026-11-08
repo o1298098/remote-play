@@ -66,7 +66,7 @@ namespace RemotePlay.Services.Session
             if (credentials == null) throw new ArgumentNullException(nameof(credentials));
             hostType = string.IsNullOrWhiteSpace(hostType) ? "PS4" : hostType.ToUpper();
 
-            _logger.LogInformation("启动会话，Host: {HostIp}, HostType: {HostType}", hostIp, hostType);
+            _logger.LogInformation("Starting session, Host: {HostIp}, HostType: {HostType}", hostIp, hostType);
 
             // 1) 发现设备以校验连通性
             var device = await _discoveryService.DiscoverDeviceAsync(hostIp, _sessionConfig.ConnectTimeoutMs, cancellationToken);
@@ -129,7 +129,7 @@ namespace RemotePlay.Services.Session
             session.LaunchOptions = StreamLaunchOptionsResolver.Resolve(session);
 
             _sessions[session.Id] = (session, keepAlive.Client, cipher);
-            _logger.LogInformation("会话已建立: {SessionId}", session.Id);
+            _logger.LogInformation("Session established: {SessionId}", session.Id);
 
             // 6) 启动读取循环与心跳处理
             _autoStartStreamFlags[session.Id] = options.AutoStartStream;
@@ -149,11 +149,11 @@ namespace RemotePlay.Services.Session
                     {
                         var controllerService = _serviceProvider.GetRequiredService<IControllerService>();
                         await controllerService.DisconnectAsync(sessionId, cancellationToken);
-                        _logger.LogInformation("✅ 控制器已自动断开，会话 {SessionId}", sessionId);
+                        _logger.LogInformation("✅ Controller auto-disconnected for session {SessionId}", sessionId);
                     }
                     catch (Exception exController)
                     {
-                        _logger.LogDebug(exController, "断开控制器时发生异常（可能未连接）");
+                        _logger.LogDebug(exController, "Exception while disconnecting controller (may not have been connected)");
                     }
                     
                     entry.Session.StoppedAtUtc = DateTime.UtcNow;
@@ -164,7 +164,7 @@ namespace RemotePlay.Services.Session
                     _autoStartStreamFlags.TryRemove(sessionId, out _);
                     _autoConnectControllerFlags.TryRemove(sessionId, out _);
                     
-                    _logger.LogInformation("会话已关闭: {SessionId}", sessionId);
+                    _logger.LogInformation("Session closed: {SessionId}", sessionId);
                 }
                 catch { }
                 return true;
@@ -651,22 +651,22 @@ namespace RemotePlay.Services.Session
                                         if (connected)
                                         {
                                             await controllerService.StartAsync(sessionId, ct);
-                                            _logger.LogInformation("✅ 控制器已自动连接并启动，会话 {SessionId}", sessionId);
+                                            _logger.LogInformation("✅ Controller auto-connected and started for session {SessionId}", sessionId);
                                         }
                                         else
                                         {
-                                            _logger.LogWarning("⚠️ 控制器自动连接失败，会话 {SessionId}", sessionId);
+                                            _logger.LogWarning("⚠️ Controller auto-connect failed for session {SessionId}", sessionId);
                                         }
                                     }
                                     catch (Exception exController)
                                     {
-                                        _logger.LogWarning(exController, "自动连接控制器失败");
+                                        _logger.LogWarning(exController, "Failed to auto-connect controller");
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogWarning(ex, "自动启动串流测试失败");
+                                _logger.LogWarning(ex, "Failed to auto-start streaming test");
                             }
                         }
                     }
@@ -674,7 +674,7 @@ namespace RemotePlay.Services.Session
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "会话接收循环异常");
+                _logger.LogDebug(ex, "Session receive loop error");
             }
         }
 

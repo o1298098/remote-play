@@ -94,14 +94,14 @@ namespace RemotePlay.Services.Streaming.Buffer
                         return;
                     }
 
-                    _logger.LogWarning("ReorderQueue: 序号跳变（落后 {Behind}），重置到 {Seq}", behind, seq);
+                    _logger.LogWarning("ReorderQueue: sequence jump (behind by {Behind}), resetting to {Seq}", behind, seq);
                     DrainAll();
                     _baseSeq = seq;
                     ahead = 0;
                 }
                 else if (ahead >= _resetGap)
                 {
-                    _logger.LogWarning("ReorderQueue: 序号跳变（领先 {Ahead}），重置到 {Seq}", ahead, seq);
+                    _logger.LogWarning("ReorderQueue: sequence jump (ahead by {Ahead}), resetting to {Seq}", ahead, seq);
                     DrainAll();
                     _baseSeq = seq;
                     ahead = 0;

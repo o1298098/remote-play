@@ -85,13 +85,13 @@ namespace RemotePlay.Services.Streaming.AV
                 {
                     frame = modified;
                     recovered = true;
-                    _logger?.LogWarning("✅ 参考链修复：P帧 {Frame} 使用替代参考帧 {AltRefFrame}",
+                    _logger?.LogWarning("✅ Reference chain repaired: P-frame {Frame} using alternate reference frame {AltRefFrame}",
                         frameIndex, frameIndex - alternativeRefFrame - 1);
                     return true; // 允许解码
                 }
                 else
                 {
-                    _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，找到替代但无法修改bitstream",
+                    _logger?.LogWarning("⚠️ P-frame {Frame} missing reference frame {RefFrame}, found alternate but cannot modify bitstream",
                         frameIndex, refFrameIndex);
                 }
             }
@@ -100,7 +100,7 @@ namespace RemotePlay.Services.Streaming.AV
             {
                 _referenceChainBroken = true;
                 _referenceChainBrokenTime = DateTime.UtcNow;
-                _logger?.LogWarning("⚠️ P帧 {Frame} 缺少参考帧 {RefFrame}，丢弃并请求关键帧", frameIndex, refFrameIndex);
+                _logger?.LogWarning("⚠️ P-frame {Frame} missing reference frame {RefFrame}, dropping and requesting keyframe", frameIndex, refFrameIndex);
             }
 
             _requestKeyframeCallback?.Invoke();
@@ -327,7 +327,7 @@ namespace RemotePlay.Services.Streaming.AV
                         int end = (ushort)(packet.FrameIndex - 1);
                         int lostCount = end - start + 1;
                         
-                        _logger?.LogWarning("Detected missing or corrupt frame(s) from {From} to {To} (丢失 {Count} 帧)", 
+                        _logger?.LogWarning("Detected missing or corrupt frame(s) from {From} to {To} ({Count} frames lost)", 
                             start, end, lostCount);
                         
                         // ✅ 关键修复：丢失帧时，记录失败时间并清除参考链断裂标记
@@ -348,7 +348,7 @@ namespace RemotePlay.Services.Streaming.AV
                             // ✅ 优化：提高阈值到 20 帧，避免过度重置导致视频冻结
                             if (lostCount > 20)
                             {
-                                _logger?.LogWarning("⚠️ 大量帧丢失（{Count} 帧），重置参考链和解码器状态", lostCount);
+                                _logger?.LogWarning("⚠️ Heavy frame loss ({Count} frames), resetting reference chain and decoder state", lostCount);
                                 _referenceFrameManager.Reset();
                                 _frameProcessor.Reset();
                             }
@@ -373,7 +373,7 @@ namespace RemotePlay.Services.Streaming.AV
                         
                         // ✅ 关键修复：如果 AllocFrame 失败，可能需要重置 FrameProcessor
                         // 这通常发生在帧结构发生变化时（如分辨率切换）
-                        _logger?.LogWarning("⚠️ AllocFrame 失败，可能需要重置 FrameProcessor");
+                        _logger?.LogWarning("⚠️ AllocFrame failed, FrameProcessor may need a reset");
                     }
                 }
 
@@ -390,7 +390,7 @@ namespace RemotePlay.Services.Streaming.AV
                     // 因为帧可能已经可以刷新了（通过 FEC 或其他 unit）
                     if (packet.UnitIndex == packet.UnitsTotal - 1)
                     {
-                        _logger?.LogWarning("⚠️ PutUnit 失败但这是最后一个 unit，尝试强制刷新帧 {Frame}", packet.FrameIndex);
+                        _logger?.LogWarning("⚠️ PutUnit failed on the last unit, trying to force-flush frame {Frame}", packet.FrameIndex);
                     }
                 }
 
@@ -455,7 +455,7 @@ namespace RemotePlay.Services.Streaming.AV
                 // 在宽限期内，允许后续帧即使缺少参考帧也尝试解码
                 NotifyFrameFailure(); // ✅ 使用统一入口
                 
-                _logger?.LogWarning("Failed to complete frame {Frame}（包缺失且 FEC 无法恢复，已通知主机）", _frameIndexCur);
+                _logger?.LogWarning("Failed to complete frame {Frame} (missing packets, FEC could not recover; host notified)", _frameIndexCur);
                 if (_referenceChainBroken)
                 {
                     _referenceChainBroken = false;
@@ -504,7 +504,7 @@ namespace RemotePlay.Services.Streaming.AV
                         {
                             _referenceChainBroken = false;
                             _referenceChainBrokenTime = DateTime.MinValue;
-                            _logger?.LogInformation("✅ 参考链恢复：P帧 {Frame} 的参考帧可用", _frameIndexCur);
+                            _logger?.LogInformation("✅ Reference chain recovered: reference frame available for P-frame {Frame}", _frameIndexCur);
                         }
                     }
                 }
@@ -523,7 +523,7 @@ namespace RemotePlay.Services.Streaming.AV
                     _consecutiveDroppedFrames = 0; // 重置连续丢弃计数
                     _consecutiveBypassAttempts = 0; // 重置连续尝试计数
                     _lastValidFrameIndex = _frameIndexCur;
-                    _logger?.LogInformation("✅ 参考链恢复：收到IDR帧 {Frame}，恢复正常解码（恢复耗时：{RecoveryTime}ms）", 
+                    _logger?.LogInformation("✅ Reference chain recovered: received IDR frame {Frame}, normal decoding resumed (recovery took {RecoveryTime}ms)", 
                         _frameIndexCur, (int)recoveryTime);
                 }
                 

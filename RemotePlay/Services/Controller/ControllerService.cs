@@ -43,14 +43,14 @@ namespace RemotePlay.Services.Controller
         {
             if (_controllers.ContainsKey(sessionId))
             {
-                _logger.LogWarning("控制器已连接到会话 {SessionId}，请先断开连接", sessionId);
+                _logger.LogWarning("Controller already connected to session {SessionId}; disconnect first", sessionId);
                 return false;
             }
 
             var session = await _streamingService.GetSessionAsync(sessionId);
             if (session == null)
             {
-                _logger.LogError("会话 {SessionId} 不存在", sessionId);
+                _logger.LogError("Session {SessionId} does not exist", sessionId);
                 return false;
             }
 
@@ -63,7 +63,7 @@ namespace RemotePlay.Services.Controller
 				controller.AttachStream(stream);
 			}
             
-            _logger.LogInformation("控制器已连接到会话 {SessionId}", sessionId);
+            _logger.LogInformation("Controller connected to session {SessionId}", sessionId);
             return true;
         }
 
@@ -72,7 +72,7 @@ namespace RemotePlay.Services.Controller
             if (_controllers.TryRemove(sessionId, out var controller))
             {
                 controller.Stop();
-                _logger.LogInformation("控制器已从会话 {SessionId} 断开", sessionId);
+                _logger.LogInformation("Controller disconnected from session {SessionId}", sessionId);
             }
             return Task.CompletedTask;
         }
@@ -81,7 +81,7 @@ namespace RemotePlay.Services.Controller
         {
             if (!_controllers.TryGetValue(sessionId, out var controller))
             {
-                _logger.LogWarning("会话 {SessionId} 没有连接的控制器", sessionId);
+                _logger.LogWarning("No controller connected for session {SessionId}", sessionId);
                 return Task.FromResult(false);
             }
 
@@ -107,7 +107,7 @@ namespace RemotePlay.Services.Controller
         {
             if (!_controllers.TryGetValue(sessionId, out var controller))
             {
-                _logger.LogWarning("会话 {SessionId} 没有连接的控制器", sessionId);
+                _logger.LogWarning("No controller connected for session {SessionId}", sessionId);
                 return;
             }
 
@@ -124,7 +124,7 @@ namespace RemotePlay.Services.Controller
         {
             if (!_controllers.TryGetValue(sessionId, out var controller))
             {
-                _logger.LogWarning("会话 {SessionId} 没有连接的控制器", sessionId);
+                _logger.LogWarning("No controller connected for session {SessionId}", sessionId);
                 return Task.CompletedTask;
             }
 
@@ -140,7 +140,7 @@ namespace RemotePlay.Services.Controller
         {
             if (!_controllers.TryGetValue(sessionId, out var controller))
             {
-                _logger.LogWarning("会话 {SessionId} 没有连接的控制器", sessionId);
+                _logger.LogWarning("No controller connected for session {SessionId}", sessionId);
                 return Task.CompletedTask;
             }
 
@@ -298,13 +298,13 @@ namespace RemotePlay.Services.Controller
             {
                 if (_workerTask != null)
                 {
-                    _logger.LogWarning("控制器已在运行");
+                    _logger.LogWarning("Controller is already running");
                     return;
                 }
 
                 _cts = new CancellationTokenSource();
                 _workerTask = Task.Run(() => WorkerLoopAsync(_cts.Token), _cts.Token);
-                _logger.LogDebug("控制器 worker 已启动，会话 {SessionId}", _sessionId);
+                _logger.LogDebug("Controller worker started for session {SessionId}", _sessionId);
             }
 
             public void Stop()
@@ -315,7 +315,7 @@ namespace RemotePlay.Services.Controller
                 _cts?.Dispose();
                 _cts = null;
                 _workerTask = null;
-                _logger.LogInformation("控制器已停止，会话 {SessionId}", _sessionId);
+                _logger.LogInformation("Controller stopped for session {SessionId}", _sessionId);
             }
 
             private async Task WorkerLoopAsync(CancellationToken ct)
@@ -341,7 +341,7 @@ namespace RemotePlay.Services.Controller
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "控制器 worker 循环异常");
+                    _logger.LogError(ex, "Controller worker loop error");
                 }
             }
 
@@ -353,11 +353,11 @@ namespace RemotePlay.Services.Controller
             {
                 if (!CheckSession())
                 {
-                    _logger.LogWarning("无法发送按钮事件: 会话 {SessionId} 的流不存在", _sessionId);
+                    _logger.LogWarning("Cannot send button event: no stream for session {SessionId}", _sessionId);
                     return;
                 }
 
-                _logger.LogDebug("发送按钮事件: 按钮={Button}, 动作={Action}, 延迟={DelayMs}ms, 会话={SessionId}", 
+                _logger.LogDebug("Sending button event: button={Button}, action={Action}, delay={DelayMs}ms, session={SessionId}", 
                     button, action, delayMs, _sessionId);
 
                 // 添加按键事件
@@ -524,7 +524,7 @@ namespace RemotePlay.Services.Controller
             {
                 if (_eventBuffer.Count == 0)
                 {
-                    _logger.LogDebug("事件缓冲区为空，跳过发送");
+                    _logger.LogDebug("Event buffer empty, skipping send");
                     return;
                 }
 
@@ -537,7 +537,7 @@ namespace RemotePlay.Services.Controller
                 if (stream != null)
                 {
 					AttachStream(stream);
-                    _logger.LogDebug("发送控制器事件到流: 事件数={EventCount}, 数据长度={DataLength}, 序列号={Sequence}, 会话={SessionId}", 
+                    _logger.LogDebug("Sending controller events to stream: count={EventCount}, length={DataLength}, seq={Sequence}, session={SessionId}", 
                         eventCount, data.Length, _sequenceEvent, _sessionId);
                     
                     await stream.SendFeedbackAsync(
@@ -546,11 +546,11 @@ namespace RemotePlay.Services.Controller
                         data);
                     
                     _sequenceEvent++;
-                    _logger.LogDebug("控制器事件已发送，新序列号={Sequence}", _sequenceEvent);
+                    _logger.LogDebug("Controller events sent, new seq={Sequence}", _sequenceEvent);
                 }
                 else
                 {
-                    _logger.LogWarning("无法发送控制器事件: 流不存在，会话={SessionId}", _sessionId);
+                    _logger.LogWarning("Cannot send controller events: stream not found, session={SessionId}", _sessionId);
                 }
             }
 
@@ -564,7 +564,7 @@ namespace RemotePlay.Services.Controller
                 var stream = _streamingService.GetStreamAsync(_sessionId).Result;
                 if (stream == null)
                 {
-                    _logger.LogWarning("流不存在，会话 {SessionId}", _sessionId);
+                    _logger.LogWarning("Stream not found for session {SessionId}", _sessionId);
                     return false;
                 }
 

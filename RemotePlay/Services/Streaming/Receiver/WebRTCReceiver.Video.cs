@@ -46,17 +46,17 @@ namespace RemotePlay.Services.Streaming.Receiver
 
                 if (_videoTrack != null)
                 {
-                    _logger.LogWarning("⚠️ 视频管道未初始化，尝试重新初始化 (已收到 {Count} 个视频包)", _videoPacketCount);
+                    _logger.LogWarning("⚠️ Video pipeline not initialized, retrying initialization ({Count} video packets received)", _videoPacketCount);
                     InitializeVideoPipeline();
                 }
                 else
                 {
-                    _logger.LogError("❌ 视频管道未初始化：_videoTrack 为 null (已收到 {Count} 个视频包)", _videoPacketCount);
+                    _logger.LogError("❌ Video pipeline not initialized: _videoTrack is null ({Count} video packets received)", _videoPacketCount);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 处理视频包失败: packetLen={Len}, count={Count}",
+                _logger.LogError(ex, "❌ Failed to process video packet: packetLen={Len}, count={Count}",
                     packet?.Length ?? 0, _videoPacketCount);
             }
         }

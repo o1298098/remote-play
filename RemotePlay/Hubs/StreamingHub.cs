@@ -64,14 +64,14 @@ namespace RemotePlay.Hubs
 
                 await stream.RequestKeyframeAsync();
 
-                _logger.LogDebug("🎯 SignalR 请求关键帧成功: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
+                _logger.LogDebug("🎯 SignalR keyframe request succeeded: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
                     sessionId, session.StreamingSessionId, Context.ConnectionId);
 
                 await Clients.Caller.SendAsync("KeyframeRequested", true);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ SignalR 请求关键帧失败: SessionId={SessionId}, ConnectionId={ConnectionId}", sessionId, Context.ConnectionId);
+                _logger.LogError(ex, "❌ SignalR keyframe request failed: SessionId={SessionId}, ConnectionId={ConnectionId}", sessionId, Context.ConnectionId);
                 await Clients.Caller.SendAsync("KeyframeRequested", false);
                 await Clients.Caller.SendAsync("Error", "请求关键帧失败");
             }
@@ -88,9 +88,9 @@ namespace RemotePlay.Hubs
             }
 
             _logger.LogDebug(
-                "浏览器视频统计 [{Session}]: 状态={State} 收包={PacketsReceived} 丢包={PacketsLost} 收帧={FramesReceived} 解码={FramesDecoded} " +
-                "关键帧解码={KeyFramesDecoded} 丢帧={FramesDropped} PLI={Pli} FIR={Fir} NACK={Nack} 冻结={FreezeCount}次/{FreezeSeconds:F1}s " +
-                "解码帧率={DecodeFps:F1} 码率={Kbps:F0}kbps 抖动缓冲={JitterBufferMs:F0}ms 解码器={Decoder} 编码={Codec} 分辨率={Width}x{Height}",
+                "Browser video stats [{Session}]: state={State} packetsRecv={PacketsReceived} packetsLost={PacketsLost} framesRecv={FramesReceived} decoded={FramesDecoded} " +
+                "keyFramesDecoded={KeyFramesDecoded} dropped={FramesDropped} PLI={Pli} FIR={Fir} NACK={Nack} freezes={FreezeCount}x/{FreezeSeconds:F1}s " +
+                "decodeFps={DecodeFps:F1} bitrate={Kbps:F0}kbps jitterBuffer={JitterBufferMs:F0}ms decoder={Decoder} codec={Codec} resolution={Width}x{Height}",
                 sessionId.Length > 8 ? sessionId[..8] : sessionId,
                 stats.ConnectionState, stats.PacketsReceived, stats.PacketsLost, stats.FramesReceived, stats.FramesDecoded,
                 stats.KeyFramesDecoded, stats.FramesDropped, stats.PliCount, stats.FirCount, stats.NackCount,
@@ -129,7 +129,7 @@ namespace RemotePlay.Hubs
                     if (!string.IsNullOrWhiteSpace(newOffer))
                     {
                         await Clients.Caller.SendAsync("IceRestartOffer", newOffer);
-                        _logger.LogInformation("✅ ICE Restart Offer 已发送: SessionId={SessionId}", sessionId);
+                        _logger.LogInformation("✅ ICE restart offer sent: SessionId={SessionId}", sessionId);
                     }
                     else
                     {
@@ -143,7 +143,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ ICE Restart 失败: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "❌ ICE restart failed: SessionId={SessionId}", sessionId);
                 await Clients.Caller.SendAsync("IceRestartFailed", "ICE Restart 异常");
             }
         }
@@ -169,13 +169,13 @@ namespace RemotePlay.Hubs
                 var offer = session.GetPendingIceRestartOffer();
                 if (!string.IsNullOrWhiteSpace(offer))
                 {
-                    _logger.LogInformation("📤 返回 ICE Restart Offer: SessionId={SessionId}", sessionId);
+                    _logger.LogInformation("📤 Returning ICE restart offer: SessionId={SessionId}", sessionId);
                 }
                 return offer;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 获取 ICE Restart Offer 失败: SessionId={SessionId}", sessionId);
+                _logger.LogError(ex, "❌ Failed to get ICE restart offer: SessionId={SessionId}", sessionId);
                 return null;
             }
         }
@@ -212,7 +212,7 @@ namespace RemotePlay.Hubs
                 var success = await _streamingService.ForceResetReorderQueueAsync(session.StreamingSessionId.Value);
                 if (success)
                 {
-                    _logger.LogInformation("🔄 SignalR 强制重置 ReorderQueue 成功: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
+                    _logger.LogInformation("🔄 SignalR force-reset ReorderQueue succeeded: SessionId={SessionId}, StreamingSessionId={StreamingSessionId}, ConnectionId={ConnectionId}",
                         sessionId, session.StreamingSessionId, Context.ConnectionId);
 
                     await Clients.Caller.SendAsync("ReorderQueueResetResult", true);
@@ -225,7 +225,7 @@ namespace RemotePlay.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ SignalR 强制重置 ReorderQueue 失败: SessionId={SessionId}, ConnectionId={ConnectionId}", sessionId, Context.ConnectionId);
+                _logger.LogError(ex, "❌ SignalR force-reset ReorderQueue failed: SessionId={SessionId}, ConnectionId={ConnectionId}", sessionId, Context.ConnectionId);
                 await Clients.Caller.SendAsync("ReorderQueueResetResult", false);
                 await Clients.Caller.SendAsync("Error", "重置队列失败");
             }

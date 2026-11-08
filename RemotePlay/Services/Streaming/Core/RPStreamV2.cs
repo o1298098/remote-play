@@ -230,13 +230,13 @@ namespace RemotePlay.Services.Streaming.Core
             if (_usePipeline)
             {
                 // 使用新的 Pipeline 架构
-                _logger.LogInformation("🚀 使用新的 Pipeline 架构");
+                _logger.LogInformation("🚀 Using new Pipeline architecture");
                 // Pipeline 会在 SetReceiver 时初始化（需要 receiver）
             }
             else
             {
                 // 使用旧的 AVHandler
-                _logger.LogInformation("🔄 使用旧的 AVHandler 架构");
+                _logger.LogInformation("🔄 Using legacy AVHandler architecture");
             }
             
             // 初始化 AVHandler（作为备份或主要使用）
@@ -416,12 +416,12 @@ namespace RemotePlay.Services.Streaming.Core
                     
                     if (completedTask == timeoutTask)
                     {
-                        _logger.LogWarning("⚠️ 等待任务退出超时（2秒），强制继续停止流程");
+                        _logger.LogWarning("⚠️ Timed out (2s) waiting for tasks to exit, continuing shutdown");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "⚠️ 等待任务退出时发生异常，继续停止流程");
+                    _logger.LogWarning(ex, "⚠️ Error while waiting for tasks to exit, continuing shutdown");
                 }
             }
 
@@ -462,7 +462,7 @@ namespace RemotePlay.Services.Streaming.Core
                 // 初始化 Pipeline（如果还没有初始化）
                 if (_avPipeline == null)
                 {
-                    _logger.LogInformation("🚀 初始化 AV Pipeline");
+                    _logger.LogInformation("🚀 Initializing AV Pipeline");
                     _avPipeline = new AVPipelineCoordinator(
                         _loggerFactory.CreateLogger<AVPipelineCoordinator>(),
                         _loggerFactory,
@@ -710,12 +710,12 @@ namespace RemotePlay.Services.Streaming.Core
             int effective = _udpClient.Client.ReceiveBufferSize;
             if (effective < UDP_RECEIVE_BUFFER_SIZE)
             {
-                _logger.LogWarning("⚠️ UDP 接收缓冲区仅 {Effective} 字节（请求 {Requested}），高码率下可能丢包，请调大宿主机 net.core.rmem_max",
+                _logger.LogWarning("⚠️ UDP receive buffer is only {Effective} bytes (requested {Requested}); packets may drop at high bitrates, increase net.core.rmem_max on the host",
                     effective, UDP_RECEIVE_BUFFER_SIZE);
             }
             else
             {
-                _logger.LogInformation("UDP 接收缓冲区: {Effective} 字节", effective);
+                _logger.LogInformation("UDP receive buffer: {Effective} bytes", effective);
             }
         }
 
@@ -784,7 +784,7 @@ namespace RemotePlay.Services.Streaming.Core
                 {
                     if (packetSize > maxPacketSize)
                     {
-                        _logger.LogWarning("⚠️ BIG 包 {Size} 字节超过 MTU 限制 {Max} 字节，可能发送失败", packetSize, maxPacketSize);
+                        _logger.LogWarning("⚠️ BIG packet of {Size} bytes exceeds MTU limit of {Max} bytes, send may fail", packetSize, maxPacketSize);
                     }
                     break;
                 }
@@ -792,11 +792,11 @@ namespace RemotePlay.Services.Streaming.Core
 
             if (resolutionCount < ladder.Count)
             {
-                _logger.LogInformation("BIG 包受 MTU（{Max} 字节）限制，候选分辨率从 {Full} 个裁剪为 {Count} 个",
+                _logger.LogInformation("BIG packet limited by MTU ({Max} bytes), trimmed candidate resolutions from {Full} to {Count}",
                     maxPacketSize, ladder.Count, resolutionCount);
             }
 
-            _logger.LogInformation("Sending BIG payload: len={Len}, tagRemote={TagRemote}, 候选分辨率={Resolutions}",
+            _logger.LogInformation("Sending BIG payload: len={Len}, tagRemote={TagRemote}, resolutions={Resolutions}",
                 bigPayload.Length, _tagRemote,
                 string.Join(", ", ladder.Take(resolutionCount).Select(r => $"{r.Width}x{r.Height}")));
             
@@ -932,7 +932,7 @@ namespace RemotePlay.Services.Streaming.Core
                             var timeSinceLastPacket = (DateTime.UtcNow - _lastPacketReceivedTime).TotalSeconds;
                             if (timeSinceLastPacket >= STREAM_TIMEOUT_SECONDS)
                             {
-                                _logger.LogError("❌ 流已断开：{Seconds} 秒没有收到任何 UDP 包，触发断开连接", timeSinceLastPacket);
+                                _logger.LogError("❌ Stream lost: no UDP packets for {Seconds}s, disconnecting", timeSinceLastPacket);
                                 await TriggerDisconnectAsync();
                                 break; // 退出接收循环
                             }
@@ -1036,7 +1036,7 @@ namespace RemotePlay.Services.Streaming.Core
                 return false;
             }
 
-            _logger.LogWarning("❌ 已有 {Seconds:F0} 秒没有收到音视频数据（主机可能停止了推流），自动断开连接", silence);
+            _logger.LogWarning("❌ No audio/video data for {Seconds:F0}s (host may have stopped streaming), disconnecting", silence);
             await TriggerDisconnectAsync();
             return true;
         }
@@ -1054,7 +1054,7 @@ namespace RemotePlay.Services.Streaming.Core
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 断开连接回调执行失败");
+                _logger.LogError(ex, "❌ Disconnect callback failed");
             }
         }
 
@@ -1081,7 +1081,7 @@ namespace RemotePlay.Services.Streaming.Core
                         }
                         else
                         {
-                            _logger.LogWarning("⚠️ AV 处理器未初始化");
+                            _logger.LogWarning("⚠️ AV handler not initialized");
                         }
                     }
                     catch (Exception ex)
@@ -1745,7 +1745,7 @@ namespace RemotePlay.Services.Streaming.Core
                         await Task.Delay(500, _cancellationToken); // 等待服务稳定
                         if (!_cancellationToken.IsCancellationRequested)
                         {
-                            _logger.LogInformation("🎬 启动 IDR 请求循环");
+                            _logger.LogInformation("🎬 Starting IDR request loop");
                             await StartIdrRequesterAsync();
                         }
                     }
@@ -1755,7 +1755,7 @@ namespace RemotePlay.Services.Streaming.Core
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "IDR 请求循环启动失败");
+                        _logger.LogWarning(ex, "Failed to start IDR request loop");
                     }
                 }, _cancellationToken);
             }
@@ -1778,7 +1778,7 @@ namespace RemotePlay.Services.Streaming.Core
             {
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
-                    _logger.LogDebug("⏱️ 关键帧请求冷却中，忽略请求（距离上次请求 {Elapsed}ms < {Cooldown}ms）",
+                    _logger.LogDebug("⏱️ Keyframe request on cooldown, ignoring ({Elapsed}ms since last request < {Cooldown}ms)",
                         (now - _lastKeyframeRequest).TotalMilliseconds, _keyframeRequestCooldown.TotalMilliseconds);
                 }
                 return;
@@ -1793,7 +1793,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// </summary>
         public void ForceResetReorderQueue()
         {
-            _logger.LogWarning("🔄 用户主动触发重置视频流 ReorderQueue");
+            _logger.LogWarning("🔄 User requested video ReorderQueue reset");
             _avHandler?.ForceResetReorderQueue();
         }
         
@@ -1811,7 +1811,7 @@ namespace RemotePlay.Services.Streaming.Core
                     _idrPending = true;
                     if (_logger.IsEnabled(LogLevel.Debug))
                     {
-                        _logger.LogDebug("⏱️ IDR 请求已挂起：cipher 未初始化");
+                        _logger.LogDebug("⏱️ IDR request deferred: cipher not initialized");
                     }
                     return;
                 }
@@ -1829,7 +1829,7 @@ namespace RemotePlay.Services.Streaming.Core
                 await SendDataAsync(idr, flag: 1, channel: 1, proto: false);
                 RecordIdrRequest();
                 
-                _logger.LogDebug("📤 IDR 请求已发送到 PS5");
+                _logger.LogDebug("📤 IDR request sent to PS5");
                 
                 await Task.CompletedTask;  // 保持异步方法签名
             }
@@ -2020,7 +2020,7 @@ namespace RemotePlay.Services.Streaming.Core
             if (browserLoss >= 0.02 && DateTime.UtcNow - _lastBrowserLossLog > TimeSpan.FromSeconds(5))
             {
                 _lastBrowserLossLog = DateTime.UtcNow;
-                _logger.LogInformation("📉 浏览器侧丢包 {BrowserLoss:P1}，上报主机的合并丢包率 {Combined:P1}",
+                _logger.LogInformation("📉 Browser-side loss {BrowserLoss:P1}, combined loss reported to host {Combined:P1}",
                     browserLoss, combined);
             }
 
@@ -2243,31 +2243,31 @@ namespace RemotePlay.Services.Streaming.Core
             var profiles = new List<VideoProfile>();
             if (streamInfo.Resolution != null && streamInfo.Resolution.Count > 0)
             {
-                _logger.LogInformation("📊 STREAMINFO 解析：收到 {Count} 个 Resolution", streamInfo.Resolution.Count);
+                _logger.LogInformation("📊 STREAMINFO parsed: received {Count} resolutions", streamInfo.Resolution.Count);
                 
                 for (int i = 0; i < streamInfo.Resolution.Count; i++)
                 {
                     var resolution = streamInfo.Resolution[i];
                     var header = resolution.VideoHeader?.ToByteArray() ?? Array.Empty<byte>();
                     
-                    _logger.LogInformation("  Resolution[{Index}]: {Width}x{Height}, VideoHeader长度={HeaderLength}", 
+                    _logger.LogInformation("  Resolution[{Index}]: {Width}x{Height}, VideoHeader length={HeaderLength}", 
                         i, resolution.Width, resolution.Height, header.Length);
                     
                     if (header.Length > 0)
                     {
                         var profile = new VideoProfile(i, (int)resolution.Width, (int)resolution.Height, header);
                         profiles.Add(profile);
-                        _logger.LogInformation("    ✅ 已添加到 profiles 列表");
+                        _logger.LogInformation("    ✅ Added to profiles list");
                     }
                     else
                     {
-                        _logger.LogWarning("    ⚠️ VideoHeader 为空，跳过此 Resolution");
+                        _logger.LogWarning("    ⚠️ VideoHeader is empty, skipping this resolution");
                     }
                 }
             }
             else
             {
-                _logger.LogWarning("⚠️ STREAMINFO 中没有 Resolution 数据（Resolution 为 null 或 Count = 0）");
+                _logger.LogWarning("⚠️ No Resolution data in STREAMINFO (Resolution is null or Count = 0)");
             }
 
             // 设置到 AdaptiveStreamManager
@@ -2278,18 +2278,18 @@ namespace RemotePlay.Services.Streaming.Core
                 // ✅ 诊断：检查是否有多个 profiles（PS5 降档需要多个 profiles）
                 if (profiles.Count == 1)
                 {
-                    _logger.LogWarning("⚠️ 警告：只收到 1 个 profile ({Width}x{Height})，PS5 无法降档！" +
-                        " 如果网络变差，PS5 无法切换到更低的分辨率。", 
+                    _logger.LogWarning("⚠️ Only 1 profile received ({Width}x{Height}), PS5 cannot downgrade!" +
+                        " If the network degrades, PS5 cannot switch to a lower resolution.", 
                         profiles[0].Width, profiles[0].Height);
                 }
                 else
                 {
-                    _logger.LogInformation("✅ 收到 {Count} 个 profiles，PS5 可以根据网络状况进行降档/升档", profiles.Count);
+                    _logger.LogInformation("✅ Received {Count} profiles, PS5 can downgrade/upgrade based on network conditions", profiles.Count);
                 }
             }
             else if (profiles.Count == 0)
             {
-                _logger.LogWarning("⚠️ 警告：没有收到任何 profiles，无法进行自适应流管理！");
+                _logger.LogWarning("⚠️ No profiles received, adaptive streaming unavailable!");
             }
 
             // 提取第一个视频和音频头（用于向后兼容）
@@ -2299,15 +2299,15 @@ namespace RemotePlay.Services.Streaming.Core
             // ✅ 诊断：记录音频header状态
             if (audioHeader.Length == 0)
             {
-                _logger.LogWarning("⚠️ STREAMINFO 中 AudioHeader 为空或缺失，音频可能无法初始化");
+                _logger.LogWarning("⚠️ AudioHeader missing or empty in STREAMINFO, audio may fail to initialize");
             }
             else if (audioHeader.Length < 10)
             {
-                _logger.LogWarning("⚠️ STREAMINFO 中 AudioHeader 长度不足：{Length} < 10，音频可能无法初始化", audioHeader.Length);
+                _logger.LogWarning("⚠️ AudioHeader in STREAMINFO too short: {Length} < 10, audio may fail to initialize", audioHeader.Length);
             }
             else
             {
-                _logger.LogDebug("✅ STREAMINFO 中 AudioHeader 长度：{Length} 字节", audioHeader.Length);
+                _logger.LogDebug("✅ STREAMINFO AudioHeader length: {Length} bytes", audioHeader.Length);
             }
 
             // 视频 header 需要添加 FFMPEG_PADDING（64字节）
@@ -2431,19 +2431,19 @@ namespace RemotePlay.Services.Streaming.Core
             if (upstreamLoss > 0.1 || rtt > 100 || (targetBitrate > 0 && upstreamBitrate > 0 && upstreamBitrate < targetBitrate * 0.5))
             {
                 _logger.LogDebug(
-                    "⚠️ 网络状况较差，但未检测到降档。诊断信息:\n" +
-                    "  - 上行丢失率: {Loss:P2}\n" +
+                    "⚠️ Poor network conditions but no downgrade detected. Diagnostics:\n" +
+                    "  - Upstream loss: {Loss:P2}\n" +
                     "  - RTT: {Rtt:F2} ms\n" +
-                    "  - 目标码率: {TargetBitrate} kbps\n" +
-                    "  - 实际上行码率: {UpstreamBitrate} kbps\n" +
-                    "  - Profiles 数量: {ProfileCount}\n" +
-                    "  - 总降档次数: {DowngradeCount}\n" +
-                    "  - 总升档次数: {UpgradeCount}\n" +
-                    "可能原因:\n" +
-                    "  1) 只有 1 个 profile，PS5 无法降档\n" +
-                    "  2) PS5 需要持续的高丢失率（可能需要几秒）\n" +
-                    "  3) PS5 可能还考虑其他因素（延迟、带宽趋势等）\n" +
-                    "  4) 拥塞控制报告的丢失率可能不够高（当前限制已移除，报告真实丢失率）",
+                    "  - Target bitrate: {TargetBitrate} kbps\n" +
+                    "  - Actual upstream bitrate: {UpstreamBitrate} kbps\n" +
+                    "  - Profile count: {ProfileCount}\n" +
+                    "  - Total downgrades: {DowngradeCount}\n" +
+                    "  - Total upgrades: {UpgradeCount}\n" +
+                    "Possible causes:\n" +
+                    "  1) Only 1 profile, PS5 cannot downgrade\n" +
+                    "  2) PS5 needs sustained high loss (may take several seconds)\n" +
+                    "  3) PS5 may consider other factors (latency, bandwidth trend, etc.)\n" +
+                    "  4) Loss reported by congestion control may not be high enough (cap removed, real loss is reported)",
                     upstreamLoss, rtt, targetBitrate, upstreamBitrate, profileCount, _qualityDowngradeCount, _qualityUpgradeCount);
             }
         }
@@ -2470,19 +2470,19 @@ namespace RemotePlay.Services.Streaming.Core
                     if (isDegradation)
                     {
                         _qualityDowngradeCount++;
-                        _logger.LogWarning("📉 Quality degradation detected: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex}) [总降档次数: {Count}]", 
+                        _logger.LogWarning("📉 Quality degradation detected: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex}) [total downgrades: {Count}]", 
                             oldProfile.Width, oldProfile.Height, newProfile.Width, newProfile.Height, oldProfile.Index, newProfile.Index, _qualityDowngradeCount);
                     }
                     else
                     {
                         _qualityUpgradeCount++;
-                        _logger.LogInformation("📈 Quality upgrade: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex}) [总升档次数: {Count}]", 
+                        _logger.LogInformation("📈 Quality upgrade: {OldW}x{OldH} -> {NewW}x{NewH} (Profile {OldIndex} -> {NewIndex}) [total upgrades: {Count}]", 
                             oldProfile.Width, oldProfile.Height, newProfile.Width, newProfile.Height, oldProfile.Index, newProfile.Index, _qualityUpgradeCount);
                     }
                 }
                 else
                 {
-                    _logger.LogInformation("🔄 Profile 切换: {Width}x{Height} (Profile {Index}), 更新 receiver header", 
+                    _logger.LogInformation("🔄 Profile switched: {Width}x{Height} (Profile {Index}), updating receiver header", 
                         newProfile.Width, newProfile.Height, newProfile.Index);
                 }
                 
@@ -2491,7 +2491,7 @@ namespace RemotePlay.Services.Streaming.Core
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ 更新 receiver header 失败");
+                _logger.LogError(ex, "❌ Failed to update receiver header");
             }
         }
         
