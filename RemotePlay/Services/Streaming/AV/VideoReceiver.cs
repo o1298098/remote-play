@@ -338,17 +338,10 @@ namespace RemotePlay.Services.Streaming.AV
                             
                             if (_referenceChainBroken)
                             {
-                                _logger?.LogWarning("⚠️ 检测到帧丢失（{Count} 帧），清除参考链断裂标记，进入 {GracePeriod}ms 宽限期", 
-                                    lostCount, FRAME_FAILURE_GRACE_PERIOD_MS);
                                 _referenceChainBroken = false;
                                 _consecutiveDroppedFrames = 0;
                                 _consecutiveBypassAttempts = 0;
                                 _referenceChainBrokenTime = DateTime.MinValue;
-                            }
-                            else
-                            {
-                                _logger?.LogWarning("⚠️ 检测到帧丢失（{Count} 帧），进入 {GracePeriod}ms 宽限期，允许后续帧尝试解码", 
-                                    lostCount, FRAME_FAILURE_GRACE_PERIOD_MS);
                             }
                             
                             // ✅ 如果丢失帧数过多，重置参考链和解码器状态
@@ -462,19 +455,13 @@ namespace RemotePlay.Services.Streaming.AV
                 // 在宽限期内，允许后续帧即使缺少参考帧也尝试解码
                 NotifyFrameFailure(); // ✅ 使用统一入口
                 
+                _logger?.LogWarning("Failed to complete frame {Frame}（包缺失且 FEC 无法恢复，已通知主机）", _frameIndexCur);
                 if (_referenceChainBroken)
                 {
-                    _logger?.LogWarning("Failed to complete frame {Frame} (参考链已断裂，清除断裂标记，进入 {GracePeriod}ms 宽限期)", 
-                        _frameIndexCur, FRAME_FAILURE_GRACE_PERIOD_MS);
                     _referenceChainBroken = false;
                     _consecutiveDroppedFrames = 0;
                     _consecutiveBypassAttempts = 0;
                     _referenceChainBrokenTime = DateTime.MinValue;
-                }
-                else
-                {
-                    _logger?.LogWarning("Failed to complete frame {Frame} (进入 {GracePeriod}ms 宽限期，允许后续帧尝试解码)", 
-                        _frameIndexCur, FRAME_FAILURE_GRACE_PERIOD_MS);
                 }
                 
                 // ✅ 优化：关键帧请求已经在ProcessPacket中收集，这里不需要处理

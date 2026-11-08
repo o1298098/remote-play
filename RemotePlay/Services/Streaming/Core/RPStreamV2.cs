@@ -89,6 +89,10 @@ namespace RemotePlay.Services.Streaming.Core
         // ✅ 流断开检测
         private DateTime _lastPacketReceivedTime = DateTime.UtcNow;
         private const int STREAM_TIMEOUT_SECONDS = 30; // 30 秒没有收到任何包，认为流已断开
+        // 主机仍在发心跳等控制包、但音视频已停止（画面卡在主机界面、码率为 0）时也视为断开
+        private const int AV_TIMEOUT_SECONDS = 30;
+        private DateTime _lastAvPacketTime = DateTime.UtcNow;
+        private DateTime _lastAvTimeoutCheck = DateTime.MinValue;
         
         // ✅ 降档统计
         private static readonly TimeSpan BrowserLossMaxAge = TimeSpan.FromSeconds(2);
@@ -929,25 +933,17 @@ namespace RemotePlay.Services.Streaming.Core
                             if (timeSinceLastPacket >= STREAM_TIMEOUT_SECONDS)
                             {
                                 _logger.LogError("❌ 流已断开：{Seconds} 秒没有收到任何 UDP 包，触发断开连接", timeSinceLastPacket);
-                                
-                                // ✅ 触发断开连接回调
-                                if (_onDisconnectCallback != null)
-                                {
-                                    try
-                                    {
-                                        await _onDisconnectCallback();
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogError(ex, "❌ 断开连接回调执行失败");
-                                    }
-                                }
-                                
+                                await TriggerDisconnectAsync();
                                 break; // 退出接收循环
                             }
                             
                             // ✅ 记录超时但继续重试（允许网络临时中断）
                             _logger.LogWarning("UDP receive timeout (5s), continuing to retry... (last packet: {Seconds}s ago)", timeSinceLastPacket);
+                        }
+
+                        if (await CheckAvTimeoutAsync())
+                        {
+                            break;
                         }
                         
                         continue;
@@ -962,6 +958,11 @@ namespace RemotePlay.Services.Streaming.Core
                             // ✅ 更新最后收到包的时间
                             _lastPacketReceivedTime = DateTime.UtcNow;
                             HandleReceivedData(result.Buffer);
+                        }
+
+                        if (await CheckAvTimeoutAsync())
+                        {
+                            break;
                         }
                     }
                     else
@@ -1012,11 +1013,57 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 处理收到的数据
         /// </summary>
+        /// <summary>
+        /// 每秒最多检查一次：流就绪后若音视频持续中断超过 AV_TIMEOUT_SECONDS，则触发断开。返回是否已断开。
+        /// </summary>
+        private async Task<bool> CheckAvTimeoutAsync()
+        {
+            if (!_isReady || _isStopping)
+            {
+                return false;
+            }
+
+            var now = DateTime.UtcNow;
+            if (now - _lastAvTimeoutCheck < TimeSpan.FromSeconds(1))
+            {
+                return false;
+            }
+            _lastAvTimeoutCheck = now;
+
+            var silence = (now - _lastAvPacketTime).TotalSeconds;
+            if (silence < AV_TIMEOUT_SECONDS)
+            {
+                return false;
+            }
+
+            _logger.LogWarning("❌ 已有 {Seconds:F0} 秒没有收到音视频数据（主机可能停止了推流），自动断开连接", silence);
+            await TriggerDisconnectAsync();
+            return true;
+        }
+
+        private async Task TriggerDisconnectAsync()
+        {
+            if (_onDisconnectCallback == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _onDisconnectCallback();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ 断开连接回调执行失败");
+            }
+        }
+
         private void HandleReceivedData(byte[] data)
         {
             // 检查是否为 AV 包
             if (data.Length > 0 && Packet.IsAv(data[0]))
             {
+                _lastAvPacketTime = DateTime.UtcNow;
                 // ✅ 处理 AV 包（支持新旧两种架构）
                 if (_receiver != null)
                 {
@@ -2481,6 +2528,10 @@ namespace RemotePlay.Services.Streaming.Core
             _logger.LogInformation("Stream ready");
             _state = STATE_READY;
             _isReady = true;
+            if (firstTimeReady)
+            {
+                _lastAvPacketTime = DateTime.UtcNow;
+            }
             
             // ✅ 启动心跳循环
             // 只在第一次设置就绪状态时启动，避免重复调用产生警告

@@ -65,6 +65,9 @@ namespace RemotePlay.Services.Streaming.Pipeline
             _receiver = receiver;
             _ct = ct;
 
+            _videoInputChannel = CreateInputChannel(_ => Interlocked.Increment(ref _videoInputDropped));
+            _audioInputChannel = CreateInputChannel(_ => Interlocked.Increment(ref _audioInputDropped));
+
             // 创建 Pipeline 组件
             _ingestPipeline = new IngestPipeline(
                 loggerFactory.CreateLogger<IngestPipeline>(),
@@ -113,20 +116,27 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
     #region Pipeline Input Channels
 
-    // 使用独立的 Channel，避免多读取者竞争
-    private readonly Channel<AVPacket> _videoInputChannel = Channel.CreateBounded<AVPacket>(new BoundedChannelOptions(2048)
-    {
-        FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = true,
-        SingleWriter = true
-    });
+    // 使用独立的 Channel，避免多读取者竞争；满时丢最旧的包并计数（处理速度跟不上的信号）
+    private readonly Channel<AVPacket> _videoInputChannel;
+    private readonly Channel<AVPacket> _audioInputChannel;
 
-    private readonly Channel<AVPacket> _audioInputChannel = Channel.CreateBounded<AVPacket>(new BoundedChannelOptions(2048)
-    {
-        FullMode = BoundedChannelFullMode.DropOldest,
-        SingleReader = true,
-        SingleWriter = true
-    });
+    // 上游诊断：网络缺包（序号跳号）与内部队列丢弃
+    private long _ingestDropped;
+    private long _videoInputDropped;
+    private long _audioInputDropped;
+    private long _videoNetworkGaps;
+    private long _audioNetworkGaps;
+    private long _videoRoutedWindow;
+    private DateTime _lastUpstreamLog = DateTime.UtcNow;
+    private static readonly TimeSpan UpstreamLogInterval = TimeSpan.FromSeconds(5);
+
+    private static Channel<AVPacket> CreateInputChannel(Action<AVPacket> onDropped) =>
+        Channel.CreateBounded<AVPacket>(new BoundedChannelOptions(2048)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = true
+        }, onDropped);
 
     private ChannelReader<AVPacket> CreateVideoPipelineInput(ChannelReader<AVPacket> source)
     {
@@ -152,6 +162,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
         long videoRouted = 0;
         long audioRouted = 0;
         long unknownType = 0;
+        int lastVideoIndex = -1;
+        int lastAudioIndex = -1;
 
         try
         {
@@ -163,11 +175,14 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 if (packet.Type == HeaderType.VIDEO)
                 {
                     videoRouted++;
+                    _videoRoutedWindow++;
+                    _videoNetworkGaps += CountSequenceGap(ref lastVideoIndex, packet.Index);
                     await _videoInputChannel.Writer.WriteAsync(packet, _routerCts.Token);
                 }
                 else if (packet.Type == HeaderType.AUDIO)
                 {
                     audioRouted++;
+                    _audioNetworkGaps += CountSequenceGap(ref lastAudioIndex, packet.Index);
                     await _audioInputChannel.Writer.WriteAsync(packet, _routerCts.Token);
                 }
                 else
@@ -175,6 +190,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
                     unknownType++;
                     _logger.LogWarning("⚠️ Unknown packet type: {Type}", packet.Type);
                 }
+
+                LogUpstreamStatsIfDue();
             }
         }
         catch (OperationCanceledException) { }
@@ -192,6 +209,55 @@ namespace RemotePlay.Services.Streaming.Pipeline
             );
         }
     }
+
+        /// <summary>
+        /// 按 16 位包序号统计跳号数量（进入服务端之前就已缺失的包，乱序到达的包会被计入一次后不再扣回）
+        /// </summary>
+        private static long CountSequenceGap(ref int lastIndex, ushort index)
+        {
+            int previous = lastIndex;
+            lastIndex = index;
+            if (previous < 0)
+            {
+                return 0;
+            }
+
+            int delta = (index - previous) & 0xFFFF;
+            return delta is > 1 and < 0x8000 ? delta - 1 : 0;
+        }
+
+        private void LogUpstreamStatsIfDue()
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastUpstreamLog < UpstreamLogInterval)
+            {
+                return;
+            }
+            _lastUpstreamLog = now;
+
+            long received = _videoRoutedWindow;
+            long gaps = _videoNetworkGaps;
+            long audioGaps = _audioNetworkGaps;
+            long ingestDropped = Interlocked.Exchange(ref _ingestDropped, 0);
+            long videoDropped = Interlocked.Exchange(ref _videoInputDropped, 0);
+            long audioDropped = Interlocked.Exchange(ref _audioInputDropped, 0);
+            _videoRoutedWindow = 0;
+            _videoNetworkGaps = 0;
+            _audioNetworkGaps = 0;
+
+            bool internalDrops = ingestDropped > 0 || videoDropped > 0 || audioDropped > 0;
+            if (!internalDrops && gaps == 0 && audioGaps == 0)
+            {
+                return;
+            }
+
+            double lossRate = received + gaps > 0 ? (double)gaps / (received + gaps) : 0;
+            // 只有服务端内部丢包才需要关注；单纯的网络缺包由主机的码率自适应处理
+            var level = internalDrops ? LogLevel.Warning : LogLevel.Debug;
+            _logger.Log(level,
+                "上游视频包统计(5s): 收到={Received} 网络缺包={Gaps} ({Loss:P1}) 音频缺包={AudioGaps} | 服务端内部丢弃: 解密队列={Ingest} 视频队列={Video} 音频队列={Audio}",
+                received, gaps, lossRate, audioGaps, ingestDropped, videoDropped, audioDropped);
+        }
 
         private async Task RouteVideoFrames()
         {
@@ -245,7 +311,10 @@ namespace RemotePlay.Services.Streaming.Pipeline
         /// </summary>
         public void AddPacket(byte[] msg)
         {
-            _ingestPipeline.TryPushRawData(msg);
+            if (!_ingestPipeline.TryPushRawData(msg))
+            {
+                Interlocked.Increment(ref _ingestDropped);
+            }
         }
 
         /// <summary>
