@@ -15,6 +15,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using TurnServerConfig = RemotePlay.Models.Configuration.TurnServerConfig;
 
 namespace RemotePlay.Services.WebRTC
 {
