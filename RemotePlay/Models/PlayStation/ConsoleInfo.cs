@@ -7,5 +7,8 @@
         string? HostType = null,
         string? SystemVerion = null,
         string? DeviceDiscoverPotocolVersion = null,
-        string? status = null);
+        string? status = null,
+        int? HostRequestPort = null,
+        string? RunningAppTitleId = null,
+        string? RunningAppName = null);
 }

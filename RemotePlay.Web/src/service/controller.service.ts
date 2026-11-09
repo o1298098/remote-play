@@ -1,5 +1,11 @@
 import * as signalR from '@microsoft/signalr'
-import { ControllerRumbleEvent, ControllerRumblePayload } from '@/types/controller'
+import {
+  ControllerLightbarEvent,
+  ControllerRumbleEvent,
+  ControllerRumblePayload,
+  ControllerTriggerEffectsEvent,
+} from '@/types/controller'
+import type { DualSenseMotion, DualSenseTouchSlot } from '@/service/dualsense-hid.service'
 
 // API 基础配置
 const DEFAULT_API_BASE_URL = `${window.location.origin}/api`
@@ -37,6 +43,9 @@ export class ControllerService {
   private sessionId: string | null = null
   private connectionStateListeners: Set<(state: ControllerConnectionState) => void> = new Set()
   private rumbleListeners: Set<(event: ControllerRumbleEvent) => void> = new Set()
+  private triggerEffectsListeners: Set<(event: ControllerTriggerEffectsEvent) => void> = new Set()
+  private lightbarListeners: Set<(event: ControllerLightbarEvent) => void> = new Set()
+  private motionResetListeners: Set<() => void> = new Set()
 
   /**
    * 连接到控制器 Hub
@@ -154,6 +163,43 @@ export class ControllerService {
         if (event) {
           this.notifyRumble(event)
         }
+      })
+
+      this.connection.on('ControllerTriggerEffects', (payload: Partial<ControllerTriggerEffectsEvent>) => {
+        if (!payload || !Array.isArray(payload.left) || !Array.isArray(payload.right)) {
+          return
+        }
+        const event: ControllerTriggerEffectsEvent = {
+          typeLeft: Number(payload.typeLeft) || 0,
+          left: payload.left.map(Number),
+          typeRight: Number(payload.typeRight) || 0,
+          right: payload.right.map(Number),
+          intensity: Number(payload.intensity) || 0,
+        }
+        this.notifyListeners(this.triggerEffectsListeners, event)
+      })
+
+      this.connection.on('ControllerLightbar', (payload: Partial<ControllerLightbarEvent>) => {
+        if (!payload) {
+          return
+        }
+        const event: ControllerLightbarEvent = {
+          red: Number(payload.red) || 0,
+          green: Number(payload.green) || 0,
+          blue: Number(payload.blue) || 0,
+          playerIndex: Number(payload.playerIndex) || 0,
+        }
+        this.notifyListeners(this.lightbarListeners, event)
+      })
+
+      this.connection.on('ControllerMotionReset', () => {
+        this.motionResetListeners.forEach((listener) => {
+          try {
+            listener()
+          } catch (error) {
+            console.warn('⚠️ 体感重置处理失败:', error)
+          }
+        })
       })
 
       this.connection.onclose((error) => {
@@ -636,6 +682,95 @@ export class ControllerService {
     return () => {
       this.rumbleListeners.delete(listener)
     }
+  }
+
+  /**
+   * 注册主机下发的 DualSense 自适应扳机效果监听
+   */
+  onTriggerEffects(listener: (event: ControllerTriggerEffectsEvent) => void): () => void {
+    this.triggerEffectsListeners.add(listener)
+    return () => {
+      this.triggerEffectsListeners.delete(listener)
+    }
+  }
+
+  /**
+   * 注册主机下发的光条颜色/玩家灯监听
+   */
+  onLightbar(listener: (event: ControllerLightbarEvent) => void): () => void {
+    this.lightbarListeners.add(listener)
+    return () => {
+      this.lightbarListeners.delete(listener)
+    }
+  }
+
+  /**
+   * 注册主机的体感原点重置请求
+   */
+  onMotionReset(listener: () => void): () => void {
+    this.motionResetListeners.add(listener)
+    return () => {
+      this.motionResetListeners.delete(listener)
+    }
+  }
+
+  /**
+   * 发送体感数据（高频，用 send 不等待回复）
+   */
+  sendMotion(motion: DualSenseMotion): void {
+    if (!this.connection || this.connection.state !== signalR.HubConnectionState.Connected || !this.sessionId) {
+      return
+    }
+    this.connection
+      .send(
+        'Motion',
+        this.sessionId,
+        motion.gyroX,
+        motion.gyroY,
+        motion.gyroZ,
+        motion.accelX,
+        motion.accelY,
+        motion.accelZ,
+        motion.orientX,
+        motion.orientY,
+        motion.orientZ,
+        motion.orientW
+      )
+      .catch(() => undefined)
+  }
+
+  /**
+   * 发送触摸板手指状态（最多 2 个槽位，坐标 x: 0~1919，y: 0~1079）
+   */
+  sendTouchpad(slots: DualSenseTouchSlot[]): void {
+    if (!this.connection || this.connection.state !== signalR.HubConnectionState.Connected || !this.sessionId) {
+      return
+    }
+    this.connection.send('Touchpad', this.sessionId, slots).catch(() => undefined)
+  }
+
+  /**
+   * 请求服务端重新推送最近的扳机效果和光条状态
+   */
+  async requestDualSenseState(): Promise<void> {
+    if (!this.isConnected() || !this.connection) {
+      return
+    }
+    try {
+      await this.connection.invoke('GetDualSenseState', this.sessionId)
+    } catch (error) {
+      console.warn('⚠️ 获取 DualSense 状态失败:', error)
+    }
+  }
+
+  private notifyListeners<T>(set: Set<(event: T) => void>, event: T): void {
+    set.forEach((listener) => {
+      try {
+        listener(event)
+      } catch (error) {
+        console.warn('⚠️ DualSense 事件处理失败:', error)
+      }
+    })
   }
 
   /**

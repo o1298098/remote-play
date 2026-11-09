@@ -70,6 +70,17 @@ namespace RemotePlay.Contracts.Services
             CancellationToken ct = default);
 
         /// <summary>
+        /// 设置体感数据：陀螺仪（rad/s）、加速度（g）、姿态四元数
+        /// </summary>
+        Task SetMotionAsync(Guid sessionId, float gyroX, float gyroY, float gyroZ, float accelX, float accelY, float accelZ,
+            float orientX, float orientY, float orientZ, float orientW);
+
+        /// <summary>
+        /// 设置触摸板手指（最多 2 个槽位）
+        /// </summary>
+        Task SetTouchpadAsync(Guid sessionId, IReadOnlyList<TouchpadSlotInput> slots);
+
+        /// <summary>
         /// 手动更新摇杆状态（如果未启动自动发送）
         /// </summary>
         Task UpdateSticksAsync(Guid sessionId, CancellationToken ct = default);
@@ -93,6 +104,11 @@ namespace RemotePlay.Contracts.Services
         /// 获取所有可用的按键名称
         /// </summary>
         List<string> GetAvailableButtons();
+
+        /// <summary>
+        /// 获取主机最近下发的 DualSense 扳机效果和光条状态（推送格式），没有时为 null
+        /// </summary>
+        Task<(object? TriggerEffects, object? Lightbar)> GetDualSenseStateAsync(Guid sessionId);
     }
 }
 

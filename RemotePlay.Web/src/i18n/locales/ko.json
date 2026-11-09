@@ -224,16 +224,17 @@
           "60FPS": "60fps"
         },
         "bitrate": {
-          "DEFAULT": "비트레이트 자동 조정",
-          "VERY_LOW": "매우 낮은 품질 (~2 Mbps)",
-          "LOW": "낮은 품질 (~4 Mbps)",
-          "MEDIUM": "보통 품질 (~6 Mbps)",
-          "HIGH": "높은 품질 (~10 Mbps)",
-          "VERY_HIGH": "매우 높은 품질 (~15 Mbps)",
-          "ULTRA_20M": "초고품질 (~20 Mbps)",
-          "ULTRA_30M": "초고품질 (~30 Mbps)",
-          "ULTRA_40M": "최고 품질 (~40 Mbps, 실험적)",
-          "ULTRA_50M": "최고 품질 (~50 Mbps, 실험적)"
+          "DEFAULT": "자동 (해상도에 맞춤)",
+          "VERY_LOW": "2 Mbps · 데이터 절약 (모바일 네트워크용)",
+          "LOW": "4 Mbps · 부드러움",
+          "MEDIUM": "6 Mbps · 표준",
+          "HIGH": "10 Mbps · HD",
+          "VERY_HIGH": "15 Mbps · 1080p 권장",
+          "ULTRA_20M": "20 Mbps · 고화질",
+          "ULTRA_30M": "30 Mbps · 초고화질",
+          "ULTRA_40M": "40 Mbps · 극고화질 (안정적인 로컬 네트워크 필요)",
+          "ULTRA_50M": "50 Mbps · 최상급 화질 (유선 네트워크 권장)",
+          "ULTRA_100M": "100 Mbps · 최고 화질 (기가비트 유선 네트워크 필요)"
         },
         "streamType": {
           "H264": "H.264 코덱",

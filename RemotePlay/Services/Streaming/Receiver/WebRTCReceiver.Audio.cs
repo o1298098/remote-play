@@ -28,6 +28,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 var arrivalTime = DateTime.UtcNow;
                 _lastVideoOrAudioPacketTime = DateTime.UtcNow;
+                Interlocked.Increment(ref _realAudioPacketsWindow);
                 _currentAudioFrameIndex++;
                 _latencyStats?.RecordPacketArrival(_sessionId, "audio", _currentAudioFrameIndex);
                 
@@ -143,6 +144,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 }
 
                 var opusFrame = packet.AsSpan(1).ToArray();
+                TrackHostSilence(opusFrame.Length);
 
                 if (_forceStereoDownmix)
                 {
@@ -169,7 +171,61 @@ namespace RemotePlay.Services.Streaming.Receiver
             }
         }
 
-        private void SendAudioOpusDirect(byte[] opusFrame, int? samplesPerFrameOverride = null)
+        // 主机编码静音时 Opus 帧只有几个字节；持续一段时间说明主机那边没有声音输出（不是转发出了问题）
+        private const int SILENT_OPUS_FRAME_MAX_BYTES = 4;
+        private static readonly TimeSpan HostSilenceWarnAfter = TimeSpan.FromSeconds(3);
+        private DateTime _hostSilenceSince = DateTime.MinValue;
+        private bool _hostSilenceWarned;
+
+        private void TrackHostSilence(int opusFrameLength)
+        {
+            var now = DateTime.UtcNow;
+            if (opusFrameLength > SILENT_OPUS_FRAME_MAX_BYTES)
+            {
+                if (_hostSilenceWarned)
+                {
+                    _logger.LogDebug("🔊 Host audio resumed after {Seconds:F1}s of silence", (now - _hostSilenceSince).TotalSeconds);
+                }
+                _hostSilenceSince = DateTime.MinValue;
+                _hostSilenceWarned = false;
+                return;
+            }
+
+            if (_hostSilenceSince == DateTime.MinValue)
+            {
+                _hostSilenceSince = now;
+            }
+            else if (!_hostSilenceWarned && now - _hostSilenceSince > HostSilenceWarnAfter)
+            {
+                _hostSilenceWarned = true;
+                _logger.LogDebug("🔇 Host has been sending silent audio frames ({Bytes} bytes) for over {Seconds}s",
+                    opusFrameLength, HostSilenceWarnAfter.TotalSeconds);
+            }
+        }
+
+        private static readonly TimeSpan AudioSummaryInterval = TimeSpan.FromSeconds(5);
+        private long _realAudioPacketsWindow;
+        private long _silentAudioPacketsWindow;
+        private DateTime _lastAudioSummaryTime = DateTime.UtcNow;
+
+        /// <summary>
+        /// 每 5 秒汇总一次：收到的主机音频包数 vs 因没有音频而补发的静音包数
+        /// </summary>
+        private void LogAudioSendSummaryIfDue(DateTime now)
+        {
+            if (now - _lastAudioSummaryTime < AudioSummaryInterval)
+            {
+                return;
+            }
+            _lastAudioSummaryTime = now;
+
+            long real = Interlocked.Exchange(ref _realAudioPacketsWindow, 0);
+            long silent = Interlocked.Exchange(ref _silentAudioPacketsWindow, 0);
+            _logger.LogDebug("🔊 Audio send (5s): host packets={Real}, keepalive silence={Silent}, total host packets={Total}",
+                real, silent, _audioPacketCount);
+        }
+
+        private void SendAudioOpusDirect(byte[] opusFrame, int? samplesPerFrameOverride = null, bool isKeepaliveSilence = false)
         {
             try
             {
@@ -220,7 +276,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 byte[] rtpBytes = rtpPacket.GetBytes();
                 
-                if (_audioPacketCount < 10 || _audioPacketCount % 100 == 0)
+                if (!isKeepaliveSilence && (_audioPacketCount < 10 || _audioPacketCount % 100 == 0))
                 {
                     _logger.LogDebug("📤 Sending Opus RTP packet: seq={Seq}, ts={Ts}, samples={Samples}, size={Size} bytes", 
                         currentSeqNum, currentTimestamp, samplesPerFrame, opusFrame.Length);

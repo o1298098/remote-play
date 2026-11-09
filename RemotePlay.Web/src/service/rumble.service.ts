@@ -1,4 +1,5 @@
 import { ControllerRumbleEvent } from '@/types/controller'
+import { applyDualSenseRumble, isDualSenseHidActive, isHidManagedGamepad } from '@/service/dualsense-hid.service'
 
 export interface RumbleSettings {
   enabled: boolean
@@ -196,6 +197,9 @@ function getHapticActuators(pad: Gamepad): readonly GamepadHapticActuator[] {
 }
 
 export function hasRumbleCapableGamepad(): boolean {
+  if (isDualSenseHidActive()) {
+    return true
+  }
   return getGamepads().some((pad) => {
     if (!pad) return false
     const vibrationActuator = (pad as Gamepad & { vibrationActuator?: GamepadHapticActuator }).vibrationActuator
@@ -237,8 +241,15 @@ export function applyControllerRumbleToGamepads(
   let applied = false
   const shouldStop = strongMagnitude === 0 && weakMagnitude === 0
 
+  // WebHID 接管的 DualSense 直接写输出报告（蓝牙增强模式下 Gamepad API 的震动不可用）
+  if (isDualSenseHidActive()) {
+    void applyDualSenseRumble(strongMagnitude * 255, weakMagnitude * 255)
+    applied = true
+  }
+
   for (const pad of gamepads) {
     if (!pad) continue
+    if (isHidManagedGamepad(pad)) continue
     if (typeof options.gamepadIndex === 'number' && pad.index !== options.gamepadIndex) {
       continue
     }

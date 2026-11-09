@@ -43,6 +43,12 @@ namespace RemotePlay.Services.Streaming.AV
         private const int MAX_CONSECUTIVE_DROPPED = 2; // 最多连续丢弃2帧，之后强制尝试解码
         private const int MAX_CONSECUTIVE_BYPASS = 5; // 最多连续尝试5次，之后标记为断裂
         
+        // 参考链断裂后等待主机恢复帧的时间，超时才请求 IDR
+        private const int IDR_REQUEST_GRACE_MS = 150;
+        // 一次丢失的帧数超过参考帧窗口时，主机无法靠改参考恢复，立即请求 IDR
+        private const int HEAVY_LOSS_FRAMES = 16;
+        private bool _idrUrgent = false;
+
         private DateTime _lastFrameFailureTime = DateTime.MinValue; // 最后一次帧失败的时间
         private const int FRAME_FAILURE_GRACE_PERIOD_MS = 500; // 帧失败后的宽限期（500ms内允许尝试解码）
 
@@ -72,12 +78,14 @@ namespace RemotePlay.Services.Streaming.AV
         /// 处理P帧缺少参考帧的情况
         /// </summary>
         /// <returns>是否应该尝试解码（true=允许解码，false=应该丢弃）</returns>
-        private bool HandleMissingReferenceForPFrame(int frameIndex, int refFrameIndex, ref byte[]? frame, ref bool recovered)
+        private bool HandleMissingReferenceForPFrame(int frameIndex, int refFrameIndex, bool explicitReference, ref byte[]? frame, ref bool recovered)
         {
             // 浏览器（WebRTC）解码器遇到缺参考帧的 P 帧会报错并停止解码直到下一个关键帧，
             // 因此只允许"改写到可用参考帧"后发送，否则丢弃（与 chiaki-ng 一致）
-            // ✅ 先尝试查找替代参考帧
-            int alternativeRefFrame = _referenceFrameManager.FindAvailableReferenceFrame(frameIndex, (uint)(frameIndex - refFrameIndex - 1));
+            // ✅ 先尝试查找替代参考帧（只有显式指定参考帧的切片才能改写）
+            int alternativeRefFrame = explicitReference
+                ? _referenceFrameManager.FindAvailableReferenceFrame(frameIndex, (uint)((frameIndex - refFrameIndex - 1) & 0xFFFF))
+                : -1;
             if (alternativeRefFrame >= 0 && _bitstreamParser != null)
             {
                 // 尝试修改 bitstream
@@ -96,14 +104,20 @@ namespace RemotePlay.Services.Streaming.AV
                 }
             }
 
+            var now = DateTime.UtcNow;
             if (!_referenceChainBroken)
             {
                 _referenceChainBroken = true;
-                _referenceChainBrokenTime = DateTime.UtcNow;
-                _logger?.LogWarning("⚠️ P-frame {Frame} missing reference frame {RefFrame}, dropping and requesting keyframe", frameIndex, refFrameIndex);
+                _referenceChainBrokenTime = now;
+                _logger?.LogWarning("⚠️ P-frame {Frame} missing reference frame {RefFrame}, dropping until the chain recovers", frameIndex, refFrameIndex);
             }
 
-            _requestKeyframeCallback?.Invoke();
+            // 先给主机一点时间按损坏帧通知发出改参考的恢复帧；超时或丢帧过多才请求 IDR，
+            // 之后每次调用都会再请求（RPStreamV2 有 1 秒冷却，等同于每秒重试）
+            if (_idrUrgent || (now - _referenceChainBrokenTime).TotalMilliseconds >= IDR_REQUEST_GRACE_MS)
+            {
+                _requestKeyframeCallback?.Invoke();
+            }
             return false;
         }
 
@@ -330,34 +344,25 @@ namespace RemotePlay.Services.Streaming.AV
                         _logger?.LogWarning("Detected missing or corrupt frame(s) from {From} to {To} ({Count} frames lost)", 
                             start, end, lostCount);
                         
-                        // ✅ 关键修复：丢失帧时，记录失败时间并清除参考链断裂标记
-                        // 在宽限期内，允许后续帧即使缺少参考帧也尝试解码
+                        // 参考链断裂状态和计时要保留到链真正恢复：链断着时每个被丢弃的帧都会再次触发这里，
+                        // 清零会让请求 IDR 的等待计时永远到不了
                         if (lostCount > 0)
                         {
                             NotifyFrameFailure(); // ✅ 使用统一入口
                             
-                            if (_referenceChainBroken)
+                            // 丢失帧数超过参考帧窗口：主机无法靠改参考恢复，重置参考链并立即请求 IDR
+                            if (lostCount >= HEAVY_LOSS_FRAMES)
                             {
-                                _referenceChainBroken = false;
-                                _consecutiveDroppedFrames = 0;
-                                _consecutiveBypassAttempts = 0;
-                                _referenceChainBrokenTime = DateTime.MinValue;
-                            }
-                            
-                            // ✅ 如果丢失帧数过多，重置参考链和解码器状态
-                            // ✅ 优化：提高阈值到 20 帧，避免过度重置导致视频冻结
-                            if (lostCount > 20)
-                            {
-                                _logger?.LogWarning("⚠️ Heavy frame loss ({Count} frames), resetting reference chain and decoder state", lostCount);
+                                _logger?.LogWarning("⚠️ Heavy frame loss ({Count} frames), resetting reference chain and requesting keyframe", lostCount);
                                 _referenceFrameManager.Reset();
                                 _frameProcessor.Reset();
+                                _idrUrgent = true;
+                                pendingKeyframeRequest = _requestKeyframeCallback;
                             }
-                            
-                            // ✅ 优化：在锁外调用回调，避免阻塞
-                            pendingKeyframeRequest = _requestKeyframeCallback;
                         }
                         
-                        // ✅ 优化：在锁外调用回调，避免阻塞
+                        // 只上报损坏帧，由主机让后续帧改参考丢失前的好帧；
+                        // 后续 P 帧仍缺参考时才在 HandleMissingReferenceForPFrame 中请求 IDR
                         pendingCorruptFrame = (start, end);
                     }
 
@@ -416,15 +421,12 @@ namespace RemotePlay.Services.Streaming.AV
                 onFrameReady?.Invoke(data, recovered, success);
             }
             
-            if (pendingKeyframeRequest != null)
-            {
-                pendingKeyframeRequest.Invoke();
-            }
-            
             if (pendingCorruptFrame.HasValue)
             {
                 _corruptFrameCallback?.Invoke(pendingCorruptFrame.Value.start, pendingCorruptFrame.Value.end);
             }
+
+            pendingKeyframeRequest?.Invoke();
         }
 
         /// <summary>
@@ -451,18 +453,9 @@ namespace RemotePlay.Services.Streaming.AV
                 // ✅ 修复问题3：flush失败时，从ReferenceFrameManager中移除损坏的帧
                 _referenceFrameManager.RemoveReferenceFrame(_frameIndexCur);
                 
-                // ✅ 关键修复：帧失败时，记录失败时间并清除参考链断裂标记
-                // 在宽限期内，允许后续帧即使缺少参考帧也尝试解码
                 NotifyFrameFailure(); // ✅ 使用统一入口
                 
                 _logger?.LogWarning("Failed to complete frame {Frame} (missing packets, FEC could not recover; host notified)", _frameIndexCur);
-                if (_referenceChainBroken)
-                {
-                    _referenceChainBroken = false;
-                    _consecutiveDroppedFrames = 0;
-                    _consecutiveBypassAttempts = 0;
-                    _referenceChainBrokenTime = DateTime.MinValue;
-                }
                 
                 // ✅ 优化：关键帧请求已经在ProcessPacket中收集，这里不需要处理
                 return;
@@ -488,10 +481,14 @@ namespace RemotePlay.Services.Streaming.AV
                     // 会让后续帧改为参考丢失前的好帧，这些帧能通过检查，从而无需等待 IDR 即可恢复
                     if (parsedSlice.SliceType == SliceType.P)
                     {
-                        int refFrameIndex = _frameIndexCur - (int)parsedSlice.ReferenceFrame - 1;
-                        if (parsedSlice.ReferenceFrame != 0xFF && !_referenceFrameManager.HasReferenceFrame(refFrameIndex))
+                        // 0xFF：未显式指定参考帧，参考前一帧（主机的恢复帧会显式指向丢失前的好帧）
+                        bool explicitReference = parsedSlice.ReferenceFrame != 0xFF;
+                        int refFrameIndex = explicitReference
+                            ? (_frameIndexCur - (int)parsedSlice.ReferenceFrame - 1) & 0xFFFF
+                            : (_frameIndexCur - 1) & 0xFFFF;
+                        if (!_referenceFrameManager.HasReferenceFrame(refFrameIndex))
                         {
-                            bool shouldDecode = HandleMissingReferenceForPFrame(_frameIndexCur, refFrameIndex, ref frame, ref recovered);
+                            bool shouldDecode = HandleMissingReferenceForPFrame(_frameIndexCur, refFrameIndex, explicitReference, ref frame, ref recovered);
                             if (!shouldDecode)
                             {
                                 // 不更新 _frameIndexPrevComplete：下一帧开始时会把这段报告为损坏帧
@@ -529,6 +526,7 @@ namespace RemotePlay.Services.Streaming.AV
                 
                 // ✅ IDR帧到来时，重置参考帧管理器（开始新的GOP）
                 _referenceFrameManager.Reset();
+                _idrUrgent = false;
             }
 
             // 解码器（尤其是浏览器）收到无法解码的帧会停止输出直到下一个关键帧，因此只发送完整且参考可用的帧

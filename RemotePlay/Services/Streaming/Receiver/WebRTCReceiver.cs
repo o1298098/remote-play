@@ -664,6 +664,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                     string? detectedCodec = DetectCodecFromVideoHeader(videoHeader);
                     if (detectedCodec != null && detectedCodec != _detectedVideoFormat)
                     {
+                        _logger.LogInformation("📹 Video codec from stream info: {Old} -> {New}", _detectedVideoFormat, detectedCodec);
                         _detectedVideoFormat = detectedCodec;
                         _videoPipeline?.SetCodec(detectedCodec);
                     }

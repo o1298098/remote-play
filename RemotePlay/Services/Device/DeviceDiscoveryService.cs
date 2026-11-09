@@ -1,6 +1,7 @@
 using RemotePlay.Contracts.Enums;
 using RemotePlay.Contracts.Services;
 using RemotePlay.Models.PlayStation;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -17,13 +18,19 @@ namespace RemotePlay.Services.Device
     public class DeviceDiscoveryService : IDeviceDiscoveryService
     {
         private readonly ILogger<DeviceDiscoveryService> _logger;
-        private const string BROADCAST_IP = "255.255.255.255";
-        private const int DISCOVERY_PORT = 9302;
-        private const int CLIENT_PORT = 9303;
-        private const string DISCOVERY_PROTOCOL_VERSION = "00030010";
-        private const int PS4_DDP_PORT = 987;
-        private const int PS5_DDP_PORT = 9302;
-        private readonly SemaphoreSlim _discoverySemaphore = new(1, 1);
+        private const int PS4_DISCOVERY_PORT = 987;
+        private const string PS4_PROTOCOL_VERSION = "00020020";
+        private const int PS5_DISCOVERY_PORT = 9302;
+        private const string PS5_PROTOCOL_VERSION = "00030010";
+        // 先尝试 9303..9319，都被占用时用随机端口，避免并发扫描/探测互相抢端口
+        private const int LOCAL_PORT_MIN = 9303;
+        private const int LOCAL_PORT_MAX = 9319;
+        // UDP 无确认，扫描窗口内按此间隔重发 SRCH
+        private const int SEARCH_RESEND_INTERVAL_MS = 500;
+        // Windows 上 UDP 收到 ICMP 端口不可达后，下一次 Receive 会抛 ConnectionReset，需要关掉
+        private const int SIO_UDP_CONNRESET = unchecked((int)0x9800000C);
+
+        private static readonly Regex StatusLineRegex = new(@"^HTTP/1\.1\s+(?<code>\d+)\s+(?<status>.+)$", RegexOptions.Compiled);
 
         public DeviceDiscoveryService(ILogger<DeviceDiscoveryService> logger)
         {
@@ -32,39 +39,23 @@ namespace RemotePlay.Services.Device
 
         public async Task<List<ConsoleInfo>> DiscoverDevicesAsync(int timeoutMs = 2000, CancellationToken cancellationToken = default)
         {
-            var discoveredDevices = new List<ConsoleInfo>();
-            var discoveryTasks = new List<Task<List<ConsoleInfo>>>();
-
             try
             {
-                var networkInterfaces = GetActiveNetworkInterfaces();
+                var targets = GetBroadcastAddresses();
+                targets.Add(IPAddress.Broadcast);
 
-                foreach (var networkInterface in networkInterfaces)
-                {
-                    var unicastAddresses = GetUnicastAddresses(networkInterface);
-                    foreach (var address in unicastAddresses)
-                    {
-                        var broadcast = CalculateBroadcastAddress(address.Address, address.IPv4Mask);
-                        if (broadcast is null)
-                        {
-                            continue;
-                        }
-
-                        var task = DiscoverOnNetworkAsync(address.Address, broadcast, timeoutMs, cancellationToken);
-                        discoveryTasks.Add(task);
-                    }
-                }
-
-                var results = await Task.WhenAll(discoveryTasks);
-                discoveredDevices = results.SelectMany(x => x).ToList();
+                var devices = await SearchAsync(targets, timeoutMs, onlyFrom: null, cancellationToken);
+                return devices.ToList();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Device discovery failed");
                 throw;
             }
-
-            return discoveredDevices;
         }
 
         public async Task<ConsoleInfo?> DiscoverDeviceAsync(
@@ -72,31 +63,25 @@ namespace RemotePlay.Services.Device
             int timeoutMs = 2000,
             CancellationToken cancellationToken = default)
         {
+            if (!IPAddress.TryParse(hostIp, out var hostAddress))
+                throw new ArgumentException($"无效的IP地址: {hostIp}");
+
             try
             {
-                var request = CreateDiscoveryRequest();
-                var response = await SendUdpRequestAsync(
-                    request, hostIp,
-                    DISCOVERY_PORT, timeoutMs,
-                    receiveData: true,
-                    cancellationToken: cancellationToken);
+                var devices = await SearchAsync(new List<IPAddress> { hostAddress }, timeoutMs, onlyFrom: hostAddress, cancellationToken);
+                var deviceInfo = devices.FirstOrDefault();
 
-                if (response is null)
+                if (deviceInfo is null)
                 {
                     // 主机关机/离线时属于正常情况，由 DeviceStatusUpdateService 汇总判断离线
                     _logger.LogDebug("No discovery response from {HostIp} within timeout", hostIp);
-                    return null;
                 }
 
-                var deviceInfo = ParseDeviceResponse(response, new IPEndPoint(IPAddress.Parse(hostIp), DISCOVERY_PORT));
-
-                if (deviceInfo != null)
-                {
-                    return deviceInfo;
-                }
-
-                _logger.LogWarning("Invalid discovery response from {HostIp}", hostIp);
-                return null;
+                return deviceInfo;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -111,29 +96,40 @@ namespace RemotePlay.Services.Device
             string hostType,
             CancellationToken cancellationToken = default)
         {
-            var targetPort = hostType == "PS5" ? PS5_DDP_PORT : PS4_DDP_PORT;
-            var _c = FormatRegistKey(credential);
-            var message = CreateWakeUpRequest(_c);
+            var isPs5 = string.Equals(hostType, "PS5", StringComparison.OrdinalIgnoreCase);
+            var targetPort = isPs5 ? PS5_DISCOVERY_PORT : PS4_DISCOVERY_PORT;
 
             try
             {
-                var networkInterfaces = GetActiveNetworkInterfaces();
+                var message = CreateWakeUpRequest(FormatRegistKey(credential), isPs5 ? PS5_PROTOCOL_VERSION : PS4_PROTOCOL_VERSION);
 
-                foreach (var networkInterface in networkInterfaces)
+                // 先直接发给主机，再向各网段广播（主机待机期间 IP 可能已变化）
+                var targets = new List<IPAddress>();
+                if (IPAddress.TryParse(host, out var hostAddress))
                 {
-                    var unicastAddresses = GetUnicastAddresses(networkInterface);
-                    foreach (var address in unicastAddresses)
-                    {
-                        var broadcast = CalculateBroadcastAddress(address.Address, address.IPv4Mask);
-                        if (broadcast is null)
-                        {
-                            continue;
-                        }
+                    targets.Add(hostAddress);
+                }
+                targets.AddRange(GetBroadcastAddresses());
 
-                        await SendUdpRequestAsync(message, broadcast.ToString(), targetPort, receiveData: false, cancellationToken: cancellationToken);
+                using var client = CreateDiscoveryClient();
+                var sent = 0;
+                foreach (var target in targets)
+                {
+                    if (await TrySendAsync(client, message, new IPEndPoint(target, targetPort), cancellationToken))
+                    {
+                        sent++;
                     }
                 }
-                return true;
+
+                if (sent == 0)
+                {
+                    _logger.LogWarning("Failed to send WAKEUP message to {Host}:{Port} on any target", host, targetPort);
+                }
+                return sent > 0;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -142,68 +138,143 @@ namespace RemotePlay.Services.Device
             }
         }
 
-        private async Task<List<ConsoleInfo>> DiscoverOnNetworkAsync(IPAddress localAddress, IPAddress broadcastAddress, int timeoutMs, CancellationToken cancellationToken)
+        /// <summary>
+        /// 用一个 socket 同时向 PS4（987）和 PS5（9302）发送 SRCH，并在整个窗口内周期重发，
+        /// 按 host-id 去重收集响应
+        /// </summary>
+        private async Task<ICollection<ConsoleInfo>> SearchAsync(
+            IReadOnlyCollection<IPAddress> targets,
+            int timeoutMs,
+            IPAddress? onlyFrom,
+            CancellationToken cancellationToken)
         {
-            var discoveredDevices = new List<ConsoleInfo>();
-
-            var lockTaken = false;
-
-            try
+            var found = new Dictionary<string, ConsoleInfo>(StringComparer.OrdinalIgnoreCase);
+            if (targets.Count == 0)
             {
-                await _discoverySemaphore.WaitAsync(cancellationToken);
-                lockTaken = true;
+                return found.Values;
+            }
 
-                var request = CreateDiscoveryRequest();
-                var broadcastEndPoint = new IPEndPoint(broadcastAddress, DISCOVERY_PORT);
-                var localEndPoint = new IPEndPoint(localAddress, CLIENT_PORT);
+            var ps4Request = CreateDiscoveryRequest(PS4_PROTOCOL_VERSION);
+            var ps5Request = CreateDiscoveryRequest(PS5_PROTOCOL_VERSION);
 
-                using var client = new UdpClient(localEndPoint);
-                client.EnableBroadcast = true;
+            using var client = CreateDiscoveryClient();
+            var stopwatch = Stopwatch.StartNew();
+            long nextSendMs = 0;
 
-                await client.SendAsync(request, request.Length, broadcastEndPoint);
+            while (stopwatch.ElapsedMilliseconds < timeoutMs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-                var endTime = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-                while (DateTime.UtcNow < endTime && !cancellationToken.IsCancellationRequested)
+                if (stopwatch.ElapsedMilliseconds >= nextSendMs)
                 {
+                    foreach (var target in targets)
+                    {
+                        await TrySendAsync(client, ps4Request, new IPEndPoint(target, PS4_DISCOVERY_PORT), cancellationToken);
+                        await TrySendAsync(client, ps5Request, new IPEndPoint(target, PS5_DISCOVERY_PORT), cancellationToken);
+                    }
+                    nextSendMs += SEARCH_RESEND_INTERVAL_MS;
+                }
+
+                var waitMs = Math.Min(nextSendMs, timeoutMs) - stopwatch.ElapsedMilliseconds;
+                if (waitMs <= 0)
+                {
+                    continue;
+                }
+
+                UdpReceiveResult result;
+                using (var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                {
+                    receiveCts.CancelAfter(TimeSpan.FromMilliseconds(waitMs));
                     try
                     {
-                        var receiveTask = client.ReceiveAsync();
-                        var delayTask = Task.Delay(Math.Max(0, (int)(endTime - DateTime.UtcNow).TotalMilliseconds), cancellationToken);
-                        var completed = await Task.WhenAny(receiveTask, delayTask);
-
-                        if (completed == receiveTask)
-                        {
-                            var result = receiveTask.Result;
-                            var deviceInfo = ParseDeviceResponse(result.Buffer, result.RemoteEndPoint);
-                            if (deviceInfo != null && !discoveredDevices.Any(d => d.Uuid == deviceInfo.Uuid))
-                            {
-                                discoveredDevices.Add(deviceInfo);
-                            }
-                        }
-                        else
-                        {
-                            break;
-                        }
+                        result = await client.ReceiveAsync(receiveCts.Token);
                     }
-                    catch (SocketException)
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
+                        continue;
+                    }
+                    catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
+                    {
+                        continue;
+                    }
+                    catch (SocketException ex)
+                    {
+                        _logger.LogDebug(ex, "Discovery receive failed");
                         break;
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Device discovery failed on interface {LocalAddress}", localAddress);
-            }
-            finally
-            {
-                if (lockTaken)
+
+                if (onlyFrom != null && !result.RemoteEndPoint.Address.Equals(onlyFrom))
                 {
-                    _discoverySemaphore.Release();
+                    continue;
+                }
+
+                var deviceInfo = ParseDeviceResponse(result.Buffer, result.RemoteEndPoint);
+                if (deviceInfo == null)
+                {
+                    continue;
+                }
+
+                found[deviceInfo.Uuid] = deviceInfo;
+                if (onlyFrom != null)
+                {
+                    break;
                 }
             }
 
-            return discoveredDevices;
+            return found.Values;
+        }
+
+        private UdpClient CreateDiscoveryClient()
+        {
+            for (var port = LOCAL_PORT_MIN; ; port = port == LOCAL_PORT_MAX ? 0 : port + 1)
+            {
+                try
+                {
+                    var client = new UdpClient(new IPEndPoint(IPAddress.Any, port));
+                    client.EnableBroadcast = true;
+                    if (OperatingSystem.IsWindows())
+                    {
+                        client.Client.IOControl(SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
+                    }
+                    return client;
+                }
+                catch (SocketException) when (port != 0)
+                {
+                    _logger.LogDebug("Discovery failed to bind port {Port}, trying next", port);
+                }
+            }
+        }
+
+        private async Task<bool> TrySendAsync(UdpClient client, byte[] data, IPEndPoint target, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await client.SendAsync(data, target, cancellationToken);
+                return true;
+            }
+            catch (SocketException ex)
+            {
+                _logger.LogDebug(ex, "Discovery failed to send to {Target}", target);
+                return false;
+            }
+        }
+
+        private List<IPAddress> GetBroadcastAddresses()
+        {
+            var addresses = new List<IPAddress>();
+            foreach (var networkInterface in GetActiveNetworkInterfaces())
+            {
+                foreach (var address in GetUnicastAddresses(networkInterface))
+                {
+                    var broadcast = CalculateBroadcastAddress(address.Address, address.IPv4Mask);
+                    if (broadcast != null && !addresses.Contains(broadcast))
+                    {
+                        addresses.Add(broadcast);
+                    }
+                }
+            }
+            return addresses;
         }
 
         private List<NetworkInterface> GetActiveNetworkInterfaces()
@@ -266,19 +337,19 @@ namespace RemotePlay.Services.Device
             return addresses;
         }
 
-        private byte[] GetDDPMessage(DDPMsgType ddpType, Dictionary<string, string>? data = null)
+        private byte[] GetDDPMessage(DDPMsgType ddpType, string protocolVersion, Dictionary<string, string>? data = null)
         {
             var request = $"{ddpType} * HTTP/1.1\n";
             if (data != null)
                 foreach (var k in data)
                     request = request + $"{k.Key}:{k.Value}\n";
-            request = request + $"device-discovery-protocol-version:{DISCOVERY_PROTOCOL_VERSION}\n";
+            request = request + $"device-discovery-protocol-version:{protocolVersion}\n";
             return Encoding.UTF8.GetBytes(request);
         }
 
-        private byte[] CreateDiscoveryRequest() => GetDDPMessage(DDPMsgType.SRCH);
+        private byte[] CreateDiscoveryRequest(string protocolVersion) => GetDDPMessage(DDPMsgType.SRCH, protocolVersion);
 
-        private byte[] CreateWakeUpRequest(string credential)
+        private byte[] CreateWakeUpRequest(string credential, string protocolVersion)
         {
             var data = new Dictionary<string, string>
             {
@@ -288,7 +359,7 @@ namespace RemotePlay.Services.Device
                 { "model", "w" },
                 { "app-type", "r" },
             };
-            return GetDDPMessage(DDPMsgType.WAKEUP, data);
+            return GetDDPMessage(DDPMsgType.WAKEUP, protocolVersion, data);
         }
 
         private IPAddress? CalculateBroadcastAddress(IPAddress localAddress, IPAddress? subnetMask)
@@ -326,7 +397,8 @@ namespace RemotePlay.Services.Device
 
             try
             {
-                var response = Encoding.ASCII.GetString(buffer);
+                // 主机名可能含非 ASCII 字符（如中文），需按 UTF-8 解析
+                var response = Encoding.UTF8.GetString(buffer).TrimEnd('\0');
                 var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
                 string name = "Unknown";
@@ -335,10 +407,12 @@ namespace RemotePlay.Services.Device
                 string? systemVersion = null;
                 string? status = null;
                 string? deviceDiscoveryProtocolVersion = null;
-                var reStatus = new Regex(@"HTTP/1\.1\s+(?<code>\d+)\s+(?<status>.+)", RegexOptions.Compiled);
+                int? hostRequestPort = null;
+                string? runningAppTitleId = null;
+                string? runningAppName = null;
                 foreach (var line in lines)
                 {
-                    var match = reStatus.Match(line);
+                    var match = StatusLineRegex.Match(line);
                     if (match.Success)
                     {
                         status = match.Groups["status"].Value;
@@ -353,9 +427,12 @@ namespace RemotePlay.Services.Device
                         case "host-type": hostType = parts[1]; break;
                         case "system-version": systemVersion = parts[1]; break;
                         case "device-discovery-protocol-version": deviceDiscoveryProtocolVersion = parts[1]; break;
+                        case "host-request-port":
+                            if (int.TryParse(parts[1], out var port)) hostRequestPort = port;
+                            break;
+                        case "running-app-titleid": runningAppTitleId = parts[1]; break;
+                        case "running-app-name": runningAppName = parts[1]; break;
                     }
-
-
                 }
 
                 return string.IsNullOrEmpty(hostId)
@@ -367,57 +444,16 @@ namespace RemotePlay.Services.Device
                         hostType,
                         systemVersion,
                         deviceDiscoveryProtocolVersion,
-                        status);
+                        status,
+                        hostRequestPort,
+                        runningAppTitleId,
+                        runningAppName);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to parse device discovery response");
                 return null;
             }
-        }
-
-        private async Task<byte[]?> SendUdpRequestAsync(
-            byte[] requestData,
-            string targetIp,
-            int targetPort,
-            int timeoutMs = 2000,
-            int localport = CLIENT_PORT,
-            bool receiveData = false,
-            CancellationToken cancellationToken = default)
-        {
-            if (!IPAddress.TryParse(targetIp, out var targetAddress))
-                throw new ArgumentException($"无效的IP地址: {targetIp}");
-
-            var localEndPoint = new IPEndPoint(IPAddress.Any, localport);
-            using var client = new UdpClient(localEndPoint);
-            client.EnableBroadcast = true;
-
-            var targetEndPoint = new IPEndPoint(targetAddress, targetPort);
-
-            await client.SendAsync(requestData, requestData.Length, targetEndPoint);
-
-            var endTime = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-            if (receiveData)
-                while (DateTime.UtcNow < endTime && !cancellationToken.IsCancellationRequested)
-                {
-                    try
-                    {
-                        var receiveTask = client.ReceiveAsync();
-                        var delayTask = Task.Delay(Math.Max(0, (int)(endTime - DateTime.UtcNow).TotalMilliseconds), cancellationToken);
-                        var completed = await Task.WhenAny(receiveTask, delayTask);
-
-                        if (completed == receiveTask)
-                            return receiveTask.Result.Buffer;
-                        else
-                            break;
-                    }
-                    catch (SocketException)
-                    {
-                        break;
-                    }
-                }
-
-            return null;
         }
 
         private string FormatRegistKey(string registKey)

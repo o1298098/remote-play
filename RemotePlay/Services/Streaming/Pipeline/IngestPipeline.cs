@@ -200,7 +200,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
                                     _logger.LogWarning("🔁 Host key_pos wrapped (wrap #{Count}, roughly once per 4 GB of data) keyPos={KeyPos}, expected audio first byte={Toc}",
                                         wraps, packet.KeyPos, _expectedAudioFirstByte >= 0 ? $"0x{_expectedAudioFirstByte:X2}" : "unknown");
                                 }
-                                if (packet.Type == HeaderType.AUDIO && packet.UnitsSrc > 0 && decryptedData.Length > 0)
+                                if (packet.Type == HeaderType.AUDIO && !packet.IsHaptics && packet.UnitsSrc > 0 && decryptedData.Length > 0)
                                 {
                                     decryptedData = ObserveAudioForKeyPosModel(packet, decryptedData, wraps);
                                 }

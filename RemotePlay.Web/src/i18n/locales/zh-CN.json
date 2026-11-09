@@ -224,16 +224,17 @@
           "60FPS": "60fps"
         },
         "bitrate": {
-          "DEFAULT": "自动匹配码率",
-          "VERY_LOW": "非常低画质（约 2Mbps）",
-          "LOW": "低画质（约 4Mbps）",
-          "MEDIUM": "中等画质（约 6Mbps）",
-          "HIGH": "高画质（约 10Mbps）",
-          "VERY_HIGH": "非常高画质（约 15Mbps）",
-          "ULTRA_20M": "超高画质（约 20Mbps）",
-          "ULTRA_30M": "超高画质（约 30Mbps）",
-          "ULTRA_40M": "极高画质（约 40Mbps，实验性）",
-          "ULTRA_50M": "极高画质（约 50Mbps，实验性）"
+          "DEFAULT": "自动（按分辨率匹配码率）",
+          "VERY_LOW": "2 Mbps · 省流量，适合移动网络",
+          "LOW": "4 Mbps · 流畅",
+          "MEDIUM": "6 Mbps · 标准",
+          "HIGH": "10 Mbps · 高清",
+          "VERY_HIGH": "15 Mbps · 1080p 推荐",
+          "ULTRA_20M": "20 Mbps · 高画质",
+          "ULTRA_30M": "30 Mbps · 超高画质",
+          "ULTRA_40M": "40 Mbps · 极高画质，需稳定的局域网",
+          "ULTRA_50M": "50 Mbps · 极致画质，建议有线网络",
+          "ULTRA_100M": "100 Mbps · 最高画质，需千兆有线网络"
         },
         "streamType": {
           "H264": "H.264 编码",
@@ -471,6 +472,25 @@
         "toastTestSuccess": "测试震动已发送",
         "toastTestFailed": "无法触发震动",
         "toastDisabled": "震动功能已关闭，请先开启。"
+      },
+      "dualsense": {
+        "title": "DualSense 增强功能",
+        "description": "通过 WebHID 直接连接 DualSense（USB 或蓝牙），同步游戏的扳机阻力、光条颜色和玩家灯，并把陀螺仪体感和触摸板发送给主机。授权一次后，串流时会自动启用。",
+        "notSupported": "当前浏览器不支持 WebHID，请使用桌面版 Chrome 或 Edge。",
+        "insecureContext": "WebHID 只能在 HTTPS 或 localhost 页面中使用，当前页面是 {{origin}}。请改用 HTTPS 访问，或在 chrome://flags/#unsafely-treat-insecure-origin-as-secure 中加入该地址后重启浏览器。",
+        "statusDisconnected": "未连接 DualSense",
+        "statusUsb": "已通过 USB 连接 DualSense",
+        "statusBluetooth": "已连接 DualSense（蓝牙）",
+        "bluetoothNote": "蓝牙模式下手柄按键改由 WebHID 读取，断开 DualSense 后需要重新连接手柄才能恢复浏览器原生读取。",
+        "gyro": "陀螺仪",
+        "accel": "加速度",
+        "touches": "触摸点：{{count}}",
+        "connect": "连接 DualSense",
+        "disconnect": "断开",
+        "test": "测试扳机阻力",
+        "toastConnected": "DualSense 已连接",
+        "toastConnectFailed": "无法连接 DualSense",
+        "toastTestSent": "已设置扳机阻力和光条，5 秒后恢复"
       },
       "mapButton": "点击映射",
       "listening": "监听中...",

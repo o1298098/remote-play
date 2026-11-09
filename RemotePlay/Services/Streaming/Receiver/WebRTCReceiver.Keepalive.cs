@@ -181,6 +181,7 @@ namespace RemotePlay.Services.Streaming.Receiver
                         }
                         
                         var now = DateTime.UtcNow;
+                        LogAudioSendSummaryIfDue(now);
                         
                         // ✅ 如果有 audio track，只在没有真实音频数据时才发送静音包作为 keepalive
                         if (hasAudioTrack)
@@ -284,7 +285,8 @@ namespace RemotePlay.Services.Streaming.Receiver
                 
                 // Opus 静音帧（10ms @ 48kHz）
                 var silentOpus = new byte[] { 0xF8, 0xFF, 0xFE };
-                SendAudioOpusDirect(silentOpus, 480);
+                Interlocked.Increment(ref _silentAudioPacketsWindow);
+                SendAudioOpusDirect(silentOpus, 480, isKeepaliveSilence: true);
             }
             catch (Exception ex)
             {

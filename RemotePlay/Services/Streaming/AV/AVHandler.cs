@@ -42,6 +42,7 @@ namespace RemotePlay.Services.Streaming.AV
         private AdaptiveStreamManager? _adaptiveStreamManager;
         private Action<VideoProfile, VideoProfile?>? _profileSwitchCallback;
         private Func<Task>? _requestKeyframeCallback;
+        private Action<AVPacket, byte[]>? _hapticsHandler;
         private Congestion.PacketStats? _packetStats;  // 包统计（用于拥塞控制）
 
         public AVHandler(
@@ -137,6 +138,24 @@ namespace RemotePlay.Services.Streaming.AV
             _videoReceiver = new VideoReceiver(loggerFactory.CreateLogger<VideoReceiver>());
             // 设置 corrupt frame 回调
             _videoReceiver.SetCorruptFrameCallback(_videoCorruptCallback);
+            _videoReceiver.SetRequestKeyframeCallback(() =>
+            {
+                var callback = _requestKeyframeCallback;
+                if (callback != null)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await callback();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "❌ Request keyframe failed");
+                        }
+                    });
+                }
+            });
             if (videoProfiles != null && videoProfiles.Length > 0)
             {
                 _videoProfiles = videoProfiles;
@@ -222,6 +241,20 @@ namespace RemotePlay.Services.Streaming.AV
 
         private void ProcessSinglePacket(AVPacket packet)
         {
+            if (packet.IsHaptics)
+            {
+                // haptics 是原始 PCM，有独立的帧序号，不能进 Opus 音频处理
+                try
+                {
+                    _hapticsHandler?.Invoke(packet, DecryptPacket(packet));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Haptics packet handler failed");
+                }
+                return;
+            }
+
             // ✅ 推送序列号统计（类似 chiaki 的 chiaki_packet_stats_push_seq）
             // 使用 FrameIndex 作为序列号（音频和视频都使用）
             _packetStats?.PushSeq(packet.FrameIndex);
@@ -378,6 +411,14 @@ namespace RemotePlay.Services.Streaming.AV
         public void SetRequestKeyframeCallback(Func<Task>? callback)
         {
             _requestKeyframeCallback = callback;
+        }
+
+        /// <summary>
+        /// 设置 DualSense haptics 包处理回调（参数：包、已解密数据）
+        /// </summary>
+        public void SetHapticsHandler(Action<AVPacket, byte[]>? handler)
+        {
+            _hapticsHandler = handler;
         }
 
         #endregion

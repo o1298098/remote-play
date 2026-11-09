@@ -133,11 +133,18 @@ namespace RemotePlay.Services.Streaming.Controller
         
         #endregion
         
-        #region 触摸板（未实现）
-        
-        // TODO: 触摸板支持
-        // public TouchpadState Touchpad { get; set; }
-        
+        /// <summary>
+        /// 是否带有真实体感数据（来自 DualSense），否则保持主机侧的静止姿态
+        /// </summary>
+        public bool HasMotion { get; set; }
+
+        #region 触摸板
+
+        /// <summary>
+        /// 触摸点（最多 2 个），Id 小于 0 表示该位置没有触摸
+        /// </summary>
+        public Models.PlayStation.ControllerTouch[] Touches { get; set; } = Models.PlayStation.ControllerTouch.CreateEmpty();
+
         #endregion
         
         #region 兼容旧代码的属性和方法
@@ -201,13 +208,17 @@ namespace RemotePlay.Services.Streaming.Controller
                 OrientX = OrientX,
                 OrientY = OrientY,
                 OrientZ = OrientZ,
-                OrientW = OrientW
+                OrientW = OrientW,
+                HasMotion = HasMotion,
+                Touches = (Models.PlayStation.ControllerTouch[])Touches.Clone()
             };
         }
 
         public void CopyFrom(ControllerState other)
         {
             ArgumentNullException.ThrowIfNull(other);
+            HasMotion = other.HasMotion;
+            Touches = (Models.PlayStation.ControllerTouch[])other.Touches.Clone();
 
             Buttons = other.Buttons;
             LeftX = other.LeftX;
@@ -339,6 +350,8 @@ namespace RemotePlay.Services.Streaming.Controller
             if (Math.Abs(OrientY - other.OrientY) > epsilon) return false;
             if (Math.Abs(OrientZ - other.OrientZ) > epsilon) return false;
             if (Math.Abs(OrientW - other.OrientW) > epsilon) return false;
+
+            if (!Touches.AsSpan().SequenceEqual(other.Touches)) return false;
             
             return true;
         }

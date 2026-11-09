@@ -30,6 +30,7 @@ namespace RemotePlay.Services.Streaming.Launch
                 ["ultra_30m"] = 30000,
                 ["ultra_40m"] = 40000,
                 ["ultra_50m"] = 50000,
+                ["ultra_100m"] = 100000,
                 ["default"] = 0
             };
 

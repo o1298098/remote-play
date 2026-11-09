@@ -224,16 +224,17 @@
           "60FPS": "60 ips"
         },
         "bitrate": {
-          "DEFAULT": "Ajustement automatique du débit binaire",
-          "VERY_LOW": "Qualité très faible (~2 Mbps)",
-          "LOW": "Qualité faible (~4 Mbps)",
-          "MEDIUM": "Qualité moyenne (~6 Mbps)",
-          "HIGH": "Qualité élevée (~10 Mbps)",
-          "VERY_HIGH": "Qualité très élevée (~15 Mbps)",
-          "ULTRA_20M": "Qualité ultra (~20 Mbps)",
-          "ULTRA_30M": "Qualité ultra (~30 Mbps)",
-          "ULTRA_40M": "Qualité extrême (~40 Mbps, expérimental)",
-          "ULTRA_50M": "Qualité extrême (~50 Mbps, expérimental)"
+          "DEFAULT": "Automatique (selon la résolution)",
+          "VERY_LOW": "2 Mbit/s · Économie de données, réseaux mobiles",
+          "LOW": "4 Mbit/s · Fluide",
+          "MEDIUM": "6 Mbit/s · Standard",
+          "HIGH": "10 Mbit/s · HD",
+          "VERY_HIGH": "15 Mbit/s · Recommandé pour 1080p",
+          "ULTRA_20M": "20 Mbit/s · Haute qualité",
+          "ULTRA_30M": "30 Mbit/s · Très haute qualité",
+          "ULTRA_40M": "40 Mbit/s · Excellente, réseau local stable requis",
+          "ULTRA_50M": "50 Mbit/s · Premium, réseau filaire recommandé",
+          "ULTRA_100M": "100 Mbit/s · Qualité maximale, réseau filaire gigabit requis"
         },
         "streamType": {
           "H264": "Codec H.264",

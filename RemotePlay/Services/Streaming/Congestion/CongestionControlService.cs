@@ -17,8 +17,8 @@ namespace RemotePlay.Services.Streaming
         // 拥塞控制包大小（15 字节 = 0x0f）
         private const int CONGESTION_PACKET_SIZE = 15;
         
-        // 默认丢失率警告阈值（超过此值会记录警告日志，但不限制报告）
-        private const double DEFAULT_PACKET_LOSS_MAX = 0.05; 
+        // 上报给主机的丢包率上限：主机对丢包反应激进，按真实值上报时码率和分辨率会降得过快
+        public const double DEFAULT_PACKET_LOSS_MAX = 0.05; 
         
         #endregion
 
@@ -32,7 +32,7 @@ namespace RemotePlay.Services.Streaming
         private CancellationTokenSource? _cts;
         private Task? _congestionLoop;
         
-        private double _packetLossMax = DEFAULT_PACKET_LOSS_MAX; // 丢失率警告阈值（超过此值会记录警告日志）
+        private double _packetLossMax = DEFAULT_PACKET_LOSS_MAX; // 上报丢包率上限
         private double _packetLoss = 0; // 当前丢失率
         
         private bool _isRunning = false;
@@ -48,7 +48,7 @@ namespace RemotePlay.Services.Streaming
         /// <param name="sendRawFunc">发送原始包的回调函数</param>
         /// <param name="getKeyPosFunc">获取当前 key_pos 的回调函数</param>
         /// <param name="getPacketStatsFunc">获取包统计的回调函数（可选，应该返回增量值并重置统计）</param>
-        /// <param name="packetLossMax">丢失率警告阈值（超过此值会记录警告日志，但不限制报告，默认 0.05）</param>
+        /// <param name="packetLossMax">上报给主机的丢包率上限（默认 0.05），超过时按上限上报</param>
         public CongestionControlService(
             ILogger<CongestionControlService> logger,
             Func<byte[], Task> sendRawFunc,
@@ -175,17 +175,15 @@ namespace RemotePlay.Services.Streaming
                             received, lost, total, _packetLoss);
                     }
                     
-                    // 记录高丢失率警告（但不限制报告，让主机能够正确响应网络状况）
                     if (_packetLoss > _packetLossMax)
                     {
-                        _logger.LogWarning(
-                            "High packet loss detected: {LossRate:P2} (threshold: {Threshold:P2}). " +
-                            "Reporting real loss rate to allow host to adjust bitrate. " +
-                            "Stats: received={Received}, lost={Lost}, total={Total}",
-                            _packetLoss, _packetLossMax, received, lost, total);
+                        _logger.LogDebug(
+                            "Clamping reported packet loss: measured={LossRate:P2} reported_max={Threshold:P2}",
+                            _packetLoss, _packetLossMax);
+                        lost = (ulong)(total * _packetLossMax);
+                        received = total - lost;
                     }
                     
-                    // 构造并发送拥塞包（报告真实的丢失率，不进行限制）
                     var packet = BuildCongestionPacket((ushort)received, (ushort)lost);
                     await _sendRawFunc(packet);
                     

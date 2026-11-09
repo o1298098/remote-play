@@ -294,7 +294,7 @@ namespace RemotePlay.Services.Streaming.Protocol
         /// <summary>
         /// 创建 FeedbackEvent 包（按键事件）
         /// </summary>
-        public static byte[] CreateEvent(ushort sequence, byte[] eventData, Utils.Crypto.StreamCipher cipher)
+        public static byte[] CreateEvent(ushort sequence, byte[] eventData, Utils.Crypto.StreamCipher cipher, byte eventCount = 1)
         {
             int totalLength = HEADER_LENGTH + eventData.Length;
             var packet = new byte[totalLength];
@@ -305,7 +305,8 @@ namespace RemotePlay.Services.Streaming.Protocol
             // 2. 写入 header（gmac 先填 0）
             packet[0] = (byte)HeaderType.FEEDBACK_EVENT;
             BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(1, 2), sequence);
-            packet[3] = 0x00; // padding
+            // 事件数减一：主机会再加回一，写满数会让主机越界读取并拒绝整个包
+            packet[3] = (byte)(eventCount > 0 ? eventCount - 1 : 0);
             BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(4, 4), keyPos);
 
             // 3. 加密 payload（使用当前 key_pos）并写入

@@ -21,6 +21,11 @@ namespace RemotePlay.Services.Streaming.AV
         public int UnitsFec { get; private set; }
         public int AudioUnitSize { get; private set; }
 
+        /// <summary>
+        /// PS5 音频包中的 DualSense haptics 数据（原始 PCM，不是 Opus），需与游戏音频分开处理
+        /// </summary>
+        public bool IsHaptics { get; private set; }
+
         public bool IsLast => UnitIndex == UnitsTotal - 1;
         public bool IsLastSrc => UnitIndex == UnitsSrc - 1;
         
@@ -65,6 +70,7 @@ namespace RemotePlay.Services.Streaming.AV
 
             if (packet.Type == HeaderType.AUDIO && string.Equals(hostType, "PS5", StringComparison.OrdinalIgnoreCase))
             {
+                packet.IsHaptics = 18 + offset < buf.Length && buf[18 + offset] == 0x02;
                 offset += 1;
             }
 

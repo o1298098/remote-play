@@ -18,7 +18,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.10")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -185,7 +185,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-default",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "自动匹配比特率",
+                            Description = "自动（按分辨率匹配码率）",
                             EnumCode = "DEFAULT",
                             EnumKey = "DEFAULT",
                             EnumType = "Quality",
@@ -197,7 +197,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-very-low",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "非常低画质（约 2Mbps）",
+                            Description = "2 Mbps · 省流量，适合移动网络",
                             EnumCode = "VERY_LOW",
                             EnumKey = "VERY_LOW",
                             EnumType = "Quality",
@@ -209,7 +209,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-low",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "低画质（约 4Mbps）",
+                            Description = "4 Mbps · 流畅",
                             EnumCode = "LOW",
                             EnumKey = "LOW",
                             EnumType = "Quality",
@@ -221,7 +221,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-medium",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "中等画质（约 6Mbps）",
+                            Description = "6 Mbps · 标准",
                             EnumCode = "MEDIUM",
                             EnumKey = "MEDIUM",
                             EnumType = "Quality",
@@ -233,7 +233,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-high",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "高画质（约 10Mbps）",
+                            Description = "10 Mbps · 高清",
                             EnumCode = "HIGH",
                             EnumKey = "HIGH",
                             EnumType = "Quality",
@@ -245,7 +245,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-very-high",
                             CreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "非常高画质（约 15Mbps）",
+                            Description = "15 Mbps · 1080p 推荐",
                             EnumCode = "VERY_HIGH",
                             EnumKey = "VERY_HIGH",
                             EnumType = "Quality",
@@ -257,7 +257,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-ultra-20m",
                             CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "超高画质（约 20Mbps）",
+                            Description = "20 Mbps · 高画质",
                             EnumCode = "ULTRA_20M",
                             EnumKey = "ULTRA_20M",
                             EnumType = "Quality",
@@ -269,7 +269,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-ultra-30m",
                             CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "超高画质（约 30Mbps）",
+                            Description = "30 Mbps · 超高画质",
                             EnumCode = "ULTRA_30M",
                             EnumKey = "ULTRA_30M",
                             EnumType = "Quality",
@@ -281,7 +281,7 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-ultra-40m",
                             CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "极高画质（约 40Mbps，实验性）",
+                            Description = "40 Mbps · 极高画质，需稳定的局域网",
                             EnumCode = "ULTRA_40M",
                             EnumKey = "ULTRA_40M",
                             EnumType = "Quality",
@@ -293,13 +293,25 @@ namespace RemotePlay.DBTool.Migrations.RemotePlay
                         {
                             Id = "quality-ultra-50m",
                             CreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "极高画质（约 50Mbps，实验性）",
+                            Description = "50 Mbps · 极致画质，建议有线网络",
                             EnumCode = "ULTRA_50M",
                             EnumKey = "ULTRA_50M",
                             EnumType = "Quality",
                             EnumValue = "50000",
                             IsActive = true,
                             SortOrder = 9
+                        },
+                        new
+                        {
+                            Id = "quality-ultra-100m",
+                            CreatedAt = new DateTime(2026, 11, 9, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "100 Mbps · 最高画质，需千兆有线网络",
+                            EnumCode = "ULTRA_100M",
+                            EnumKey = "ULTRA_100M",
+                            EnumType = "Quality",
+                            EnumValue = "100000",
+                            IsActive = true,
+                            SortOrder = 10
                         },
                         new
                         {

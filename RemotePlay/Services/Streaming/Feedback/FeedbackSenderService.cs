@@ -1,6 +1,7 @@
 using RemotePlay.Models.PlayStation;
 using RemotePlay.Services.Streaming.Controller;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,26 +19,40 @@ namespace RemotePlay.Services.Streaming.Feedback
         private const int FEEDBACK_STATE_TIMEOUT_MIN_MS = 8;      // 最小发送间隔
         private const int FEEDBACK_STATE_TIMEOUT_MAX_MS = 200;    // 最大发送间隔（超时心跳）
         private const int FEEDBACK_HISTORY_BUFFER_SIZE = 16;      // History 缓冲区大小
+        // 每个 History 包重复携带的最近事件数。L2/R2 每次数值变化都是一个事件，
+        // 只带 4 个时 L1/R1 的松开事件可能一两个包就被挤出窗口
+        private const int FEEDBACK_HISTORY_RESEND_EVENT_COUNT = 8;
+        private const int FEEDBACK_HISTORY_PACKET_QUEUE_SIZE = 64;
+        // History 包走 UDP 且无确认。最后一个包（通常是松开按键）丢了又没有后续输入时，
+        // 主机会一直认为按键按着，所以在这些时间点（相对首次发送，毫秒）用同一序号补发
+        private static readonly int[] FEEDBACK_HISTORY_TAIL_MS = { 20, 50, 100, 200 };
         
         #endregion
 
         #region Fields
         
         private readonly ILogger<FeedbackSenderService> _logger;
-        private readonly Func<int, ushort, byte[], Task> _sendFeedbackFunc;  // 发送回调
+        private readonly Func<int, ushort, byte, byte[], Task> _sendFeedbackFunc;  // 发送回调 (type, sequence, eventCount, data)
         
         private CancellationTokenSource? _cts;
         private Task? _feedbackLoop;
         
         private Models.PlayStation.ControllerState _currentState;
         private Models.PlayStation.ControllerState _previousState;
+        private readonly Models.PlayStation.ControllerState _historyPrevState;
         private readonly object _stateLock = new object();
         private bool _stateChanged = false;
         
         private ushort _feedbackStateSeqNum = 0;
-        private ushort _feedbackHistorySeqNum = 0;
         
-        private readonly Queue<FeedbackHistoryEvent> _historyBuffer = new Queue<FeedbackHistoryEvent>();
+        // 每个 History 事件占一个序号，包的序号是其中最新事件的序号。
+        // 主机记住已应用的最后序号，只取序号前进了几个就取几个事件，因此重复包不会被重复应用
+        private ushort _historyEventSeqNum = 0;
+        private readonly List<byte[]> _historyEvents = new();  // 最新的在前
+        private readonly Queue<HistoryPacket> _pendingHistoryPackets = new();
+        private HistoryPacket? _lastHistoryPacket;
+        private long _lastHistorySentMs;
+        private int _historyTailResends = FEEDBACK_HISTORY_TAIL_MS.Length;
         
         private bool _isRunning = false;
         private readonly AsyncManualResetEvent _stateChangedEvent = new AsyncManualResetEvent(false);
@@ -53,7 +68,7 @@ namespace RemotePlay.Services.Streaming.Feedback
         /// <param name="sendFeedbackFunc">发送 Feedback 的回调函数 (type, sequence, data)</param>
         public FeedbackSenderService(
             ILogger<FeedbackSenderService> logger,
-            Func<int, ushort, byte[], Task> sendFeedbackFunc)
+            Func<int, ushort, byte, byte[], Task> sendFeedbackFunc)
         {
             _logger = logger;
             _sendFeedbackFunc = sendFeedbackFunc;
@@ -61,6 +76,7 @@ namespace RemotePlay.Services.Streaming.Feedback
             // 初始化为 idle 状态
             _currentState = Models.PlayStation.ControllerState.CreateIdle();
             _previousState = Models.PlayStation.ControllerState.CreateIdle();
+            _historyPrevState = Models.PlayStation.ControllerState.CreateIdle();
         }
         
         /// <summary>
@@ -137,13 +153,33 @@ namespace RemotePlay.Services.Streaming.Feedback
         /// 更新 Controller 状态（从外部调用）
         /// ✅ 关键：合并状态而不是完全替换，保留陀螺仪等其他状态
         /// </summary>
-        public void UpdateControllerState(Models.PlayStation.ControllerState state)
+        /// <param name="includeMotion">state 是否带有真实体感数据；否则保留当前（静止）姿态</param>
+        public void UpdateControllerState(Models.PlayStation.ControllerState state, bool includeMotion = false)
         {
             lock (_stateLock)
             {
                 // ✅ 合并状态：只更新摇杆值，保留其他状态（陀螺仪、按键等）
                 // 这样即使只更新摇杆，也不会丢失其他状态
                 bool changed = false;
+
+                if (includeMotion &&
+                    (_currentState.GyroX != state.GyroX || _currentState.GyroY != state.GyroY || _currentState.GyroZ != state.GyroZ ||
+                     _currentState.AccelX != state.AccelX || _currentState.AccelY != state.AccelY || _currentState.AccelZ != state.AccelZ ||
+                     _currentState.OrientX != state.OrientX || _currentState.OrientY != state.OrientY ||
+                     _currentState.OrientZ != state.OrientZ || _currentState.OrientW != state.OrientW))
+                {
+                    _currentState.GyroX = state.GyroX;
+                    _currentState.GyroY = state.GyroY;
+                    _currentState.GyroZ = state.GyroZ;
+                    _currentState.AccelX = state.AccelX;
+                    _currentState.AccelY = state.AccelY;
+                    _currentState.AccelZ = state.AccelZ;
+                    _currentState.OrientX = state.OrientX;
+                    _currentState.OrientY = state.OrientY;
+                    _currentState.OrientZ = state.OrientZ;
+                    _currentState.OrientW = state.OrientW;
+                    changed = true;
+                }
                 
                 // 检查摇杆是否变化
                 if (_currentState.LeftX != state.LeftX || 
@@ -158,23 +194,36 @@ namespace RemotePlay.Services.Streaming.Feedback
                     changed = true;
                 }
                 
-                // 如果提供了其他状态，也更新（如按键、扳机等）
-                // 但主要关注摇杆，因为这是最常见的更新场景
+                // 按键、扳机：立即记录为 History 事件，避免两次发送之间的快速按下/松开丢失
+                bool historyChanged = false;
                 if (state.Buttons != _currentState.Buttons)
                 {
                     _currentState.Buttons = state.Buttons;
-                    changed = true;
+                    historyChanged = true;
                 }
                 
                 if (state.L2State != _currentState.L2State)
                 {
                     _currentState.L2State = state.L2State;
-                    changed = true;
+                    historyChanged = true;
                 }
                 
                 if (state.R2State != _currentState.R2State)
                 {
                     _currentState.R2State = state.R2State;
+                    historyChanged = true;
+                }
+
+                if (!state.Touches.AsSpan().SequenceEqual(_currentState.Touches))
+                {
+                    _currentState.Touches = (Models.PlayStation.ControllerTouch[])state.Touches.Clone();
+                    historyChanged = true;
+                }
+
+                if (historyChanged)
+                {
+                    RecordHistory(_historyPrevState, _currentState);
+                    _historyPrevState.CopyFrom(_currentState);
                     changed = true;
                 }
                 
@@ -213,7 +262,8 @@ namespace RemotePlay.Services.Streaming.Feedback
         {
             _logger.LogInformation("🔄 FeedbackSender loop started");
             
-            var nextTimeout = FEEDBACK_STATE_TIMEOUT_MAX_MS;
+            var clock = Stopwatch.StartNew();
+            long lastStateSentMs = 0;
             int stateCount = 0;
             int historyCount = 0;
             
@@ -221,55 +271,64 @@ namespace RemotePlay.Services.Streaming.Feedback
             {
                 try
                 {
-                    // ✅ 等待状态变化或超时（最多 200ms）
-                    var waitTask = _stateChangedEvent.WaitAsync(ct);
-                    var delayTask = Task.Delay(nextTimeout, ct);
-                    var completed = await Task.WhenAny(waitTask, delayTask);
-                    if (completed == waitTask)
+                    // ✅ 等待状态变化、State 心跳（200ms）或下一次 History 尾部补发
+                    long nowMs = clock.ElapsedMilliseconds;
+                    long timeoutMs = Math.Max(0, FEEDBACK_STATE_TIMEOUT_MAX_MS - (nowMs - lastStateSentMs));
+                    lock (_stateLock)
                     {
-                        // 立即处理状态变化，下次回到默认 8ms 最小间隔
-                        nextTimeout = FEEDBACK_STATE_TIMEOUT_MIN_MS;
+                        if (_stateChanged || _pendingHistoryPackets.Count > 0)
+                        {
+                            timeoutMs = 0;
+                        }
+                        else if (_lastHistoryPacket != null && _historyTailResends < FEEDBACK_HISTORY_TAIL_MS.Length)
+                        {
+                            long dueMs = _lastHistorySentMs + FEEDBACK_HISTORY_TAIL_MS[_historyTailResends];
+                            timeoutMs = Math.Min(timeoutMs, Math.Max(0, dueMs - nowMs));
+                        }
                     }
-                    else
+
+                    if (timeoutMs > 0)
                     {
-                        nextTimeout = FEEDBACK_STATE_TIMEOUT_MAX_MS;
+                        await Task.WhenAny(_stateChangedEvent.WaitAsync(ct), Task.Delay((int)timeoutMs, ct));
+                        ct.ThrowIfCancellationRequested();
                     }
                     _stateChangedEvent.Reset();
                     
-                    bool sendFeedbackState = false;
-                    bool sendFeedbackHistory = false;
-                    
+                    nowMs = clock.ElapsedMilliseconds;
+                    bool sendFeedbackState = nowMs - lastStateSentMs >= FEEDBACK_STATE_TIMEOUT_MAX_MS;
+                    HistoryPacket? historyPacket = null;
+                    bool isTailResend = false;
                     Models.PlayStation.ControllerState currentStateCopy;
-                    Models.PlayStation.ControllerState previousStateCopy;
                     
                     lock (_stateLock)
                     {
                         currentStateCopy = _currentState.Clone();
-                        previousStateCopy = _previousState.Clone();
                         
                         if (_stateChanged)
                         {
                             _stateChanged = false;
                             
-                            // ✅ 检查是否需要发送 Feedback State
-                            // 只有摇杆/陀螺仪变化时才发送 State
-                            if (!StatesEqualForFeedbackState(previousStateCopy, currentStateCopy))
+                            // ✅ 只有摇杆/陀螺仪变化时才发送 State（按键/扳机走 History）
+                            if (!StatesEqualForFeedbackState(_previousState, currentStateCopy))
                             {
                                 sendFeedbackState = true;
                             }
-                            
-                            // ✅ 检查是否需要发送 Feedback History
-                            // 按键/扳机变化时发送 History
-                            if (!StatesEqualForFeedbackHistory(previousStateCopy, currentStateCopy))
-                            {
-                                sendFeedbackHistory = true;
-                            }
-                            nextTimeout = FEEDBACK_STATE_TIMEOUT_MIN_MS;
                         }
-                        else
+
+                        if (_pendingHistoryPackets.Count > 0)
                         {
-                            // ✅ 超时：即使状态不变，也发送 Feedback State（心跳）
-                            sendFeedbackState = true;
+                            historyPacket = _pendingHistoryPackets.Dequeue();
+                            _lastHistoryPacket = historyPacket;
+                            _lastHistorySentMs = nowMs;
+                            _historyTailResends = 0;
+                        }
+                        else if (_lastHistoryPacket != null
+                            && _historyTailResends < FEEDBACK_HISTORY_TAIL_MS.Length
+                            && nowMs >= _lastHistorySentMs + FEEDBACK_HISTORY_TAIL_MS[_historyTailResends])
+                        {
+                            historyPacket = _lastHistoryPacket;
+                            _historyTailResends++;
+                            isTailResend = true;
                         }
                     }
                     
@@ -277,7 +336,13 @@ namespace RemotePlay.Services.Streaming.Feedback
                     if (sendFeedbackState)
                     {
                         await SendFeedbackStateAsync(currentStateCopy);
+                        lastStateSentMs = clock.ElapsedMilliseconds;
                         stateCount++;
+
+                        lock (_stateLock)
+                        {
+                            _previousState.CopyFrom(currentStateCopy);
+                        }
                         
                         if (stateCount <= 3 || stateCount % 20 == 0)
                         {
@@ -286,25 +351,19 @@ namespace RemotePlay.Services.Streaming.Feedback
                     }
                     
                     // 发送 Feedback History
-                    if (sendFeedbackHistory)
+                    if (historyPacket != null)
                     {
-                        await SendFeedbackHistoryAsync(previousStateCopy, currentStateCopy);
-                        historyCount++;
-                        
-                        _logger.LogDebug("📤 Feedback History #{Count} sent (button change detected)", 
-                            historyCount);
-                    }
-                    
-                    // 更新 previous state
-                    lock (_stateLock)
-                    {
-                        _previousState.CopyFrom(currentStateCopy);
-                    }
-                    
-                    // ✅ 如果状态连续变化，会维持最小发送间隔
-                    if (!sendFeedbackState && !sendFeedbackHistory)
-                    {
-                        nextTimeout = FEEDBACK_STATE_TIMEOUT_MAX_MS;
+                        await _sendFeedbackFunc((int)FeedbackHeaderType.HISTORY,
+                            historyPacket.SeqNum,
+                            historyPacket.EventCount,
+                            historyPacket.Payload);
+
+                        if (!isTailResend)
+                        {
+                            historyCount++;
+                            _logger.LogDebug("📤 Feedback History #{Count} sent: seq={Seq}, events={Events}",
+                                historyCount, historyPacket.SeqNum, historyPacket.EventCount);
+                        }
                     }
                 }
                 catch (OperationCanceledException)
@@ -409,7 +468,7 @@ namespace RemotePlay.Services.Streaming.Feedback
             }
             
             // 发送 Feedback State（type=6）
-            await _sendFeedbackFunc((int)FeedbackHeaderType.STATE, _feedbackStateSeqNum++, data);
+            await _sendFeedbackFunc((int)FeedbackHeaderType.STATE, _feedbackStateSeqNum++, 1, data);
         }
         
         /// <summary>
@@ -500,96 +559,136 @@ namespace RemotePlay.Services.Streaming.Feedback
         #region Feedback History
         
         /// <summary>
-        /// 发送 Feedback History（按键事件）
+        /// 把按键/触摸/扳机变化记录为 History 事件（调用方需持有 _stateLock）
+        /// 顺序：先松开、再触摸、再按下、最后 L2/R2。触摸板按键和手指同时松开时，
+        /// 不能在按键还按着时先抬起手指
         /// </summary>
-        private async Task SendFeedbackHistoryAsync(Models.PlayStation.ControllerState prev, Models.PlayStation.ControllerState current)
+        private void RecordHistory(Models.PlayStation.ControllerState prev, Models.PlayStation.ControllerState current)
         {
-            var events = new List<byte>();
-            
-            // ✅ 检查所有按键变化
-            CheckButtonChanges(prev.Buttons, current.Buttons, events);
-            
-            // ✅ 检查 L2/R2 扳机变化
+            RecordButtonEvents(prev.Buttons, current.Buttons, pressed: false);
+
+            for (int i = 0; i < Models.PlayStation.ControllerTouch.MaxTouches; i++)
+            {
+                var before = prev.Touches[i];
+                var now = current.Touches[i];
+                if (before.Id != now.Id && before.Id >= 0)
+                {
+                    PushHistoryEvent(CreateTouchEvent(down: false, before));
+                }
+                else if (now.Id >= 0 && (before.Id != now.Id || before.X != now.X || before.Y != now.Y))
+                {
+                    PushHistoryEvent(CreateTouchEvent(down: true, now));
+                }
+            }
+
+            RecordButtonEvents(prev.Buttons, current.Buttons, pressed: true);
+
             if (prev.L2State != current.L2State)
             {
-                AddButtonEvent(events, 0x86, current.L2State);  // L2
+                PushHistoryEvent(CreateButtonEvent(0x86, current.L2State));  // L2
             }
             
             if (prev.R2State != current.R2State)
             {
-                AddButtonEvent(events, 0x87, current.R2State);  // R2
+                PushHistoryEvent(CreateButtonEvent(0x87, current.R2State));  // R2
             }
             
-            // ✅ 检查触摸板变化（如果有实现）
             // TODO: 实现触摸板事件
-            
-            // 如果有事件，发送 Feedback History
-            if (events.Count > 0)
-            {
-                await _sendFeedbackFunc((int)FeedbackHeaderType.HISTORY, 
-                    _feedbackHistorySeqNum++, 
-                    events.ToArray());
-            }
         }
         
-        /// <summary>
-        /// 检查按键变化
-        /// </summary>
-        private void CheckButtonChanges(ulong prevButtons, ulong currentButtons, List<byte> events)
+        private void RecordButtonEvents(ulong prevButtons, ulong currentButtons, bool pressed)
         {
-            // 遍历所有 32 个可能的按键
             for (int i = 0; i < 32; i++)
             {
                 ulong buttonMask = 1UL << i;
                 bool prevPressed = (prevButtons & buttonMask) != 0;
                 bool currPressed = (currentButtons & buttonMask) != 0;
                 
-                if (prevPressed != currPressed)
+                if (prevPressed == currPressed || currPressed != pressed)
                 {
-                    byte buttonCode = GetButtonCode(buttonMask);
-                    if (buttonCode != 0)
-                    {
-                        AddButtonEvent(events, buttonCode, currPressed ? (byte)0xff : (byte)0x00);
-                    }
+                    continue;
+                }
+
+                byte buttonCode = GetButtonCode(buttonMask);
+                if (buttonCode != 0)
+                {
+                    PushHistoryEvent(CreateButtonEvent(buttonCode, currPressed ? (byte)0xff : (byte)0x00));
                 }
             }
         }
+
+        /// <summary>
+        /// 新事件放到缓冲区最前，并立即生成一个包含缓冲区全部事件的 History 包
+        /// </summary>
+        private void PushHistoryEvent(byte[] historyEvent)
+        {
+            _historyEvents.Insert(0, historyEvent);
+            if (_historyEvents.Count > FEEDBACK_HISTORY_BUFFER_SIZE)
+            {
+                _historyEvents.RemoveAt(_historyEvents.Count - 1);
+            }
+
+            _historyEventSeqNum++;
+
+            var payload = new byte[_historyEvents.Sum(e => e.Length)];
+            int offset = 0;
+            foreach (var e in _historyEvents)
+            {
+                System.Buffer.BlockCopy(e, 0, payload, offset, e.Length);
+                offset += e.Length;
+            }
+
+            if (_pendingHistoryPackets.Count >= FEEDBACK_HISTORY_PACKET_QUEUE_SIZE)
+            {
+                // 丢掉最旧的包不影响编号：下一个包的序号仍覆盖上次发出后的所有事件
+                _pendingHistoryPackets.Dequeue();
+                _logger.LogWarning("Feedback history packet queue overflow");
+            }
+            _pendingHistoryPackets.Enqueue(new HistoryPacket(
+                (ushort)(_historyEventSeqNum - 1),
+                (byte)_historyEvents.Count,
+                payload));
+
+            if (_historyEvents.Count > FEEDBACK_HISTORY_RESEND_EVENT_COUNT)
+            {
+                _historyEvents.RemoveRange(FEEDBACK_HISTORY_RESEND_EVENT_COUNT,
+                    _historyEvents.Count - FEEDBACK_HISTORY_RESEND_EVENT_COUNT);
+            }
+
+            _stateChangedEvent.Set();
+        }
         
         /// <summary>
-        /// 添加按键事件到缓冲区
-        /// 格式：[0x80] [button_code] [state]（部分按键有 state，部分没有）
+        /// 生成触摸事件：[0xd0 按下 / 0xc0 抬起] [触摸 id] [x 高 8 位] [x 低 4 位 | y 高 4 位] [y 低 8 位]
         /// </summary>
-        private void AddButtonEvent(List<byte> events, byte buttonCode, byte state)
+        private static byte[] CreateTouchEvent(bool down, Models.PlayStation.ControllerTouch touch)
         {
-            events.Add(0x80);
-            
-            // ✅ 部分按键需要特殊处理（按下/释放用不同的 code）
-            switch (buttonCode)
+            return new byte[]
             {
-                case 0x8c: // OPTIONS
-                    events.Add((byte)(state != 0 ? 0xac : 0x8c));
-                    break;
-                case 0x8d: // SHARE
-                    events.Add((byte)(state != 0 ? 0xad : 0x8d));
-                    break;
-                case 0x8e: // PS
-                    events.Add((byte)(state != 0 ? 0xae : 0x8e));
-                    break;
-                case 0x8f: // L3
-                    events.Add((byte)(state != 0 ? 0xaf : 0x8f));
-                    break;
-                case 0x90: // R3
-                    events.Add((byte)(state != 0 ? 0xb0 : 0x90));
-                    break;
-                case 0x91: // TOUCHPAD
-                    events.Add((byte)(state != 0 ? 0xb1 : 0x91));
-                    break;
-                default:
-                    // 其他按键需要 state 字节
-                    events.Add(buttonCode);
-                    events.Add(state);
-                    break;
-            }
+                (byte)(down ? 0xd0 : 0xc0),
+                (byte)(touch.Id & 0x7f),
+                (byte)(touch.X >> 4),
+                (byte)(((touch.X & 0xf) << 4) | (touch.Y >> 8)),
+                (byte)touch.Y
+            };
+        }
+
+        /// <summary>
+        /// 生成单个按键事件
+        /// 格式：[0x80] [button_code] [state]（部分按键按下/松开用不同 code 且没有 state 字节）
+        /// </summary>
+        private static byte[] CreateButtonEvent(byte buttonCode, byte state)
+        {
+            return buttonCode switch
+            {
+                0x8c => new byte[] { 0x80, (byte)(state != 0 ? 0xac : 0x8c) }, // OPTIONS
+                0x8d => new byte[] { 0x80, (byte)(state != 0 ? 0xad : 0x8d) }, // SHARE
+                0x8e => new byte[] { 0x80, (byte)(state != 0 ? 0xae : 0x8e) }, // PS
+                0x8f => new byte[] { 0x80, (byte)(state != 0 ? 0xaf : 0x8f) }, // L3
+                0x90 => new byte[] { 0x80, (byte)(state != 0 ? 0xb0 : 0x90) }, // R3
+                0x91 => new byte[] { 0x80, (byte)(state != 0 ? 0xb1 : 0x91) }, // TOUCHPAD
+                _ => new byte[] { 0x80, buttonCode, state },
+            };
         }
         
         /// <summary>
@@ -654,25 +753,9 @@ namespace RemotePlay.Services.Streaming.Feedback
             return true;
         }
         
-        /// <summary>
-        /// 检查两个状态在 Feedback History 方面是否相同
-        /// （只比较按键和扳机）
-        /// </summary>
-        private bool StatesEqualForFeedbackHistory(Models.PlayStation.ControllerState a, Models.PlayStation.ControllerState b)
-        {
-            // 按键
-            if (a.Buttons != b.Buttons) return false;
-            
-            // 扳机
-            if (a.L2State != b.L2State) return false;
-            if (a.R2State != b.R2State) return false;
-            
-            // TODO: 触摸板
-            
-            return true;
-        }
-        
         #endregion
+
+        private sealed record HistoryPacket(ushort SeqNum, byte EventCount, byte[] Payload);
 
         private sealed class AsyncManualResetEvent
         {
@@ -721,21 +804,5 @@ namespace RemotePlay.Services.Streaming.Feedback
             }
         }
     }
-    
-    /// <summary>
-    /// Feedback History 事件
-    /// </summary>
-    internal struct FeedbackHistoryEvent
-    {
-        public byte[]? Buffer;
-        public int Length;
-        
-        public FeedbackHistoryEvent()
-        {
-            Buffer = null;
-            Length = 0;
-        }
-    }
-    
 }
 

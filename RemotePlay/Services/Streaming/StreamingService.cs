@@ -9,6 +9,8 @@ using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 using RemotePlay.Hubs;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using RemotePlay.Models.Configuration;
 
 namespace RemotePlay.Services.Streaming
 {
@@ -51,7 +53,9 @@ namespace RemotePlay.Services.Streaming
             // PS5 默认使用 9296 作为首选端口
             var port = 9296;
             var ct = cancellationToken;
-            var rp = new Core.RPStreamV2(rpLogger, _loggerFactory, session, session.HostIp, port, ct);
+            var streamingConfig = _serviceProvider.GetService<IOptions<RemotePlayConfig>>()?.Value.Streaming ?? new StreamingConfig();
+            var rp = new Core.RPStreamV2(rpLogger, _loggerFactory, session, session.HostIp, port, ct,
+                streamingConfig.PacketLossReportedMax);
             
             // 🔹 如果是测试模式，自动附加默认接收器（用于调试）
             // 注意：WebRTCReceiver 应该通过 WebRTCController 创建，而不是在这里自动创建

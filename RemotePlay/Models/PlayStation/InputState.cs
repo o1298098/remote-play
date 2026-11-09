@@ -104,10 +104,13 @@ namespace RemotePlay.Models.PlayStation
         
         #endregion
 
-        #region Touchpad State (Optional)
-        
-        // TODO: 如果需要触摸板支持，添加触摸点数据
-        
+        #region Touchpad State
+
+        /// <summary>
+        /// 触摸点（最多 2 个），Id 小于 0 表示该位置没有触摸
+        /// </summary>
+        public ControllerTouch[] Touches { get; set; } = ControllerTouch.CreateEmpty();
+
         #endregion
 
         #region Factory Methods
@@ -163,7 +166,8 @@ namespace RemotePlay.Models.PlayStation
                 OrientX = OrientX,
                 OrientY = OrientY,
                 OrientZ = OrientZ,
-                OrientW = OrientW
+                OrientW = OrientW,
+                Touches = (ControllerTouch[])Touches.Clone()
             };
         }
 
@@ -188,6 +192,7 @@ namespace RemotePlay.Models.PlayStation
             OrientY = other.OrientY;
             OrientZ = other.OrientZ;
             OrientW = other.OrientW;
+            Touches = (ControllerTouch[])other.Touches.Clone();
         }
 
         #endregion
@@ -225,6 +230,32 @@ namespace RemotePlay.Models.PlayStation
         #endregion
     }
     
+    /// <summary>
+    /// 触摸板触摸点（坐标范围 x: 0~1919，y: 0~1079）
+    /// </summary>
+    public struct ControllerTouch : IEquatable<ControllerTouch>
+    {
+        public const int MaxTouches = 2;
+
+        public int Id { get; set; }
+        public ushort X { get; set; }
+        public ushort Y { get; set; }
+
+        public static ControllerTouch[] CreateEmpty()
+        {
+            var touches = new ControllerTouch[MaxTouches];
+            for (int i = 0; i < touches.Length; i++)
+            {
+                touches[i] = new ControllerTouch { Id = -1 };
+            }
+            return touches;
+        }
+
+        public bool Equals(ControllerTouch other) => Id == other.Id && X == other.X && Y == other.Y;
+        public override bool Equals(object? obj) => obj is ControllerTouch other && Equals(other);
+        public override int GetHashCode() => HashCode.Combine(Id, X, Y);
+    }
+
     /// <summary>
     /// Button masks（按键位掩码）
     /// </summary>

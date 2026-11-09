@@ -32,6 +32,8 @@ namespace RemotePlay.Services.Session
         private const string USER_AGENT = "remoteplay Windows";
         private static readonly byte[] DID_PREFIX = new byte[] { 0x00, 0x18, 0x00, 0x00, 0x00, 0x07, 0x00, 0x40, 0x00, 0x80 };
         private static readonly byte[] HEARTBEAT_RESPONSE = new byte[] { 0x00, 0x00, 0x00, 0x00, 0x01, 0xFE, 0x00, 0x00 };
+        private const int CTRL_ENABLE_DUALSENSE_FEATURES = 0x13;
+        private const int CTRL_DUALSENSE_CONNECT = 0x11;
         private const string OS_TYPE = "Win10.0.0";
 
         public SessionService(
@@ -355,6 +357,9 @@ namespace RemotePlay.Services.Session
             sb.Append("RP-ClientType: 11\r\n");
             sb.Append($"RP-OSType: {osB64}\r\n");
             sb.Append("RP-ConPath: 1\r\n");
+            // 不带此头时 PS5 会以手柄无法应用的格式下发部分自适应扳机效果（如 Bow）
+            if (hostType == TYPE_PS5)
+                sb.Append("RP-PadProcNo: 3\r\n");
             sb.Append($"RP-StartBitrate: {bitrateB64}\r\n");
             if (hostType == TYPE_PS5)
                 sb.Append($"RP-StreamingType: {streamTypeB64}\r\n");
@@ -482,6 +487,30 @@ namespace RemotePlay.Services.Session
             return buf;
         }
 
+        /// <summary>
+        /// 开启 DualSense 特性：主机随后会下发自适应扳机效果和 haptics 音频（haptics 由 RPStreamV2 换算成普通震动）
+        /// </summary>
+        private async Task EnableDualSenseFeaturesAsync(NetworkStream stream, SessionCipher cipher, CancellationToken ct)
+        {
+            try
+            {
+                var enable = BuildMessage(CTRL_ENABLE_DUALSENSE_FEATURES, new byte[] { 0x00, 0x40, 0x00 }, cipher);
+                var connect = BuildMessage(CTRL_DUALSENSE_CONNECT, new byte[]
+                {
+                    0xa0, 0xab, 0x51, 0xbd, 0xd1, 0x7e, 0x00, 0x00,
+                    0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00
+                }, cipher);
+                await stream.WriteAsync(enable, 0, enable.Length, ct);
+                await stream.WriteAsync(connect, 0, connect.Length, ct);
+                await stream.FlushAsync(ct);
+                _logger.LogInformation("Enabled DualSense features");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Failed to enable DualSense features");
+            }
+        }
+
         private async Task ReceiveLoopAsync(Guid sessionId, TcpClient control, SessionCipher cipher, CancellationToken ct)
         {
             var stream = control.GetStream();
@@ -594,6 +623,11 @@ namespace RemotePlay.Services.Session
                             entry.Session.SessionId = normalized;
                             // 触发会话就绪信号
                             _ = entry.Session.SessionReady.TrySetResult(true);
+
+                            if (string.Equals(entry.Session.HostType, TYPE_PS5, StringComparison.OrdinalIgnoreCase))
+                            {
+                                await EnableDualSenseFeaturesAsync(stream, cipher, ct);
+                            }
                         }
                         if (_autoStartStreamFlags.TryGetValue(sessionId, out var autoStart) && autoStart)
                         {

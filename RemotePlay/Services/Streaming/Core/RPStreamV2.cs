@@ -13,6 +13,7 @@ using RemotePlay.Utils.Crypto;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -40,7 +41,7 @@ namespace RemotePlay.Services.Streaming.Core
         private const byte INBOUND_STREAMS = 0x64;
         private const int DEFAULT_RTT = 1;
         private const int DEFAULT_MTU = 1454;
-        private const int UDP_RECEIVE_BUFFER_SIZE = 8 << 20; // 8MB，50Mbps 下约可缓冲 1.3 秒
+        private const int UDP_RECEIVE_BUFFER_SIZE = 16 << 20; // 16MB，100Mbps 下约可缓冲 1.3 秒
         private const int MAX_PROCESSED_TSNS = 1000;
 
         // 状态常量
@@ -98,6 +99,7 @@ namespace RemotePlay.Services.Streaming.Core
         private static readonly TimeSpan BrowserLossMaxAge = TimeSpan.FromSeconds(2);
         private const double BrowserLossCap = 0.3;
         private DateTime _lastBrowserLossLog = DateTime.MinValue;
+        private readonly double _packetLossReportedMax;
         private int _qualityDowngradeCount = 0;
         private int _qualityUpgradeCount = 0;
 
@@ -134,6 +136,26 @@ namespace RemotePlay.Services.Streaming.Core
             public byte[] Packet { get; set; }
             public int? AdvanceBy { get; set; }
             public bool IsCongestionControl { get; set; } // 是否为拥塞控制包（需要特殊处理）
+            public uint? ReliableTsn { get; set; } // 可靠 DATA 消息：发送后保留，直到主机 DATA_ACK
+            public bool IsRawResend { get; set; } // 重发已算好 GMAC 的原始字节，不再改 key_pos
+        }
+
+        // ✅ 可靠 DATA 消息重发（同 chiaki takionsendbuffer）：未确认的包每 200ms 原样重发，最多 25 次
+        private const int RELIABLE_SEND_BUFFER_SIZE = 1024;
+        private const int RELIABLE_RESEND_TIMEOUT_MS = 200;
+        private const int RELIABLE_RESEND_CHECK_INTERVAL_MS = RELIABLE_RESEND_TIMEOUT_MS / 2;
+        private const int RELIABLE_RESEND_TRIES_MAX = 25;
+        private readonly object _reliableLock = new();
+        private readonly List<ReliablePacket> _reliablePackets = new();
+        private readonly Stopwatch _reliableClock = Stopwatch.StartNew();
+        private Task? _reliableResendTask;
+
+        private sealed class ReliablePacket
+        {
+            public uint Tsn { get; init; }
+            public byte[] Data { get; init; } = Array.Empty<byte>();
+            public long LastSendMs { get; set; }
+            public int Tries { get; set; }
         }
 
         // 回调
@@ -150,6 +172,7 @@ namespace RemotePlay.Services.Streaming.Core
         // ✅ Feedback 和 Congestion 服务
         private FeedbackSenderService? _feedbackSender;
         private CongestionControlService? _congestionControl;
+        private HapticsRumbleConverter? _hapticsConverter;
         private Congestion.PacketStats? _packetStats;  // 包统计（类似 chiaki 的 ChiakiPacketStats）
         
         // ✅ 自适应流管理器
@@ -170,6 +193,8 @@ namespace RemotePlay.Services.Streaming.Core
 		private byte _currentTriggerIntensityCode = 0xFF;
 		private readonly byte[] _ledState = new byte[3];
 		private byte _playerIndex;
+		private TriggerEffectsEventArgs? _lastTriggerEffects;
+		private LightbarEventArgs? _lastLightbar;
         private StreamHealthSnapshot _healthSnapshot = default;
         private StreamPipelineStats _lastPipelineStats = default;
         private int _consecutiveSevereFailures = 0;
@@ -196,6 +221,12 @@ namespace RemotePlay.Services.Streaming.Core
 		#region Events
 
 		public event EventHandler<RumbleEventArgs>? RumbleReceived;
+		public event EventHandler<TriggerEffectsEventArgs>? TriggerEffectsReceived;
+		public event EventHandler<LightbarEventArgs>? LightbarChanged;
+		/// <summary>
+		/// 主机要求把当前手柄姿态设为原点
+		/// </summary>
+		public event EventHandler? MotionResetRequested;
 
 		#endregion
 
@@ -207,8 +238,10 @@ namespace RemotePlay.Services.Streaming.Core
             RemoteSession session,
             string host,
             int port,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            double packetLossReportedMax = CongestionControlService.DEFAULT_PACKET_LOSS_MAX)
         {
+            _packetLossReportedMax = Math.Clamp(packetLossReportedMax, 0.0, 1.0);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -292,8 +325,14 @@ namespace RemotePlay.Services.Streaming.Core
                 _loggerFactory.CreateLogger<CongestionControlService>(),
                 SendRawPacketAsync,  // 发送原始包回调
                 GetCurrentKeyPos,     // 获取 key_pos 回调
-                GetPacketStats        // 获取包统计回调（可选）
+                GetPacketStats,       // 获取包统计回调（可选）
+                _packetLossReportedMax
             );
+
+            _hapticsConverter = new HapticsRumbleConverter(
+                _loggerFactory.CreateLogger<HapticsRumbleConverter>(),
+                (left, right) => HandleRumble(new byte[] { 0x00, left, right }));
+            _avHandler.SetHapticsHandler(_hapticsConverter.ProcessPacket);
 
             // ✅ 初始化 AdaptiveStreamManager
             _adaptiveStreamManager = new AdaptiveStreamManager(
@@ -328,6 +367,7 @@ namespace RemotePlay.Services.Streaming.Core
             
             // ✅ 启动单线程发送循环（保证 key_pos 和 GMAC 严格顺序）
             _sendLoopTask = Task.Run(SendLoopAsync, _cancellationToken);
+            _reliableResendTask = Task.Run(ReliableResendLoopAsync, _cancellationToken);
 
             // 设置状态并发送 INIT
             _state = STATE_INIT;
@@ -369,6 +409,8 @@ namespace RemotePlay.Services.Streaming.Core
                     await _congestionControl.StopAsync();
                     _congestionControl.Dispose();
                 }
+
+                _hapticsConverter?.Dispose();
                 
                 // ✅ 停止 AV 处理器（支持新旧两种架构）
                 if (_usePipeline && _avPipeline != null)
@@ -405,6 +447,8 @@ namespace RemotePlay.Services.Streaming.Core
                 tasksToWait.Add(_receiveLoopTask);
             if (_heartbeatLoopTask != null && !_heartbeatLoopTask.IsCompleted)
                 tasksToWait.Add(_heartbeatLoopTask);
+            if (_reliableResendTask != null && !_reliableResendTask.IsCompleted)
+                tasksToWait.Add(_reliableResendTask);
             
             if (tasksToWait.Count > 0)
             {
@@ -490,6 +534,7 @@ namespace RemotePlay.Services.Streaming.Core
                         _avPipeline.SetAdaptiveStreamManager(_adaptiveStreamManager, OnProfileSwitched);
                     }
                     _avPipeline.SetRequestKeyframeCallback(RequestKeyframeAsync);
+                    _avPipeline.SetHapticsHandler(_hapticsConverter != null ? _hapticsConverter.ProcessPacket : null);
                     
                     // 启动统计监控
                     StartPipelineStatsMonitoring();
@@ -506,37 +551,26 @@ namespace RemotePlay.Services.Streaming.Core
             _avHandler?.SetReceiver(receiver);
             }
 
+            // Pipeline 模式下切换接收端不经过 AVHandler.SetReceiver，需要自己把视频头和编码格式交给新接收端，
+            // 否则它不知道实际编码（例如 HEVC），无法识别关键帧
+            if (oldReceiver != null && _usePipeline)
+            {
+                SyncStreamInfoToReceiver(receiver);
+            }
+
             // 通知 receiver 进入等待 IDR 模式
             receiver.EnterWaitForIdr();
-            
-            // 重新启动 IDR requester，确保新 receiver 从关键帧开始
-            //_ = Task.Run(async () =>
-            //{
-            //    await Task.Delay(100);
-            //    await StartIdrRequesterAsync();
-            //});
 
             if (oldReceiver != null)
             {
                 _logger.LogInformation("Switching receiver from {OldType} to {NewType}, requesting new IDR frame", 
                     oldReceiver.GetType().Name, receiver.GetType().Name);
-                
-                // ✅ AVHandler.SetReceiver 会自动同步 StreamInfo 和 codec
-                // 这里不需要额外处理，因为 AVHandler 已经处理了状态同步
-                
-                // ✅ 关键修复：重新发送 CONTROLLER_CONNECTION，确保控制器连接状态保持
-                // 当切换receiver时，PlayStation可能认为控制器断开，需要重新发送连接消息
-                if (_isReady && _cipher != null)
-                {
-                    // 使用 fire-and-forget 模式调用异步方法
-                    _ = SendControllerConnectionAsync().ContinueWith(t =>
-                    {
-                        if (t.IsFaulted)
-                        {
-                            _logger.LogError(t.Exception, "Failed to send controller connection");
-                        }
-                    }, TaskContinuationOptions.OnlyOnFaulted);
-                }
+
+                // 新接收端要从关键帧开始；不受 RequestKeyframeAsync 的冷却限制
+                _ = SendIdrRequestAsync();
+
+                // 不重发 CONTROLLER_CONNECTION：开流收到 STREAMINFO 时已发过一次（chiaki 也只发一次），
+                // 切换接收端不影响主机侧的手柄状态，重发后主机可能把它当成新接入的手柄
             }
             else
             {
@@ -565,6 +599,31 @@ namespace RemotePlay.Services.Streaming.Core
             }
         }
 
+        private void SyncStreamInfoToReceiver(IAVReceiver receiver)
+        {
+            byte[]? videoHeader = _adaptiveStreamManager?.GetCurrentProfile()?.HeaderWithPadding;
+            if (videoHeader == null && _cachedVideoHeader != null && _cachedVideoHeader.Length > 0)
+            {
+                // 与 profile header 一致，末尾补 64 字节 padding
+                videoHeader = new byte[_cachedVideoHeader.Length + 64];
+                System.Buffer.BlockCopy(_cachedVideoHeader, 0, videoHeader, 0, _cachedVideoHeader.Length);
+            }
+
+            if (videoHeader == null && _cachedAudioHeader == null)
+            {
+                return;
+            }
+
+            try
+            {
+                receiver.OnStreamInfo(videoHeader ?? Array.Empty<byte>(), _cachedAudioHeader ?? Array.Empty<byte>());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to sync stream info to new receiver {Type}", receiver.GetType().Name);
+            }
+        }
+
         /// <summary>
         /// 发送损坏帧通知
         /// </summary>
@@ -581,7 +640,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// 反馈包格式：type(1) + sequence(2) + padding(1) + key_pos(4) + gmac(4) + payload
         /// 应该直接通过 UDP 发送，不做任何修改
         /// </summary>
-        public async Task SendFeedbackAsync(int feedbackType, int sequence, byte[]? data = null, Controller.ControllerState? state = null)
+        public async Task SendFeedbackAsync(int feedbackType, int sequence, byte[]? data = null, Controller.ControllerState? state = null, byte eventCount = 1)
         {
             // 如果正在停止，直接返回
             if (_isStopping)
@@ -618,7 +677,7 @@ namespace RemotePlay.Services.Streaming.Core
             }
             else
             {
-                feedbackPacket = FeedbackPacket.CreateEvent((ushort)sequence, data ?? Array.Empty<byte>(), _cipher);
+                feedbackPacket = FeedbackPacket.CreateEvent((ushort)sequence, data ?? Array.Empty<byte>(), _cipher, eventCount);
             }
 
             // ✅ 直接通过 UDP 发送反馈包，不经过 SendPacket 的通用处理
@@ -661,10 +720,11 @@ namespace RemotePlay.Services.Streaming.Core
                 OrientX = state.OrientX,
                 OrientY = state.OrientY,
                 OrientZ = state.OrientZ,
-                OrientW = state.OrientW
+                OrientW = state.OrientW,
+                Touches = (Models.PlayStation.ControllerTouch[])state.Touches.Clone()
             };
             
-            _feedbackSender.UpdateControllerState(modelState);
+            _feedbackSender.UpdateControllerState(modelState, includeMotion: state.HasMotion);
         }
 
         /// <summary>
@@ -1227,6 +1287,12 @@ namespace RemotePlay.Services.Streaming.Core
         {
             var tsn = (uint)packet.Params.Tsn;
 
+            // DATA_ACK 携带累计序号：不大于它的可靠包都已送达
+            lock (_reliableLock)
+            {
+                _reliablePackets.RemoveAll(p => (int)(p.Tsn - tsn) <= 0);
+            }
+
             // 检查是否有等待的 ACK 回调
             if (_ackCallback != null && _ackCallbackTsn == tsn)
             {
@@ -1481,9 +1547,17 @@ namespace RemotePlay.Services.Streaming.Core
 				}
 			}
 
-			if (motionReset && _logger.IsEnabled(LogLevel.Debug))
+			if (motionReset)
 			{
 				_logger.LogDebug("Pad info requested motion reset.");
+				try
+				{
+					MotionResetRequested?.Invoke(this, EventArgs.Empty);
+				}
+				catch (Exception ex)
+				{
+					_logger.LogError(ex, "Error while notifying motion reset listeners");
+				}
 			}
 
 			if (playerIndexChangedTo.HasValue && _logger.IsEnabled(LogLevel.Debug))
@@ -1495,14 +1569,35 @@ namespace RemotePlay.Services.Streaming.Core
 			{
 				_logger.LogTrace("LED state updated to {Led}", BitConverter.ToString(_ledState));
 			}
+
+			if (ledChanged || playerIndexChangedTo.HasValue)
+			{
+				LightbarEventArgs lightbar;
+				lock (_rumbleLock)
+				{
+					lightbar = new LightbarEventArgs(_ledState[0], _ledState[1], _ledState[2], _playerIndex);
+					_lastLightbar = lightbar;
+				}
+
+				try
+				{
+					LightbarChanged?.Invoke(this, lightbar);
+				}
+				catch (Exception ex)
+				{
+					_logger.LogError(ex, "Error while notifying lightbar listeners");
+				}
+			}
 		}
 
 		private void HandleTriggerEffects(byte[] data)
 		{
 			int triggerIntensity;
+			int rumbleIntensity;
 			lock (_rumbleLock)
 			{
 				triggerIntensity = _ps5TriggerIntensity;
+				rumbleIntensity = _ps5RumbleIntensity;
 			}
 
 			if (triggerIntensity < 0)
@@ -1524,6 +1619,41 @@ namespace RemotePlay.Services.Streaming.Core
 			{
 				_logger.LogTrace("Trigger effects payload: {Payload}", BitConverter.ToString(data));
 			}
+
+			byte intensity = (byte)((triggerIntensity < 0 ? 0xF0 : triggerIntensity) | (rumbleIntensity < 0 ? 0x0F : rumbleIntensity));
+			var effects = new TriggerEffectsEventArgs(
+				data[1], data.AsSpan(5, 10).ToArray(),
+				data[2], data.AsSpan(15, 10).ToArray(),
+				intensity);
+			lock (_rumbleLock)
+			{
+				_lastTriggerEffects = effects;
+			}
+
+			try
+			{
+				TriggerEffectsReceived?.Invoke(this, effects);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Error while notifying trigger effects listeners");
+			}
+		}
+
+		/// <summary>
+		/// 最近一次主机下发的扳机效果（供晚连接的客户端补拉）
+		/// </summary>
+		public TriggerEffectsEventArgs? LastTriggerEffects
+		{
+			get { lock (_rumbleLock) { return _lastTriggerEffects; } }
+		}
+
+		/// <summary>
+		/// 最近一次主机下发的光条颜色和玩家编号
+		/// </summary>
+		public LightbarEventArgs? LastLightbar
+		{
+			get { lock (_rumbleLock) { return _lastLightbar; } }
 		}
 
 		private void ApplyHapticIntensity(byte intensityCode)
@@ -1733,31 +1863,13 @@ namespace RemotePlay.Services.Streaming.Core
                 // 启动 FeedbackSender（200ms 心跳）
                 _feedbackSender?.Start();
                 
-                // 启动 CongestionControl（66ms 间隔）
+                // 启动 CongestionControl（200ms 间隔）
                 _congestionControl?.Start();
+
+                _hapticsConverter?.Start(_cancellationToken);
                 
-                // ✅ 启动周期性 IDR 请求器
-                // 目的：确保定期获得关键帧，避免长时间 P 帧累积导致的恢复困难
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await Task.Delay(500, _cancellationToken); // 等待服务稳定
-                        if (!_cancellationToken.IsCancellationRequested)
-                        {
-                            _logger.LogInformation("🎬 Starting IDR request loop");
-                            await StartIdrRequesterAsync();
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // ignore
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to start IDR request loop");
-                    }
-                }, _cancellationToken);
+                // 不定期请求 IDR：IDR 帧很大，周期性请求会造成码率尖峰和丢包，让主机降码率/降分辨率。
+                // 丢帧时上报 CORRUPTFRAME 由主机改参考帧恢复，只有参考链真正断裂时才请求 IDR
             }
             catch (Exception ex)
             {
@@ -1795,6 +1907,11 @@ namespace RemotePlay.Services.Streaming.Core
         {
             _logger.LogWarning("🔄 User requested video ReorderQueue reset");
             _avHandler?.ForceResetReorderQueue();
+            // Pipeline 模式下 AVHandler 不处理视频，客户端检测到画面停滞时直接请求关键帧
+            if (_usePipeline)
+            {
+                _ = RequestKeyframeAsync();
+            }
         }
         
         /// <summary>
@@ -1879,51 +1996,9 @@ namespace RemotePlay.Services.Streaming.Core
         }
 
         /// <summary>
-        /// 定期发送 IDRREQUEST，确保视频流稳定
-        /// </summary>
-        private async Task StartIdrRequesterAsync()
-        {
-            try
-            {
-                // 阶段1: 初始连接 - 连续发送 5 次确保收到 IDR 帧
-                for (int i = 0; i < 5; i++)
-                {
-                    if (_cancellationToken.IsCancellationRequested) 
-                        break;
-                    
-                    await SendIdrRequestAsync();
-                    await Task.Delay(500, _cancellationToken);
-                }
-                
-                // 阶段2: 定期维护 - 每 2 秒发送一次
-                // 频率说明：
-                // - HLS 配置 -hls_time 1（1秒分片）需要频繁的关键帧
-                // - 2 秒间隔确保每 1-2 个分片有一个关键帧
-                // - 既满足 HLS 低延迟需求，又不会过度请求
-                while (!_cancellationToken.IsCancellationRequested)
-                {
-                    await Task.Delay(2000, _cancellationToken); // 2 秒间隔
-                    
-                    if (_cancellationToken.IsCancellationRequested) 
-                        break;
-                    
-                    await SendIdrRequestAsync();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // 正常取消，无需记录
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "IDR requester error");
-            }
-        }
-        
-        /// <summary>
         /// 发送 Feedback 包的回调
         /// </summary>
-        private async Task SendFeedbackPacketAsync(int type, ushort sequence, byte[] data)
+        private async Task SendFeedbackPacketAsync(int type, ushort sequence, byte eventCount, byte[] data)
         {
             // 如果正在停止，直接返回
             if (_isStopping || _cipher == null)
@@ -1931,7 +2006,7 @@ namespace RemotePlay.Services.Streaming.Core
                 return;
             }
             
-            await SendFeedbackAsync(type, sequence, data);
+            await SendFeedbackAsync(type, sequence, data, eventCount: eventCount);
         }
         
         /// <summary>
@@ -2130,12 +2205,6 @@ namespace RemotePlay.Services.Streaming.Core
                     _logger.LogInformation("✅ Stream health recovered (consecutive success={Success}, frame={Frame}, fallback frame={FallbackFrame}, duration={Duration}ms)", 
                         _consecutiveSuccessFrames, evt.FrameIndex, _lastFallbackFrameIndex, 
                         _lastFallbackTime != DateTime.MinValue ? (DateTime.UtcNow - _lastFallbackTime).TotalMilliseconds : 0);
-                    
-                    // ✅ 恢复后主动请求关键帧，确保流真正恢复
-                    if (DateTime.UtcNow - _lastKeyframeRequest > _keyframeRequestCooldown)
-                    {
-                        _ = RequestKeyframeAsync();
-                    }
                     
                     _consecutiveSevereFailures = 0;
                     _consecutiveSuccessFrames = 0; // 重置连续成功计数
@@ -2651,6 +2720,7 @@ namespace RemotePlay.Services.Streaming.Core
         private async Task SendDataAsync(byte[] data, int flag, int channel, bool proto = false)
         {
             int advanceBy = 0;
+            uint? reliableTsn = null;
             if (_cipher != null)
             {
                 AdvanceSequence();
@@ -2658,10 +2728,11 @@ namespace RemotePlay.Services.Streaming.Core
                 {
                     advanceBy = data.Length;
                 }
+                reliableTsn = _tsn;
             }
 
             var packet = Packet.CreateData(_tsn, (ushort)channel, flag, data);
-            await SendPacketAsync(packet, advanceBy);
+            await SendPacketAsync(packet, advanceBy, reliableTsn);
         }
 
         /// <summary>
@@ -2677,7 +2748,7 @@ namespace RemotePlay.Services.Streaming.Core
         /// 发送包（异步入队，实际发送在单线程循环中顺序执行）
         /// ✅ 关键：此方法只负责入队，不直接发送，保证 key_pos 和 GMAC 的严格顺序
         /// </summary>
-        private async Task SendPacketAsync(byte[] packet, int? advanceBy = null)
+        private async Task SendPacketAsync(byte[] packet, int? advanceBy = null, uint? reliableTsn = null)
         {
             // 如果正在停止，直接返回，不记录警告
             if (_isStopping)
@@ -2703,7 +2774,8 @@ namespace RemotePlay.Services.Streaming.Core
             var item = new SendPacketItem
             {
                 Packet = packetCopy,
-                AdvanceBy = advanceBy
+                AdvanceBy = advanceBy,
+                ReliableTsn = reliableTsn
             };
 
             try
@@ -2741,7 +2813,21 @@ namespace RemotePlay.Services.Streaming.Core
                     try
                     {
                         // ✅ 在单线程中顺序执行发送，保证 key_pos 和 GMAC 的顺序性
+                        if (item.IsRawResend)
+                        {
+                            if (_udpClient != null && _remoteEndPoint != null)
+                            {
+                                await _udpClient.SendAsync(item.Packet, _remoteEndPoint);
+                            }
+                            continue;
+                        }
+
                         await SendPacketInternalAsync(item.Packet, item.AdvanceBy, item.IsCongestionControl);
+
+                        if (item.ReliableTsn.HasValue)
+                        {
+                            TrackReliablePacket(item.ReliableTsn.Value, item.Packet);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -2760,6 +2846,90 @@ namespace RemotePlay.Services.Streaming.Core
             finally
             {
                 _logger.LogDebug("Send loop ended");
+            }
+        }
+
+        private void TrackReliablePacket(uint tsn, byte[] sentPacket)
+        {
+            lock (_reliableLock)
+            {
+                if (_reliablePackets.Count >= RELIABLE_SEND_BUFFER_SIZE)
+                {
+                    _logger.LogWarning("Reliable send buffer full ({Size}), packet tsn={Tsn} will not be resent",
+                        RELIABLE_SEND_BUFFER_SIZE, tsn);
+                    return;
+                }
+
+                _reliablePackets.Add(new ReliablePacket
+                {
+                    Tsn = tsn,
+                    Data = sentPacket,
+                    LastSendMs = _reliableClock.ElapsedMilliseconds
+                });
+            }
+        }
+
+        /// <summary>
+        /// 定期重发超时未确认的可靠 DATA 消息（原样重发，GMAC/key_pos 不变）
+        /// </summary>
+        private async Task ReliableResendLoopAsync()
+        {
+            var due = new List<ReliablePacket>();
+            try
+            {
+                while (!_cancellationToken.IsCancellationRequested && !_isStopping)
+                {
+                    await Task.Delay(RELIABLE_RESEND_CHECK_INTERVAL_MS, _cancellationToken);
+
+                    due.Clear();
+                    long now = _reliableClock.ElapsedMilliseconds;
+                    lock (_reliableLock)
+                    {
+                        for (int i = _reliablePackets.Count - 1; i >= 0; i--)
+                        {
+                            var p = _reliablePackets[i];
+                            if (now - p.LastSendMs <= RELIABLE_RESEND_TIMEOUT_MS)
+                            {
+                                continue;
+                            }
+
+                            if (p.Tries >= RELIABLE_RESEND_TRIES_MAX)
+                            {
+                                _logger.LogInformation("Hit max retries of {Tries} tries, giving up on packet tsn={Tsn}",
+                                    RELIABLE_RESEND_TRIES_MAX, p.Tsn);
+                                _reliablePackets.RemoveAt(i);
+                                continue;
+                            }
+
+                            p.LastSendMs = now;
+                            p.Tries++;
+                            due.Add(p);
+                        }
+                    }
+
+                    for (int i = due.Count - 1; i >= 0; i--)
+                    {
+                        var p = due[i];
+                        _logger.LogDebug("Re-sending reliable packet tsn={Tsn}, tries={Tries}", p.Tsn, p.Tries);
+                        await _sendQueueWriter.WriteAsync(new SendPacketItem
+                        {
+                            Packet = p.Data,
+                            IsRawResend = true
+                        }, _cancellationToken);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // 正常停止
+            }
+            catch (ChannelClosedException)
+            {
+                // 发送队列已关闭
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Reliable resend loop error");
             }
         }
 

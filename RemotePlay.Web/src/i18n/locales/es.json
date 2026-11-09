@@ -224,16 +224,17 @@
           "60FPS": "60 fps"
         },
         "bitrate": {
-          "DEFAULT": "Ajustar velocidad de bits automáticamente",
-          "VERY_LOW": "Calidad muy baja (~2 Mbps)",
-          "LOW": "Calidad baja (~4 Mbps)",
-          "MEDIUM": "Calidad media (~6 Mbps)",
-          "HIGH": "Calidad alta (~10 Mbps)",
-          "VERY_HIGH": "Calidad muy alta (~15 Mbps)",
-          "ULTRA_20M": "Calidad ultra (~20 Mbps)",
-          "ULTRA_30M": "Calidad ultra (~30 Mbps)",
-          "ULTRA_40M": "Calidad extrema (~40 Mbps, experimental)",
-          "ULTRA_50M": "Calidad extrema (~50 Mbps, experimental)"
+          "DEFAULT": "Automático (según la resolución)",
+          "VERY_LOW": "2 Mbps · Ahorro de datos, para redes móviles",
+          "LOW": "4 Mbps · Fluido",
+          "MEDIUM": "6 Mbps · Estándar",
+          "HIGH": "10 Mbps · HD",
+          "VERY_HIGH": "15 Mbps · Recomendado para 1080p",
+          "ULTRA_20M": "20 Mbps · Alta calidad",
+          "ULTRA_30M": "30 Mbps · Muy alta calidad",
+          "ULTRA_40M": "40 Mbps · Excelente, requiere red local estable",
+          "ULTRA_50M": "50 Mbps · Premium, se recomienda red cableada",
+          "ULTRA_100M": "100 Mbps · Calidad máxima, requiere red cableada gigabit"
         },
         "streamType": {
           "H264": "Códec H.264",

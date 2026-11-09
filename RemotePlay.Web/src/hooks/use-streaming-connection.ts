@@ -11,6 +11,15 @@ import {
   type RumbleSettings,
 } from '@/service/rumble.service'
 import { playStationService } from '@/service/playstation.service'
+import {
+  applyLightbar,
+  applyTriggerEffects,
+  autoConnectDualSense,
+  onDualSenseMotion,
+  onDualSenseTouchpad,
+  resetDualSenseEffects,
+  resetDualSenseMotion,
+} from '@/service/dualsense-hid.service'
 import { apiRequest } from '@/service/api-client'
 import { optimizeSdpForLowLatency, optimizeVideoForLowLatency } from '@/utils/webrtc-optimization'
 import { createKeyboardHandler } from '@/utils/keyboard-mapping'
@@ -21,6 +30,48 @@ import { virtualJoystickActiveState } from './use-streaming-connection/virtual-j
 import { useMouseRightStick } from './use-streaming-connection/use-mouse-right-stick'
 
 type ToastFn = (props: { title?: string; description?: string; variant?: 'default' | 'destructive'; [key: string]: any }) => void
+
+interface ConnectOptions {
+  /** 复用已有的 PS5 会话，只重建 WebRTC 连接 */
+  reuseRemotePlaySessionId?: string
+}
+
+// Chrome 在 macOS 上的 H265 硬件解码器偶尔会卡死：帧一直在收到，解码帧数却不再增长，
+// 关键帧也救不回来，只有换一个新连接（新解码器）才能恢复。
+// 只在"收到的帧在增加、解码帧数完全不动"持续一段时间时才重建，网络中断或主机暂停不算
+const WEBRTC_REBUILD_STALL_MS = 6000
+const WEBRTC_REBUILD_MIN_FRAMES_RECEIVED = 120
+const WEBRTC_REBUILD_COOLDOWN_MS = 30000
+
+interface InboundVideoStatsLike {
+  type?: string
+  kind?: string
+  framesDecoded?: number
+  framesReceived?: number
+}
+
+function retirePeerConnection(pc: RTCPeerConnection | null, webrtcSessionId: string | null) {
+  if (pc) {
+    // 先摘掉回调：旧连接的 closed 事件不能被当成整个会话断开
+    pc.onconnectionstatechange = null
+    pc.oniceconnectionstatechange = null
+    pc.onicegatheringstatechange = null
+    pc.onsignalingstatechange = null
+    pc.onicecandidate = null
+    pc.ontrack = null
+    pc.ondatachannel = null
+    try {
+      pc.close()
+    } catch {
+      // ignore
+    }
+  }
+  if (webrtcSessionId) {
+    streamingService
+      .deleteSession(webrtcSessionId)
+      .catch((error) => console.warn('⚠️ 删除旧 WebRTC 会话失败:', error))
+  }
+}
 
 interface UseStreamingConnectionParams {
   hostId: string | null
@@ -127,6 +178,11 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   const keyframeMonitorIntervalRef = useRef<number | null>(null)
   const lastVideoActivityRef = useRef<number>(0)
   const lastDecodedFrameCountRef = useRef<number | null>(null)
+  // 解码器卡死检测：解码帧数最后一次增长的时间，以及当时已收到的帧数
+  const decoderWatchRef = useRef<{ decoded: number; received: number; decodedAt: number } | null>(null)
+  const rebuildInFlightRef = useRef(false)
+  const lastRebuildAtRef = useRef(0)
+  const rebuildWebRtcRef = useRef<((reason: string) => void) | null>(null)
   const lastPlaybackPositionRef = useRef<number | null>(null)
   const lastKeyframeRequestRef = useRef<number>(0)
   const pendingKeyframeRequestRef = useRef<boolean>(false)
@@ -1169,28 +1225,48 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     setIsStalling(false)
   }, [remotePlaySessionId, stopStickProcessing, t, videoRef, webrtcSessionId])
 
-  const connect = useCallback(async () => {
-    if (!hostId) {
-      toast({
-        title: t('common.error'),
-        description: t('streaming.connection.errors.missingDeviceInfo'),
-        variant: 'destructive',
-      })
-      return
+  const connect = useCallback(async (options?: ConnectOptions) => {
+    // onClick 等处直接把 connect 当回调时，参数是事件对象，这里只认字符串
+    const reuseRemotePlaySessionId =
+      typeof options?.reuseRemotePlaySessionId === 'string' ? options.reuseRemotePlaySessionId : undefined
+    const isRebuild = !!reuseRemotePlaySessionId
+
+    if (!isRebuild) {
+      if (!hostId) {
+        toast({
+          title: t('common.error'),
+          description: t('streaming.connection.errors.missingDeviceInfo'),
+          variant: 'destructive',
+        })
+        return
+      }
+
+      if (isConnecting || isConnected) {
+        return
+      }
+
+      if (!hasAttemptedInitialConnectRef.current) {
+        hasAttemptedInitialConnectRef.current = true
+      }
+
+      setIsConnecting(true)
+      setConnectionState(t('streaming.connection.state.connecting'))
     }
 
-    if (isConnecting || isConnected) {
-      return
+    // 重建模式：保留 PS5 会话和旧连接，新连接绑定到串流后再关闭旧连接
+    const previousPeerConnection = isRebuild ? peerConnectionRef.current : null
+    const previousWebrtcSessionId = isRebuild ? webrtcSessionIdRef.current : null
+    if (isRebuild) {
+      isStreamBoundRef.current = false
+      hasVideoTrackRef.current = false
+      initialKeyframeRequestedRef.current = false
     }
-
-    if (!hasAttemptedInitialConnectRef.current) {
-      hasAttemptedInitialConnectRef.current = true
-    }
-
-    setIsConnecting(true)
-    setConnectionState(t('streaming.connection.state.connecting'))
 
     try {
+      let sessionId: string
+      if (reuseRemotePlaySessionId) {
+        sessionId = reuseRemotePlaySessionId
+      } else {
       const deviceReady = await prepareDevice()
       if (!deviceReady) {
         throw new Error(t('streaming.connection.errors.deviceNotReady'))
@@ -1198,6 +1274,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       setConnectionState(t('streaming.connection.state.creatingSession'))
 
+      if (!hostId) {
+        throw new Error(t('streaming.connection.errors.missingDeviceInfo'))
+      }
       const sessionResponse = await streamingService.startSession(hostId)
       console.log('会话创建响应:', sessionResponse)
       console.log('响应数据字段:', {
@@ -1222,7 +1301,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         throw new Error(t('streaming.connection.errors.sessionDataMissing'))
       }
 
-      const sessionId = sessionData.id || sessionData.Id || sessionData.sessionId || sessionData.session_id
+      sessionId = sessionData.id || sessionData.Id || sessionData.sessionId || sessionData.session_id
 
       console.log('提取的 Session ID:', sessionId, '完整数据:', sessionData)
 
@@ -1231,6 +1310,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       if (!sessionId) {
         console.error('无法从响应中提取 Session ID，可用字段:', Object.keys(sessionData))
         throw new Error(t('streaming.connection.errors.sessionIdMissing'))
+      }
       }
 
       const offerResponse = await streamingService.createOffer({
@@ -2411,6 +2491,21 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       isStreamBoundRef.current = true
       console.log('🔗 WebRTC 会话已绑定远程流')
 
+      if (isRebuild) {
+        // 串流已切到新连接，再关闭旧连接（服务端发现串流仍被使用，不会停止 PS5 会话）
+        retirePeerConnection(previousPeerConnection, previousWebrtcSessionId)
+        lastDecodedFrameCountRef.current = null
+        lastPlaybackPositionRef.current = null
+        lastVideoActivityRef.current = Date.now()
+        console.log('✅ WebRTC 连接已重建（PS5 会话保持不变）')
+        if (hasVideoTrackRef.current && !initialKeyframeRequestedRef.current) {
+          if (requestKeyframe('post-rebuild-initial-video')) {
+            initialKeyframeRequestedRef.current = true
+          }
+        }
+        return
+      }
+
       if (hasVideoTrackRef.current && !initialKeyframeRequestedRef.current) {
         console.log('📡 会话绑定完成，补发初始关键帧请求')
         if (requestKeyframe('post-bind-initial-video')) {
@@ -2434,6 +2529,21 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
 
       startStickProcessing()
     } catch (error) {
+      if (isRebuild) {
+        // 重建失败：丢弃新连接，继续使用旧连接，稍后可再次尝试
+        console.error('❌ WebRTC 连接重建失败，保留原连接:', error)
+        const failedPeerConnection = peerConnectionRef.current
+        const failedWebrtcSessionId = webrtcSessionIdRef.current
+        if (failedPeerConnection !== previousPeerConnection) {
+          retirePeerConnection(failedPeerConnection, failedWebrtcSessionId !== previousWebrtcSessionId ? failedWebrtcSessionId : null)
+        }
+        peerConnectionRef.current = previousPeerConnection
+        webrtcSessionIdRef.current = previousWebrtcSessionId
+        setWebrtcSessionId(previousWebrtcSessionId)
+        isStreamBoundRef.current = true
+        return
+      }
+
       console.error('连接失败:', error)
       // 连接失败，更新状态显示在顶栏，不再显示弹出提示
       setConnectionState(t('streaming.connection.state.failed'))
@@ -2514,6 +2624,52 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     }
   }, [isGamepadEnabled])
 
+  // DualSense 自适应扳机、光条、体感和触摸板：通过 WebHID 使用之前在设置页授权过的手柄
+  useEffect(() => {
+    if (!isConnected) {
+      return
+    }
+
+    let cancelled = false
+    const unsubscribeTriggers = controllerService.onTriggerEffects((event) => {
+      void applyTriggerEffects(event)
+    })
+    const unsubscribeLightbar = controllerService.onLightbar((event) => {
+      void applyLightbar(event)
+    })
+    const unsubscribeMotion = onDualSenseMotion((motion) => {
+      if (gamepadEnabledRef.current) {
+        controllerService.sendMotion(motion)
+      }
+    })
+    const unsubscribeTouchpad = onDualSenseTouchpad((slots) => {
+      if (gamepadEnabledRef.current) {
+        controllerService.sendTouchpad(slots)
+      }
+    })
+    const unsubscribeMotionReset = controllerService.onMotionReset(() => {
+      resetDualSenseMotion()
+    })
+
+    void autoConnectDualSense()
+      .catch((error) => console.warn('⚠️ DualSense 自动连接失败:', error))
+      .finally(() => {
+        if (!cancelled) {
+          void controllerService.requestDualSenseState()
+        }
+      })
+
+    return () => {
+      cancelled = true
+      unsubscribeTriggers()
+      unsubscribeLightbar()
+      unsubscribeMotion()
+      unsubscribeTouchpad()
+      unsubscribeMotionReset()
+      void resetDualSenseEffects()
+    }
+  }, [isConnected])
+
   // 始终启用 useGamepadInput，在 handleGamepadInput 内部进行检查
   // 这样可以确保即使 gamepadEnabledRef 变化，事件监听器也会更新
   useGamepadInput(handleGamepadInput, true)
@@ -2525,6 +2681,65 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
   useEffect(() => {
     remotePlaySessionIdRef.current = remotePlaySessionId
   }, [remotePlaySessionId])
+
+  // 保留 PS5 会话，只重建 WebRTC 连接
+  rebuildWebRtcRef.current = (reason: string) => {
+    if (rebuildInFlightRef.current || !isConnectedRef.current) {
+      return
+    }
+    const now = Date.now()
+    if (now - lastRebuildAtRef.current < WEBRTC_REBUILD_COOLDOWN_MS) {
+      return
+    }
+    const rpSessionId = resolveRemotePlaySessionId()
+    if (!rpSessionId) {
+      return
+    }
+
+    rebuildInFlightRef.current = true
+    lastRebuildAtRef.current = now
+    console.warn('🔄 视频解码长时间停滞，重建 WebRTC 连接', { reason })
+    void connect({ reuseRemotePlaySessionId: rpSessionId }).finally(() => {
+      rebuildInFlightRef.current = false
+      decoderWatchRef.current = null
+    })
+  }
+
+  // 用 WebRTC 统计判断解码器是否卡死（每秒由卡顿监控调用）
+  const checkDecoderWedge = (pc: RTCPeerConnection) => {
+    void pc
+      .getStats()
+      .then((report) => {
+        let inbound: InboundVideoStatsLike | null = null
+        report.forEach((entry) => {
+          const stats = entry as InboundVideoStatsLike
+          if (stats.type === 'inbound-rtp' && stats.kind === 'video') {
+            inbound = stats
+          }
+        })
+        const video = inbound as InboundVideoStatsLike | null
+        if (!video || pc !== peerConnectionRef.current) {
+          return
+        }
+
+        const decoded = video.framesDecoded ?? 0
+        const received = video.framesReceived ?? 0
+        const now = Date.now()
+        const watch = decoderWatchRef.current
+        // 首次采样、解码有进展、或换了新连接（计数重新从 0 开始）时重设基准
+        if (!watch || decoded !== watch.decoded) {
+          decoderWatchRef.current = { decoded, received, decodedAt: now }
+          return
+        }
+
+        const stalledMs = now - watch.decodedAt
+        const framesArrived = received - watch.received
+        if (stalledMs >= WEBRTC_REBUILD_STALL_MS && framesArrived >= WEBRTC_REBUILD_MIN_FRAMES_RECEIVED) {
+          rebuildWebRtcRef.current?.(`decoder-wedged ${Math.round(stalledMs / 1000)}s, ${framesArrived} frames received`)
+        }
+      })
+      .catch(() => undefined)
+  }
 
   useEffect(() => {
     if (keyframeMonitorIntervalRef.current !== null) {
@@ -2544,6 +2759,7 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     const POSITION_EPSILON = 0.03
 
     lastVideoActivityRef.current = Date.now()
+    decoderWatchRef.current = null
     lastDecodedFrameCountRef.current = null
     lastPlaybackPositionRef.current = null
 
@@ -2581,12 +2797,19 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       }
 
       const now = Date.now()
-      if (video.paused || video.readyState < 2 || !video.srcObject) {
+      // 页面在后台时浏览器可能不渲染画面，不能据此判断卡顿或解码器卡死
+      if (video.paused || video.readyState < 2 || !video.srcObject || document.visibilityState !== 'visible') {
         lastVideoActivityRef.current = now
+        decoderWatchRef.current = null
         lastDecodedFrameCountRef.current = null
         lastPlaybackPositionRef.current = null
         setIsStalling(false)
         return
+      }
+
+      const pc = peerConnectionRef.current
+      if (pc) {
+        checkDecoderWedge(pc)
       }
 
       const decodedFrames = getDecodedFrameCount(video)

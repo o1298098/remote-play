@@ -5,7 +5,7 @@ import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Gamepad2, Keyboard, Save, RotateCcw, Gauge, Vibrate } from 'lucide-react'
+import { Gamepad2, Keyboard, Save, RotateCcw, Gauge, Vibrate, Zap } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { PS5ControllerLayout } from '@/components/PS5ControllerLayout'
 import { useGamepad, useGamepadInput } from '@/hooks/use-gamepad'
@@ -27,6 +27,21 @@ import {
   updateRumbleSettings,
   type RumbleSettings,
 } from '@/service/rumble.service'
+import {
+  applyLightbar,
+  applyTriggerEffects,
+  autoConnectDualSense,
+  disconnectDualSense,
+  getDualSenseStatus,
+  getWebHidUnavailableReason,
+  onDualSenseMotion,
+  onDualSenseStatusChange,
+  onDualSenseTouchpad,
+  requestDualSense,
+  resetDualSenseEffects,
+  type DualSenseMotion,
+  type DualSenseStatus,
+} from '@/service/dualsense-hid.service'
 import {
   Select,
   SelectContent,
@@ -90,6 +105,9 @@ export default function ControllerMapping() {
   const [axisStates, setAxisStates] = useState<number[]>([])
   const [rumbleSettings, setRumbleSettingsState] = useState<RumbleSettings>(() => getRumbleSettings())
   const [supportsRumble, setSupportsRumble] = useState<boolean>(false)
+  const [dualSenseStatus, setDualSenseStatus] = useState<DualSenseStatus>(() => getDualSenseStatus())
+  const [dualSenseMotion, setDualSenseMotion] = useState<DualSenseMotion | null>(null)
+  const [dualSenseTouches, setDualSenseTouches] = useState(0)
   const hasLoadedMappings = useRef(false)
 
   // 初始化映射
@@ -116,6 +134,29 @@ export default function ControllerMapping() {
   useEffect(() => {
     setSupportsRumble(hasRumbleCapableGamepad())
   }, [connectedGamepads, selectedGamepadIndex, isGamepadConnected])
+
+  useEffect(() => {
+    const unsubscribe = onDualSenseStatusChange(setDualSenseStatus)
+    void autoConnectDualSense().catch(() => undefined)
+
+    // 体感数据约 125Hz，界面只需每 100ms 刷新一次
+    let lastMotionUpdate = 0
+    const unsubscribeMotion = onDualSenseMotion((motion) => {
+      const now = performance.now()
+      if (now - lastMotionUpdate >= 100) {
+        lastMotionUpdate = now
+        setDualSenseMotion(motion)
+      }
+    })
+    const unsubscribeTouchpad = onDualSenseTouchpad((slots) => {
+      setDualSenseTouches(slots.filter((slot) => slot.down).length)
+    })
+    return () => {
+      unsubscribe()
+      unsubscribeMotion()
+      unsubscribeTouchpad()
+    }
+  }, [])
 
   useEffect(() => {
     if (!isGamepadConnected || connectedGamepads.length === 0) {
@@ -392,6 +433,36 @@ export default function ControllerMapping() {
       })
     }
   }, [rumbleSettings, setSupportsRumble, t, toast])
+
+  const handleConnectDualSense = useCallback(async () => {
+    try {
+      const connected = await requestDualSense()
+      if (connected) {
+        toast({ title: t('devices.controllerMapping.dualsense.toastConnected') })
+      }
+    } catch (error) {
+      console.warn('[ControllerMapping] DualSense connect failed:', error)
+      toast({
+        title: t('devices.controllerMapping.dualsense.toastConnectFailed'),
+        variant: 'destructive',
+      })
+    }
+  }, [t, toast])
+
+  const handleDisconnectDualSense = useCallback(() => {
+    void disconnectDualSense()
+  }, [])
+
+  const handleTestDualSense = useCallback(() => {
+    // SDL testgamecontroller 中的"整段行程恒定阻力"效果
+    const resistance = [0x00, 0x6e, 0, 0, 0, 0, 0, 0, 0, 0]
+    void applyTriggerEffects({ typeLeft: 0x01, left: resistance, typeRight: 0x01, right: resistance, intensity: 0x00 })
+    void applyLightbar({ red: 0x00, green: 0x80, blue: 0xff, playerIndex: 0 })
+    toast({ title: t('devices.controllerMapping.dualsense.toastTestSent') })
+    window.setTimeout(() => {
+      void resetDualSenseEffects()
+    }, 5000)
+  }, [t, toast])
 
   const handleStartMapping = (button: ControllerButton) => {
     setIsListening(button)
@@ -730,6 +801,79 @@ export default function ControllerMapping() {
                         </p>
                       ) : null}
                     </div>
+                  </div>
+
+                  <div className="pt-6 border-t border-gray-200 dark:border-gray-800 space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                        <Zap className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-900 dark:text-white">
+                          {t('devices.controllerMapping.dualsense.title')}
+                        </h4>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {t('devices.controllerMapping.dualsense.description')}
+                        </p>
+                      </div>
+                    </div>
+
+                    {!dualSenseStatus.supported ? (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {getWebHidUnavailableReason() === 'insecure-context'
+                          ? t('devices.controllerMapping.dualsense.insecureContext', { origin: window.location.origin })
+                          : t('devices.controllerMapping.dualsense.notSupported')}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                            {dualSenseStatus.connection === 'usb'
+                              ? t('devices.controllerMapping.dualsense.statusUsb')
+                              : dualSenseStatus.connection === 'bluetooth'
+                                ? t('devices.controllerMapping.dualsense.statusBluetooth')
+                                : t('devices.controllerMapping.dualsense.statusDisconnected')}
+                          </span>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            {dualSenseStatus.connection !== 'none' ? (
+                              <Button variant="outline" onClick={handleTestDualSense} className="w-full sm:w-auto">
+                                <Zap className="mr-2 h-4 w-4" />
+                                {t('devices.controllerMapping.dualsense.test')}
+                              </Button>
+                            ) : null}
+                            <Button
+                              variant={dualSenseStatus.connection === 'none' ? 'default' : 'outline'}
+                              onClick={dualSenseStatus.connection === 'none' ? handleConnectDualSense : handleDisconnectDualSense}
+                              className="w-full sm:w-auto"
+                            >
+                              {dualSenseStatus.connection === 'none'
+                                ? t('devices.controllerMapping.dualsense.connect')
+                                : t('devices.controllerMapping.dualsense.disconnect')}
+                            </Button>
+                          </div>
+                        </div>
+                        {dualSenseStatus.connection === 'bluetooth' ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {t('devices.controllerMapping.dualsense.bluetoothNote')}
+                          </p>
+                        ) : null}
+                        {dualSenseStatus.connection !== 'none' && dualSenseMotion ? (
+                          <div className="grid grid-cols-1 gap-1 rounded-md bg-gray-50 p-3 font-mono text-xs text-gray-600 dark:bg-gray-900/40 dark:text-gray-300 sm:grid-cols-3">
+                            <span>
+                              {t('devices.controllerMapping.dualsense.gyro')}: {dualSenseMotion.gyroX.toFixed(2)},{' '}
+                              {dualSenseMotion.gyroY.toFixed(2)}, {dualSenseMotion.gyroZ.toFixed(2)}
+                            </span>
+                            <span>
+                              {t('devices.controllerMapping.dualsense.accel')}: {dualSenseMotion.accelX.toFixed(2)},{' '}
+                              {dualSenseMotion.accelY.toFixed(2)}, {dualSenseMotion.accelZ.toFixed(2)}
+                            </span>
+                            <span>
+                              {t('devices.controllerMapping.dualsense.touches', { count: dualSenseTouches })}
+                            </span>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </>
               )}

@@ -135,6 +135,21 @@ namespace RemotePlay.Services.Streaming.Pipeline
         public void SetRequestKeyframeCallback(Func<Task>? callback)
         {
             _requestKeyframeCallback = callback;
+            // 参考链断裂（P 帧缺参考且无法改写）时由 VideoReceiver 请求 IDR，冷却由 RPStreamV2 控制
+            _videoReceiver?.SetRequestKeyframeCallback(callback == null ? null : () =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await callback();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ Request keyframe failed");
+                    }
+                });
+            });
         }
 
         /// <summary>
@@ -387,21 +402,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 }
             }
 
-            // 请求关键帧
-            if (_requestKeyframeCallback != null)
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _requestKeyframeCallback();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "❌ Request keyframe failed");
-                    }
-                });
-            }
+            // 不在这里请求关键帧：跳过的包会让帧不完整，VideoReceiver 会上报损坏帧，
+            // 参考链真正断裂时再由它请求 IDR
         }
 
         #endregion

@@ -224,16 +224,17 @@
           "60FPS": "60fps"
         },
         "bitrate": {
-          "DEFAULT": "Auto match bitrate",
-          "VERY_LOW": "Very low quality (~2 Mbps)",
-          "LOW": "Low quality (~4 Mbps)",
-          "MEDIUM": "Medium quality (~6 Mbps)",
-          "HIGH": "High quality (~10 Mbps)",
-          "VERY_HIGH": "Very high quality (~15 Mbps)",
-          "ULTRA_20M": "Ultra quality (~20 Mbps)",
-          "ULTRA_30M": "Ultra quality (~30 Mbps)",
-          "ULTRA_40M": "Extreme quality (~40 Mbps, experimental)",
-          "ULTRA_50M": "Extreme quality (~50 Mbps, experimental)"
+          "DEFAULT": "Auto (based on resolution)",
+          "VERY_LOW": "2 Mbps · Data saver, for mobile networks",
+          "LOW": "4 Mbps · Smooth",
+          "MEDIUM": "6 Mbps · Standard",
+          "HIGH": "10 Mbps · HD",
+          "VERY_HIGH": "15 Mbps · Recommended for 1080p",
+          "ULTRA_20M": "20 Mbps · High quality",
+          "ULTRA_30M": "30 Mbps · Very high quality",
+          "ULTRA_40M": "40 Mbps · Excellent, needs a stable local network",
+          "ULTRA_50M": "50 Mbps · Premium, wired network recommended",
+          "ULTRA_100M": "100 Mbps · Maximum quality, needs wired gigabit network"
         },
         "streamType": {
           "H264": "H.264 codec",
@@ -471,6 +472,25 @@
         "toastTestSuccess": "Vibration test sent",
         "toastTestFailed": "Failed to trigger vibration",
         "toastDisabled": "Vibration is currently disabled. Please enable it first."
+      },
+      "dualsense": {
+        "title": "DualSense features",
+        "description": "Connect a DualSense directly over WebHID (USB or Bluetooth) to mirror the game's trigger resistance, light bar color and player lights, and send gyro motion and the touchpad to the console. Once authorized, it is enabled automatically while streaming.",
+        "notSupported": "This browser does not support WebHID. Please use desktop Chrome or Edge.",
+        "insecureContext": "WebHID is only available on HTTPS or localhost pages, but this page is {{origin}}. Open it over HTTPS, or add this address under chrome://flags/#unsafely-treat-insecure-origin-as-secure and restart the browser.",
+        "statusDisconnected": "No DualSense connected",
+        "statusUsb": "DualSense connected over USB",
+        "statusBluetooth": "DualSense connected (Bluetooth)",
+        "bluetoothNote": "Over Bluetooth the controller's buttons are read through WebHID. After disconnecting the DualSense, reconnect the controller to restore the browser's own input.",
+        "gyro": "Gyro",
+        "accel": "Accel",
+        "touches": "Touches: {{count}}",
+        "connect": "Connect DualSense",
+        "disconnect": "Disconnect",
+        "test": "Test trigger resistance",
+        "toastConnected": "DualSense connected",
+        "toastConnectFailed": "Could not connect to the DualSense",
+        "toastTestSent": "Trigger resistance and light bar set, reverting in 5 seconds"
       },
       "mapButton": "Click to Map",
       "listening": "Listening...",

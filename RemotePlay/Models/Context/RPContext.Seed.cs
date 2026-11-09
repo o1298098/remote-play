@@ -8,6 +8,7 @@ namespace RemotePlay.Models.Context
     {
         private static readonly DateTime SeedCreatedAt = new DateTime(2025, 11, 1, 0, 0, 0, DateTimeKind.Utc);
         private static readonly DateTime HighBitrateSeedCreatedAt = new DateTime(2026, 11, 7, 0, 0, 0, DateTimeKind.Utc);
+        private static readonly DateTime Ultra100MSeedCreatedAt = new DateTime(2026, 11, 9, 0, 0, 0, DateTimeKind.Utc);
 
         partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
         {
@@ -60,7 +61,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "DEFAULT",
                     SortOrder = 0,
                     IsActive = true,
-                    Description = "自动匹配比特率",
+                    Description = "自动（按分辨率匹配码率）",
                     CreatedAt = SeedCreatedAt
                 },
                 new EnumEntity
@@ -72,7 +73,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "VERY_LOW",
                     SortOrder = 1,
                     IsActive = true,
-                    Description = "非常低画质（约 2Mbps）",
+                    Description = "2 Mbps · 省流量，适合移动网络",
                     CreatedAt = SeedCreatedAt
                 },
                 new EnumEntity
@@ -84,7 +85,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "LOW",
                     SortOrder = 2,
                     IsActive = true,
-                    Description = "低画质（约 4Mbps）",
+                    Description = "4 Mbps · 流畅",
                     CreatedAt = SeedCreatedAt
                 },
                 new EnumEntity
@@ -96,7 +97,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "MEDIUM",
                     SortOrder = 3,
                     IsActive = true,
-                    Description = "中等画质（约 6Mbps）",
+                    Description = "6 Mbps · 标准",
                     CreatedAt = SeedCreatedAt
                 },
                 new EnumEntity
@@ -108,7 +109,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "HIGH",
                     SortOrder = 4,
                     IsActive = true,
-                    Description = "高画质（约 10Mbps）",
+                    Description = "10 Mbps · 高清",
                     CreatedAt = SeedCreatedAt
                 },
                 new EnumEntity
@@ -120,7 +121,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "VERY_HIGH",
                     SortOrder = 5,
                     IsActive = true,
-                    Description = "非常高画质（约 15Mbps）",
+                    Description = "15 Mbps · 1080p 推荐",
                     CreatedAt = SeedCreatedAt
                 },
                 new EnumEntity
@@ -132,7 +133,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "ULTRA_20M",
                     SortOrder = 6,
                     IsActive = true,
-                    Description = "超高画质（约 20Mbps）",
+                    Description = "20 Mbps · 高画质",
                     CreatedAt = HighBitrateSeedCreatedAt
                 },
                 new EnumEntity
@@ -144,7 +145,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "ULTRA_30M",
                     SortOrder = 7,
                     IsActive = true,
-                    Description = "超高画质（约 30Mbps）",
+                    Description = "30 Mbps · 超高画质",
                     CreatedAt = HighBitrateSeedCreatedAt
                 },
                 new EnumEntity
@@ -156,7 +157,7 @@ namespace RemotePlay.Models.Context
                     EnumCode = "ULTRA_40M",
                     SortOrder = 8,
                     IsActive = true,
-                    Description = "极高画质（约 40Mbps，实验性）",
+                    Description = "40 Mbps · 极高画质，需稳定的局域网",
                     CreatedAt = HighBitrateSeedCreatedAt
                 },
                 new EnumEntity
@@ -168,8 +169,20 @@ namespace RemotePlay.Models.Context
                     EnumCode = "ULTRA_50M",
                     SortOrder = 9,
                     IsActive = true,
-                    Description = "极高画质（约 50Mbps，实验性）",
+                    Description = "50 Mbps · 极致画质，建议有线网络",
                     CreatedAt = HighBitrateSeedCreatedAt
+                },
+                new EnumEntity
+                {
+                    Id = "quality-ultra-100m",
+                    EnumType = "Quality",
+                    EnumKey = "ULTRA_100M",
+                    EnumValue = "100000",
+                    EnumCode = "ULTRA_100M",
+                    SortOrder = 10,
+                    IsActive = true,
+                    Description = "100 Mbps · 最高画质，需千兆有线网络",
+                    CreatedAt = Ultra100MSeedCreatedAt
                 },
 
                 // FPS

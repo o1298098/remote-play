@@ -27,7 +27,6 @@ namespace RemotePlay.Services.Controller
         // 状态发送间隔配置
         private const int StateIntervalMaxMs = 16;
         private const int StateIntervalMinMs = 8;
-        private const int MaxEvents = 5;
 
 		public ControllerService(
 			ILogger<ControllerService> logger,
@@ -148,6 +147,23 @@ namespace RemotePlay.Services.Controller
             return Task.CompletedTask;
         }
 
+        public Task SetMotionAsync(Guid sessionId, float gyroX, float gyroY, float gyroZ, float accelX, float accelY, float accelZ,
+            float orientX, float orientY, float orientZ, float orientW)
+        {
+            if (_controllers.TryGetValue(sessionId, out var controller))
+            {
+                controller.SetMotion(gyroX, gyroY, gyroZ, accelX, accelY, accelZ, orientX, orientY, orientZ, orientW);
+            }
+            return Task.CompletedTask;
+        }
+
+        public Task SetTouchpadAsync(Guid sessionId, IReadOnlyList<TouchpadSlotInput> slots)
+        {
+            return _controllers.TryGetValue(sessionId, out var controller)
+                ? controller.SetTouchpadAsync(slots)
+                : Task.CompletedTask;
+        }
+
         public Task UpdateSticksAsync(Guid sessionId, CancellationToken ct = default)
         {
             if (!_controllers.TryGetValue(sessionId, out var controller))
@@ -219,6 +235,61 @@ namespace RemotePlay.Services.Controller
 			}
 		}
 
+		internal Task BroadcastTriggerEffectsAsync(Guid sessionId, TriggerEffectsEventArgs effects) =>
+			SendToControllerGroupAsync(sessionId, "ControllerTriggerEffects", ToTriggerEffectsPayload(sessionId, effects));
+
+		internal Task BroadcastLightbarAsync(Guid sessionId, LightbarEventArgs lightbar) =>
+			SendToControllerGroupAsync(sessionId, "ControllerLightbar", ToLightbarPayload(sessionId, lightbar));
+
+		public async Task<(object? TriggerEffects, object? Lightbar)> GetDualSenseStateAsync(Guid sessionId)
+		{
+			var stream = await _streamingService.GetStreamAsync(sessionId);
+			if (stream == null)
+			{
+				return (null, null);
+			}
+
+			var effects = stream.LastTriggerEffects;
+			var lightbar = stream.LastLightbar;
+			return (
+				effects != null ? ToTriggerEffectsPayload(sessionId, effects) : null,
+				lightbar != null ? ToLightbarPayload(sessionId, lightbar) : null);
+		}
+
+		// byte[] 会被序列化成 base64，前端需要数字数组
+		private static object ToTriggerEffectsPayload(Guid sessionId, TriggerEffectsEventArgs e) => new
+		{
+			sessionId,
+			typeLeft = e.TypeLeft,
+			left = e.Left.Select(b => (int)b).ToArray(),
+			typeRight = e.TypeRight,
+			right = e.Right.Select(b => (int)b).ToArray(),
+			intensity = e.Intensity
+		};
+
+		private static object ToLightbarPayload(Guid sessionId, LightbarEventArgs e) => new
+		{
+			sessionId,
+			red = e.Red,
+			green = e.Green,
+			blue = e.Blue,
+			playerIndex = e.PlayerIndex
+		};
+
+		internal async Task SendToControllerGroupAsync(Guid sessionId, string method, object payload)
+		{
+			try
+			{
+				await _controllerHubContext.Clients
+					.Group(GetControllerGroupName(sessionId))
+					.SendAsync(method, payload);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Failed to broadcast {Method} for session {SessionId}", method, sessionId);
+			}
+		}
+
 		private static string GetControllerGroupName(Guid sessionId) => $"session_{sessionId}";
 
         /// <summary>
@@ -234,11 +305,19 @@ namespace RemotePlay.Services.Controller
 			private RPStreamV2? _attachedStream;
 			private readonly object _streamSubscriptionLock = new();
 
-            private ushort _sequenceEvent = 0;
-            private ushort _sequenceState = 0;
-            private readonly LinkedList<byte[]> _eventBuffer = new(); // 使用 LinkedList 以支持在开头插入
             private ControllerState _lastState = new();
             private ControllerState _stickState = new();
+            private readonly object _inputLock = new();
+            // L2/R2 可能同时来自模拟扳机（SetTriggers）和数字按键（键盘/虚拟手柄），按下的数字键优先
+            private byte _analogL2;
+            private byte _analogR2;
+            private bool _digitalL2;
+            private bool _digitalR2;
+            private const int TOUCHPAD_MAX_X = 1919;
+            private const int TOUCHPAD_MAX_Y = 1079;
+            private readonly int[] _touchSlotIds = { -1, -1 };
+            private readonly int[] _touchSlotContacts = { -1, -1 };
+            private int _touchIdNext;
             
             private CancellationTokenSource? _cts;
             private Task? _workerTask;
@@ -275,10 +354,16 @@ namespace RemotePlay.Services.Controller
 					if (_attachedStream != null)
 					{
 						_attachedStream.RumbleReceived -= OnRumbleReceived;
+						_attachedStream.TriggerEffectsReceived -= OnTriggerEffectsReceived;
+						_attachedStream.LightbarChanged -= OnLightbarChanged;
+						_attachedStream.MotionResetRequested -= OnMotionResetRequested;
 					}
 
 					_attachedStream = stream;
 					_attachedStream.RumbleReceived += OnRumbleReceived;
+					_attachedStream.TriggerEffectsReceived += OnTriggerEffectsReceived;
+					_attachedStream.LightbarChanged += OnLightbarChanged;
+					_attachedStream.MotionResetRequested += OnMotionResetRequested;
 				}
 			}
 
@@ -289,6 +374,9 @@ namespace RemotePlay.Services.Controller
 					if (_attachedStream != null)
 					{
 						_attachedStream.RumbleReceived -= OnRumbleReceived;
+						_attachedStream.TriggerEffectsReceived -= OnTriggerEffectsReceived;
+						_attachedStream.LightbarChanged -= OnLightbarChanged;
+						_attachedStream.MotionResetRequested -= OnMotionResetRequested;
 						_attachedStream = null;
 					}
 				}
@@ -360,21 +448,10 @@ namespace RemotePlay.Services.Controller
                 _logger.LogDebug("Sending button event: button={Button}, action={Action}, delay={DelayMs}ms, session={SessionId}", 
                     button, action, delayMs, _sessionId);
 
-                // 添加按键事件
-                if (action == IControllerService.ButtonAction.PRESS)
-                {
-                    AddEventBuffer(new FeedbackEvent(button, isActive: true));
-                }
-                else if (action == IControllerService.ButtonAction.RELEASE)
-                {
-                    AddEventBuffer(new FeedbackEvent(button, isActive: false));
-                }
-                else if (action == IControllerService.ButtonAction.TAP)
-                {
-                    AddEventBuffer(new FeedbackEvent(button, isActive: true));
-                }
-
-                await SendEventAsync();
+                // 按键并入控制器状态，由 FeedbackSender 统一生成带序号的 History 事件，
+                // 保证按键和扳机共用一条序号流
+                SetButton(button, pressed: action != IControllerService.ButtonAction.RELEASE);
+                await PushStateAsync();
 
                 // 如果是TAP，延迟后发送释放
                 if (action == IControllerService.ButtonAction.TAP)
@@ -446,31 +523,157 @@ namespace RemotePlay.Services.Controller
 
         public void SetTriggers(float? l2, float? r2)
         {
-            bool changed = false;
-
-            if (l2.HasValue)
+            bool changed;
+            lock (_inputLock)
             {
-                var value = NormalizeTrigger(l2.Value);
-                if (_stickState.L2State != value)
+                if (l2.HasValue)
                 {
-                    _stickState.L2State = value;
-                    changed = true;
+                    _analogL2 = NormalizeTrigger(l2.Value);
                 }
+
+                if (r2.HasValue)
+                {
+                    _analogR2 = NormalizeTrigger(r2.Value);
+                }
+
+                changed = RefreshTriggers_NoLock();
             }
 
-            if (r2.HasValue)
+            if (changed)
             {
-                var value = NormalizeTrigger(r2.Value);
-                if (_stickState.R2State != value)
+                _shouldSend.Release();
+            }
+        }
+
+        private void SetButton(FeedbackEvent.ButtonType button, bool pressed)
+        {
+            lock (_inputLock)
+            {
+                switch (button)
                 {
-                    _stickState.R2State = value;
+                    case FeedbackEvent.ButtonType.L2:
+                        _digitalL2 = pressed;
+                        RefreshTriggers_NoLock();
+                        return;
+                    case FeedbackEvent.ButtonType.R2:
+                        _digitalR2 = pressed;
+                        RefreshTriggers_NoLock();
+                        return;
+                }
+
+                var mask = GetButtonMask(button);
+                if (mask == 0)
+                {
+                    return;
+                }
+
+                _stickState.Buttons = pressed
+                    ? _stickState.Buttons | mask
+                    : _stickState.Buttons & ~mask;
+            }
+        }
+
+        public void SetMotion(float gyroX, float gyroY, float gyroZ, float accelX, float accelY, float accelZ,
+            float orientX, float orientY, float orientZ, float orientW)
+        {
+            lock (_inputLock)
+            {
+                _stickState.GyroX = gyroX;
+                _stickState.GyroY = gyroY;
+                _stickState.GyroZ = gyroZ;
+                _stickState.AccelX = accelX;
+                _stickState.AccelY = accelY;
+                _stickState.AccelZ = accelZ;
+                _stickState.OrientX = orientX;
+                _stickState.OrientY = orientY;
+                _stickState.OrientZ = orientZ;
+                _stickState.OrientW = orientW;
+                _stickState.HasMotion = true;
+            }
+
+            _shouldSend.Release();
+        }
+
+        /// <summary>
+        /// 更新触摸板：每个手指槽位按下时分配新的触摸 id（同 chiaki），移动时更新坐标，抬起时释放
+        /// </summary>
+        public async Task SetTouchpadAsync(IReadOnlyList<TouchpadSlotInput> slots)
+        {
+            bool changed = false;
+            lock (_inputLock)
+            {
+                var touches = (Models.PlayStation.ControllerTouch[])_stickState.Touches.Clone();
+                for (int slot = 0; slot < _touchSlotIds.Length; slot++)
+                {
+                    var input = slot < slots.Count ? slots[slot] : null;
+                    int index = _touchSlotIds[slot] >= 0 ? Array.FindIndex(touches, t => t.Id == _touchSlotIds[slot]) : -1;
+
+                    bool restarted = input != null && input.Down && index >= 0 && input.Contact != _touchSlotContacts[slot];
+                    if (index >= 0 && (input == null || !input.Down || restarted))
+                    {
+                        touches[index] = new Models.PlayStation.ControllerTouch { Id = -1 };
+                        _touchSlotIds[slot] = -1;
+                        index = -1;
+                    }
+
+                    if (input == null || !input.Down)
+                    {
+                        continue;
+                    }
+
+                    var x = (ushort)Math.Clamp(input.X, 0, TOUCHPAD_MAX_X);
+                    var y = (ushort)Math.Clamp(input.Y, 0, TOUCHPAD_MAX_Y);
+                    if (index < 0)
+                    {
+                        index = Array.FindIndex(touches, t => t.Id < 0);
+                        if (index < 0)
+                        {
+                            continue;
+                        }
+                        _touchSlotIds[slot] = _touchIdNext;
+                        _touchSlotContacts[slot] = input.Contact;
+                        _touchIdNext = (_touchIdNext + 1) & 0x7f;
+                    }
+
+                    touches[index] = new Models.PlayStation.ControllerTouch { Id = _touchSlotIds[slot], X = x, Y = y };
+                }
+
+                if (!touches.AsSpan().SequenceEqual(_stickState.Touches))
+                {
+                    _stickState.Touches = touches;
                     changed = true;
                 }
             }
 
             if (changed)
             {
-                _shouldSend.Release();
+                await PushStateAsync();
+            }
+        }
+
+        private bool RefreshTriggers_NoLock()
+        {
+            byte l2 = _digitalL2 ? (byte)0xff : _analogL2;
+            byte r2 = _digitalR2 ? (byte)0xff : _analogR2;
+            bool changed = _stickState.L2State != l2 || _stickState.R2State != r2;
+            _stickState.L2State = l2;
+            _stickState.R2State = r2;
+            return changed;
+        }
+
+        private async Task PushStateAsync()
+        {
+            var stream = await _streamingService.GetStreamAsync(_sessionId);
+            if (stream == null)
+            {
+                _logger.LogWarning("Cannot send controller state: stream not found, session={SessionId}", _sessionId);
+                return;
+            }
+
+            AttachStream(stream);
+            lock (_inputLock)
+            {
+                stream.UpdateControllerState(_stickState);
             }
         }
 
@@ -501,62 +704,55 @@ namespace RemotePlay.Services.Controller
                 if (stream != null)
                 {
                     // 使用 UpdateControllerState 方法，让 FeedbackSenderService 处理发送
-                    stream.UpdateControllerState(_stickState);
+                    lock (_inputLock)
+                    {
+                        stream.UpdateControllerState(_stickState);
+                    }
                 }
             }
 
-            private void AddEventBuffer(FeedbackEvent ev)
+            /// <summary>
+            /// ButtonType 对应的控制器状态按键位（与 FeedbackSenderService.GetButtonCode 互逆）
+            /// </summary>
+            private static ulong GetButtonMask(FeedbackEvent.ButtonType button) => button switch
             {
-                var buf = new byte[FeedbackEvent.Length];
-                ev.Pack(buf);
-                
-                // 添加到链表开头（最新的在前）
-                _eventBuffer.AddFirst(buf);
-                
-                // 如果超过最大事件数，移除最旧的事件（在末尾）
-                if (_eventBuffer.Count > MaxEvents)
-                {
-                    _eventBuffer.RemoveLast();
-                }
-            }
-
-            private async Task SendEventAsync()
-            {
-                if (_eventBuffer.Count == 0)
-                {
-                    _logger.LogDebug("Event buffer empty, skipping send");
-                    return;
-                }
-
-                // 合并所有事件，保持添加顺序
-                var eventCount = _eventBuffer.Count;
-                var data = _eventBuffer.SelectMany(b => b).ToArray();
-                _eventBuffer.Clear();
-
-                var stream = await _streamingService.GetStreamAsync(_sessionId);
-                if (stream != null)
-                {
-					AttachStream(stream);
-                    _logger.LogDebug("Sending controller events to stream: count={EventCount}, length={DataLength}, seq={Sequence}, session={SessionId}", 
-                        eventCount, data.Length, _sequenceEvent, _sessionId);
-                    
-                    await stream.SendFeedbackAsync(
-                        (int)FeedbackHeaderType.EVENT,
-                        _sequenceEvent,
-                        data);
-                    
-                    _sequenceEvent++;
-                    _logger.LogDebug("Controller events sent, new seq={Sequence}", _sequenceEvent);
-                }
-                else
-                {
-                    _logger.LogWarning("Cannot send controller events: stream not found, session={SessionId}", _sessionId);
-                }
-            }
+                FeedbackEvent.ButtonType.CROSS => 0x0001,
+                FeedbackEvent.ButtonType.CIRCLE => 0x0002,
+                FeedbackEvent.ButtonType.SQUARE => 0x0004,
+                FeedbackEvent.ButtonType.TRIANGLE => 0x0008,
+                FeedbackEvent.ButtonType.LEFT => 0x0010,
+                FeedbackEvent.ButtonType.UP => 0x0020,
+                FeedbackEvent.ButtonType.RIGHT => 0x0040,
+                FeedbackEvent.ButtonType.DOWN => 0x0080,
+                FeedbackEvent.ButtonType.L1 => 0x0100,
+                FeedbackEvent.ButtonType.R1 => 0x0200,
+                FeedbackEvent.ButtonType.OPTIONS => 0x1000,
+                FeedbackEvent.ButtonType.SHARE => 0x2000,
+                FeedbackEvent.ButtonType.L3 => 0x4000,
+                FeedbackEvent.ButtonType.R3 => 0x8000,
+                FeedbackEvent.ButtonType.PS => 0x10000,
+                FeedbackEvent.ButtonType.TOUCHPAD => 0x100000,
+                _ => 0,
+            };
 
 			private void OnRumbleReceived(object? sender, RumbleEventArgs e)
 			{
 				_ = _owner.BroadcastRumbleAsync(_sessionId, e);
+			}
+
+			private void OnTriggerEffectsReceived(object? sender, TriggerEffectsEventArgs e)
+			{
+				_ = _owner.BroadcastTriggerEffectsAsync(_sessionId, e);
+			}
+
+			private void OnLightbarChanged(object? sender, LightbarEventArgs e)
+			{
+				_ = _owner.BroadcastLightbarAsync(_sessionId, e);
+			}
+
+			private void OnMotionResetRequested(object? sender, EventArgs e)
+			{
+				_ = _owner.SendToControllerGroupAsync(_sessionId, "ControllerMotionReset", new { sessionId = _sessionId });
 			}
 
             private bool CheckSession()

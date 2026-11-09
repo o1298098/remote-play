@@ -6,6 +6,15 @@ namespace RemotePlay.Models.Configuration
         public RegistrationConfig Registration { get; set; } = new();
         public SecurityConfig Security { get; set; } = new();
         public LoggingConfig Logging { get; set; } = new();
+        public StreamingConfig Streaming { get; set; } = new();
+    }
+
+    public class StreamingConfig
+    {
+        /// <summary>
+        /// 上报给主机的丢包率上限（0~1）。主机据此调整码率和分辨率，值越大降档越激进
+        /// </summary>
+        public double PacketLossReportedMax { get; set; } = 0.05;
     }
 
     public class DiscoveryConfig

@@ -224,16 +224,17 @@
           "60FPS": "60fps"
         },
         "bitrate": {
-          "DEFAULT": "ビットレート自動調整",
-          "VERY_LOW": "非常に低品質（約2Mbps）",
-          "LOW": "低品質（約4Mbps）",
-          "MEDIUM": "中品質（約6Mbps）",
-          "HIGH": "高品質（約10Mbps）",
-          "VERY_HIGH": "非常に高品質（約15Mbps）",
-          "ULTRA_20M": "超高品質（約20Mbps）",
-          "ULTRA_30M": "超高品質（約30Mbps）",
-          "ULTRA_40M": "最高品質（約40Mbps、実験的）",
-          "ULTRA_50M": "最高品質（約50Mbps、実験的）"
+          "DEFAULT": "自動（解像度に合わせる）",
+          "VERY_LOW": "2 Mbps・データ節約（モバイル回線向け）",
+          "LOW": "4 Mbps・スムーズ",
+          "MEDIUM": "6 Mbps・標準",
+          "HIGH": "10 Mbps・HD",
+          "VERY_HIGH": "15 Mbps・1080p 推奨",
+          "ULTRA_20M": "20 Mbps・高画質",
+          "ULTRA_30M": "30 Mbps・超高画質",
+          "ULTRA_40M": "40 Mbps・最高クラス（安定した LAN が必要）",
+          "ULTRA_50M": "50 Mbps・極上画質（有線接続推奨）",
+          "ULTRA_100M": "100 Mbps・最高画質（ギガビット有線が必要）"
         },
         "streamType": {
           "H264": "H.264コーデック",

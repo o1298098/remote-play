@@ -51,6 +51,7 @@ namespace RemotePlay.Services.Streaming.Pipeline
 
         // 配置
         private IAVReceiver? _receiver;
+        private Action<AVPacket, byte[]>? _hapticsHandler;
 
         public AVPipelineCoordinator(
             ILogger<AVPipelineCoordinator> logger,
@@ -127,6 +128,8 @@ namespace RemotePlay.Services.Streaming.Pipeline
     private long _videoNetworkGaps;
     private long _audioNetworkGaps;
     private long _videoRoutedWindow;
+    private long _audioRoutedWindow;
+    private long _hapticsRoutedWindow;
     private DateTime _lastUpstreamLog = DateTime.UtcNow;
     private static readonly TimeSpan UpstreamLogInterval = TimeSpan.FromSeconds(5);
 
@@ -181,8 +184,24 @@ namespace RemotePlay.Services.Streaming.Pipeline
                 }
                 else if (packet.Type == HeaderType.AUDIO)
                 {
-                    audioRouted++;
                     _audioNetworkGaps += CountSequenceGap(ref lastAudioIndex, packet.Index);
+                    if (packet.IsHaptics)
+                    {
+                        _hapticsRoutedWindow++;
+                        // haptics 是原始 PCM，有独立的帧序号，不能进 Opus 音频管线
+                        try
+                        {
+                            _hapticsHandler?.Invoke(packet, packet.Data);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Haptics packet handler failed");
+                        }
+                        continue;
+                    }
+
+                    audioRouted++;
+                    _audioRoutedWindow++;
                     await _audioInputChannel.Writer.WriteAsync(packet, _routerCts.Token);
                 }
                 else
@@ -236,6 +255,12 @@ namespace RemotePlay.Services.Streaming.Pipeline
             _lastUpstreamLog = now;
 
             long received = _videoRoutedWindow;
+            long audioReceived = _audioRoutedWindow;
+            long hapticsReceived = _hapticsRoutedWindow;
+            _audioRoutedWindow = 0;
+            _hapticsRoutedWindow = 0;
+            _logger.LogDebug("Host packets routed (5s): video={Video} audio={Audio} haptics={Haptics} | audio frames out={AudioOut}",
+                received, audioReceived, hapticsReceived, _outputPipeline.GetStats().AudioFramesSent);
             long gaps = _videoNetworkGaps;
             long audioGaps = _audioNetworkGaps;
             long ingestDropped = Interlocked.Exchange(ref _ingestDropped, 0);
@@ -366,6 +391,14 @@ namespace RemotePlay.Services.Streaming.Pipeline
         /// <summary>
         /// 设置请求关键帧回调
         /// </summary>
+        /// <summary>
+        /// 设置 DualSense haptics 包处理回调（参数：包、已解密数据）
+        /// </summary>
+        public void SetHapticsHandler(Action<AVPacket, byte[]>? handler)
+        {
+            _hapticsHandler = handler;
+        }
+
         public void SetRequestKeyframeCallback(Func<Task>? callback)
         {
             _videoPipeline.SetRequestKeyframeCallback(callback);

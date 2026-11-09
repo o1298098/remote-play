@@ -861,7 +861,15 @@ namespace RemotePlay.Services.WebRTC
             {
                 try
                 {
-                    if (_streamingService != null && session.StreamingSessionId.HasValue)
+                    // 浏览器重建 WebRTC 连接时，新会话已绑定到同一个串流，旧会话移除时不能停掉串流
+                    bool streamStillUsed = session.StreamingSessionId.HasValue &&
+                        _sessions.Values.Any(s => s.StreamingSessionId == session.StreamingSessionId);
+                    if (streamStillUsed)
+                    {
+                        _logger.LogInformation("WebRTC session {SessionId} replaced; keeping streaming session {StreamingSessionId}",
+                            sessionId, session.StreamingSessionId!.Value);
+                    }
+                    else if (_streamingService != null && session.StreamingSessionId.HasValue)
                     {
                         try
                         {

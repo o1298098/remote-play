@@ -232,6 +232,54 @@ namespace RemotePlay.Hubs
         }
 
         /// <summary>
+        /// 体感数据（高频，客户端用 send 调用，不回复）
+        /// </summary>
+        public Task Motion(Guid sessionId, float gyroX, float gyroY, float gyroZ, float accelX, float accelY, float accelZ,
+            float orientX, float orientY, float orientZ, float orientW)
+        {
+            return _controllerService.SetMotionAsync(sessionId, gyroX, gyroY, gyroZ, accelX, accelY, accelZ,
+                orientX, orientY, orientZ, orientW);
+        }
+
+        /// <summary>
+        /// 触摸板手指状态（变化时发送）
+        /// </summary>
+        public async Task Touchpad(Guid sessionId, TouchpadSlotInput[] slots)
+        {
+            try
+            {
+                await _controllerService.SetTouchpadAsync(sessionId, slots ?? Array.Empty<TouchpadSlotInput>());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting touchpad: SessionId={SessionId}", sessionId);
+            }
+        }
+
+        /// <summary>
+        /// 重新推送主机最近下发的 DualSense 扳机效果和光条状态（客户端连上手柄后补拉）
+        /// </summary>
+        public async Task GetDualSenseState(Guid sessionId)
+        {
+            try
+            {
+                var (triggerEffects, lightbar) = await _controllerService.GetDualSenseStateAsync(sessionId);
+                if (triggerEffects != null)
+                {
+                    await Clients.Caller.SendAsync("ControllerTriggerEffects", triggerEffects);
+                }
+                if (lightbar != null)
+                {
+                    await Clients.Caller.SendAsync("ControllerLightbar", lightbar);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting DualSense state: SessionId={SessionId}", sessionId);
+            }
+        }
+
+        /// <summary>
         /// 获取控制器状态
         /// </summary>
         public async Task GetControllerStatus(Guid sessionId)
