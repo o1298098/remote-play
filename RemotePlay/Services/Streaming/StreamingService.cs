@@ -55,7 +55,8 @@ namespace RemotePlay.Services.Streaming
             var ct = cancellationToken;
             var streamingConfig = _serviceProvider.GetService<IOptions<RemotePlayConfig>>()?.Value.Streaming ?? new StreamingConfig();
             var rp = new Core.RPStreamV2(rpLogger, _loggerFactory, session, session.HostIp, port, ct,
-                streamingConfig.PacketLossReportedMax);
+                streamingConfig.PacketLossReportedMax,
+                streamingConfig.BrowserPacketLossReportedMax);
             
             // 🔹 如果是测试模式，自动附加默认接收器（用于调试）
             // 注意：WebRTCReceiver 应该通过 WebRTCController 创建，而不是在这里自动创建

@@ -97,9 +97,9 @@ namespace RemotePlay.Services.Streaming.Core
         
         // ✅ 降档统计
         private static readonly TimeSpan BrowserLossMaxAge = TimeSpan.FromSeconds(2);
-        private const double BrowserLossCap = 0.3;
-        private DateTime _lastBrowserLossLog = DateTime.MinValue;
+        private readonly double _browserLossReportedMax;
         private readonly double _packetLossReportedMax;
+        private string _requestedResolutions = "";
         private int _qualityDowngradeCount = 0;
         private int _qualityUpgradeCount = 0;
 
@@ -239,9 +239,11 @@ namespace RemotePlay.Services.Streaming.Core
             string host,
             int port,
             CancellationToken cancellationToken,
-            double packetLossReportedMax = CongestionControlService.DEFAULT_PACKET_LOSS_MAX)
+            double packetLossReportedMax = CongestionControlService.DEFAULT_PACKET_LOSS_MAX,
+            double browserLossReportedMax = 0.1)
         {
             _packetLossReportedMax = Math.Clamp(packetLossReportedMax, 0.0, 1.0);
+            _browserLossReportedMax = Math.Clamp(browserLossReportedMax, 0.0, 1.0);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -326,7 +328,8 @@ namespace RemotePlay.Services.Streaming.Core
                 SendRawPacketAsync,  // 发送原始包回调
                 GetCurrentKeyPos,     // 获取 key_pos 回调
                 GetPacketStats,       // 获取包统计回调（可选）
-                _packetLossReportedMax
+                _packetLossReportedMax,
+                GetBrowserLoss
             );
 
             _hapticsConverter = new HapticsRumbleConverter(
@@ -856,9 +859,9 @@ namespace RemotePlay.Services.Streaming.Core
                     maxPacketSize, ladder.Count, resolutionCount);
             }
 
+            _requestedResolutions = string.Join(", ", ladder.Take(resolutionCount).Select(r => $"{r.Width}x{r.Height}"));
             _logger.LogInformation("Sending BIG payload: len={Len}, tagRemote={TagRemote}, resolutions={Resolutions}",
-                bigPayload.Length, _tagRemote,
-                string.Join(", ", ladder.Take(resolutionCount).Select(r => $"{r.Width}x{r.Height}")));
+                bigPayload.Length, _tagRemote, _requestedResolutions);
             
             // 保存 BIG payload 用于重试
             _lastBigPayload = bigPayload;
@@ -2054,7 +2057,6 @@ namespace RemotePlay.Services.Streaming.Core
 
             // 获取并重置统计（合并 generation 和 sequence 统计）
             var (received, lost) = _packetStats.GetAndReset(reset: true);
-            (received, lost) = ApplyBrowserLoss(received, lost);
 
             // 限制在 ushort 范围内
             if (received > ushort.MaxValue) received = ushort.MaxValue;
@@ -2064,42 +2066,23 @@ namespace RemotePlay.Services.Streaming.Core
         }
 
         /// <summary>
-        /// 把浏览器回报的丢包率合并进上报给主机的拥塞统计：主机只看得到 PS→服务端 这一段，
-        /// 而瓶颈通常在服务端→浏览器，不合并的话主机永远不会降码率或降分辨率。
-        /// 合并后保持总包数不变：combined = 1 - (1 - 主机段丢包率) × (1 - 浏览器段丢包率)。
+        /// 浏览器回报的服务端→浏览器段丢包率（已按上限截断），由 CongestionControl 合并进上报给主机的统计：
+        /// 主机只看得到 PS→服务端 这一段，而瓶颈通常在服务端→浏览器，不合并的话主机永远不会因此降码率或降分辨率
         /// </summary>
-        private (ulong received, ulong lost) ApplyBrowserLoss(ulong received, ulong lost)
+        private double GetBrowserLoss()
         {
-            ulong total = received + lost;
-            if (total == 0 || _receiver is not Receiver.WebRTCReceiver webrtcReceiver)
+            if (_browserLossReportedMax <= 0 || _receiver is not Receiver.WebRTCReceiver webrtcReceiver)
             {
-                return (received, lost);
+                return 0;
             }
 
             var stats = webrtcReceiver.BrowserVideoStats;
             if (stats == null || DateTime.UtcNow - stats.Value.ReceivedAtUtc > BrowserLossMaxAge)
             {
-                return (received, lost);
+                return 0;
             }
 
-            double browserLoss = Math.Min(stats.Value.FractionLost, BrowserLossCap);
-            if (browserLoss <= 0)
-            {
-                return (received, lost);
-            }
-
-            double hostLoss = (double)lost / total;
-            double combined = 1 - (1 - hostLoss) * (1 - browserLoss);
-            ulong combinedLost = Math.Max(lost, (ulong)Math.Round(total * combined));
-
-            if (browserLoss >= 0.02 && DateTime.UtcNow - _lastBrowserLossLog > TimeSpan.FromSeconds(5))
-            {
-                _lastBrowserLossLog = DateTime.UtcNow;
-                _logger.LogInformation("📉 Browser-side loss {BrowserLoss:P1}, combined loss reported to host {Combined:P1}",
-                    browserLoss, combined);
-            }
-
-            return (total - combinedLost, combinedLost);
+            return Math.Min(stats.Value.FractionLost, _browserLossReportedMax);
         }
 
         public (StreamHealthSnapshot Snapshot, StreamPipelineStats PipelineStats) GetStreamHealth()
@@ -2338,6 +2321,10 @@ namespace RemotePlay.Services.Streaming.Core
             {
                 _logger.LogWarning("⚠️ No Resolution data in STREAMINFO (Resolution is null or Count = 0)");
             }
+
+            _logger.LogInformation("📺 Video profiles: requested [{Requested}] (host={HostType}), host returned {Count} usable [{Returned}]",
+                _requestedResolutions, _session.HostType, profiles.Count,
+                string.Join(", ", profiles.Select(p => $"#{p.Index} {p.Width}x{p.Height}")));
 
             // 设置到 AdaptiveStreamManager
             if (_adaptiveStreamManager != null && profiles.Count > 0)

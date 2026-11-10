@@ -28,6 +28,8 @@ namespace RemotePlay.Services.Streaming
         private readonly Func<byte[], Task> _sendRawFunc;  // 发送原始包的回调
         private readonly Func<ulong> _getKeyPosFunc;       // 获取 key_pos 的回调
         private readonly Func<(ushort, ushort)>? _getPacketStatsFunc;  // 获取包统计的回调（可选，应该返回增量值并重置）
+        private readonly Func<double>? _getDownstreamLossFunc;         // 获取下游（服务端→浏览器）丢包率的回调（可选，0~1）
+        private DateTime _lastDownstreamLossLog = DateTime.MinValue;
         
         private CancellationTokenSource? _cts;
         private Task? _congestionLoop;
@@ -49,18 +51,21 @@ namespace RemotePlay.Services.Streaming
         /// <param name="getKeyPosFunc">获取当前 key_pos 的回调函数</param>
         /// <param name="getPacketStatsFunc">获取包统计的回调函数（可选，应该返回增量值并重置统计）</param>
         /// <param name="packetLossMax">上报给主机的丢包率上限（默认 0.05），超过时按上限上报</param>
+        /// <param name="getDownstreamLossFunc">获取下游丢包率的回调（可选），在主机段丢包截断之后合并，不受 packetLossMax 限制</param>
         public CongestionControlService(
             ILogger<CongestionControlService> logger,
             Func<byte[], Task> sendRawFunc,
             Func<ulong> getKeyPosFunc,
             Func<(ushort, ushort)>? getPacketStatsFunc = null,
-            double packetLossMax = DEFAULT_PACKET_LOSS_MAX)
+            double packetLossMax = DEFAULT_PACKET_LOSS_MAX,
+            Func<double>? getDownstreamLossFunc = null)
         {
             _logger = logger;
             _sendRawFunc = sendRawFunc;
             _getKeyPosFunc = getKeyPosFunc;
             _getPacketStatsFunc = getPacketStatsFunc;
             _packetLossMax = packetLossMax;
+            _getDownstreamLossFunc = getDownstreamLossFunc;
         }
         
         /// <summary>
@@ -183,6 +188,8 @@ namespace RemotePlay.Services.Streaming
                         lost = (ulong)(total * _packetLossMax);
                         received = total - lost;
                     }
+
+                    (received, lost) = MergeDownstreamLoss(received, lost);
                     
                     var packet = BuildCongestionPacket((ushort)received, (ushort)lost);
                     await _sendRawFunc(packet);
@@ -203,6 +210,38 @@ namespace RemotePlay.Services.Streaming
                 }
             }
             
+        }
+
+        /// <summary>
+        /// 合并下游丢包率并保持总包数不变：combined = 1 - (1 - 主机段丢包率) × (1 - 下游丢包率)
+        /// </summary>
+        private (ulong received, ulong lost) MergeDownstreamLoss(ulong received, ulong lost)
+        {
+            ulong total = received + lost;
+            if (total == 0 || _getDownstreamLossFunc == null)
+            {
+                return (received, lost);
+            }
+
+            double downstreamLoss = Math.Clamp(_getDownstreamLossFunc(), 0.0, 1.0);
+            if (downstreamLoss <= 0)
+            {
+                return (received, lost);
+            }
+
+            double hostLoss = (double)lost / total;
+            double combined = 1 - (1 - hostLoss) * (1 - downstreamLoss);
+            ulong combinedLost = Math.Min(total, Math.Max(lost, (ulong)Math.Round(total * combined)));
+
+            if (downstreamLoss >= 0.02 && DateTime.UtcNow - _lastDownstreamLossLog > TimeSpan.FromSeconds(5))
+            {
+                _lastDownstreamLossLog = DateTime.UtcNow;
+                _logger.LogInformation(
+                    "📉 Browser-side loss {BrowserLoss:P1} merged into congestion report: host loss {HostLoss:P1} -> reported {Combined:P1} ({Lost}/{Total})",
+                    downstreamLoss, hostLoss, (double)combinedLost / total, combinedLost, total);
+            }
+
+            return (total - combinedLost, combinedLost);
         }
         
         #endregion
