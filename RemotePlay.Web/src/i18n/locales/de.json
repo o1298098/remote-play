@@ -147,7 +147,11 @@
         "stats": "{{buttons}} Tasten · {{axes}} Achsen",
         "disconnectTooltip": "Trennen",
         "disconnectedToastTitle": "🎮 Controller getrennt",
-        "disconnectedToastDescription": "{{name}} wurde von der App getrennt"
+        "disconnectedToastDescription": "{{name}} wurde von der App getrennt",
+        "connectedToastTitle": "🎮 Controller verbunden",
+        "connectedToastDescription": "{{name}} ist mit diesem Computer verbunden",
+        "unpluggedToastDescription": "{{name}} wurde von diesem Computer getrennt",
+        "defaultName": "Controller"
       }
     },
     "console": {

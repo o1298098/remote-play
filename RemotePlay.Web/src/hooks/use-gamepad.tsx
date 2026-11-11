@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { gamepadService, type GamepadConnectionState, type GamepadInfo, type GamepadInputEvent } from '@/service/gamepad.service'
 import { useToast } from '@/hooks/use-toast'
 
@@ -17,6 +18,10 @@ const GamepadContext = createContext<GamepadContextType | undefined>(undefined)
 
 export function GamepadProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast()
+  const { t } = useTranslation()
+  // 切换语言时不重新订阅手柄状态，避免重置初始化期间的静默逻辑
+  const tRef = useRef(t)
+  tRef.current = t
   const [connectionState, setConnectionState] = useState<GamepadConnectionState>(() => 
     gamepadService.getConnectionState()
   )
@@ -55,21 +60,23 @@ export function GamepadProvider({ children }: { children: ReactNode }) {
       const currentCount = state.connectedGamepads.length
       const previousIds = previousGamepadIdsRef.current
       const currentIds = new Set(state.connectedGamepads.map(g => g.id))
+      const translate = tRef.current
+
+      // 简化手柄名称显示（移除括号内的 Vendor/Product 等技术细节）
+      const getDisplayName = (gamepadId: string) =>
+        gamepadId
+          .replace(/\(.*?\)/g, '')
+          .replace(/\s+/g, ' ')
+          .trim() || translate('devices.header.gamepad.defaultName')
 
       // 检测新连接的手柄
       state.connectedGamepads.forEach((gamepad) => {
         if (!previousIds.has(gamepad.id)) {
-          // 新手柄连接
-          const gamepadName = gamepad.id || '游戏手柄'
-          // 简化手柄名称显示（移除一些技术细节）
-          const displayName = gamepadName
-            .replace(/\(.*?\)/g, '') // 移除括号内容
-            .replace(/\s+/g, ' ') // 合并多个空格
-            .trim() || '游戏手柄'
-          
           toast({
-            title: '🎮 手柄已连接',
-            description: `${displayName} 已成功连接到电脑`,
+            title: translate('devices.header.gamepad.connectedToastTitle'),
+            description: translate('devices.header.gamepad.connectedToastDescription', {
+              name: getDisplayName(gamepad.id),
+            }),
             duration: 3000,
           })
           console.log('🎮 手柄已连接:', gamepad.id, '索引:', gamepad.index)
@@ -79,10 +86,11 @@ export function GamepadProvider({ children }: { children: ReactNode }) {
       // 检测断开的手柄
       previousIds.forEach((gamepadId) => {
         if (!currentIds.has(gamepadId)) {
-          // 手柄断开
           toast({
-            title: '🎮 手柄已断开',
-            description: '游戏手柄已从电脑断开连接',
+            title: translate('devices.header.gamepad.disconnectedToastTitle'),
+            description: translate('devices.header.gamepad.unpluggedToastDescription', {
+              name: getDisplayName(gamepadId),
+            }),
             duration: 3000,
           })
           console.log('🎮 手柄已断开:', gamepadId)

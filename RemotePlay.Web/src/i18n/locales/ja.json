@@ -147,7 +147,11 @@
         "stats": "{{buttons}}ボタン · {{axes}}軸",
         "disconnectTooltip": "切断",
         "disconnectedToastTitle": "🎮 コントローラーが切断されました",
-        "disconnectedToastDescription": "{{name}}がアプリから切断されました"
+        "disconnectedToastDescription": "{{name}}がアプリから切断されました",
+        "connectedToastTitle": "🎮 コントローラーが接続されました",
+        "connectedToastDescription": "{{name}}がこのコンピューターに接続されました",
+        "unpluggedToastDescription": "{{name}}がこのコンピューターから切断されました",
+        "defaultName": "コントローラー"
       }
     },
     "console": {

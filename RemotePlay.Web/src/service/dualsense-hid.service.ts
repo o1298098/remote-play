@@ -1,14 +1,17 @@
 import type { ControllerLightbarEvent, ControllerTriggerEffectsEvent } from '@/types/controller'
 import { createOrientationTracker } from './dualsense-orientation'
 
-// 浏览器 Gamepad API 不支持自适应扳机、光条、体感和触摸板，这里通过 WebHID 直接和 DualSense 收发报告。
-// 报告格式与 SDL hidapi_ps5 / chiaki-ng 一致。
-// 蓝牙下一旦发送输出报告，手柄会切到增强输入模式，Gamepad API 读不到按键，
-// 因此蓝牙连接时用 WebHID 读到的数据替换 navigator.getGamepads() 里的 DualSense。
+// 浏览器 Gamepad API 不支持自适应扳机、光条、体感和触摸板，这里通过 WebHID 直接和 DualSense / DualShock 4 收发报告。
+// 报告格式与 SDL hidapi_ps5 / hidapi_ps4 / chiaki-ng 一致。
+// 蓝牙下一旦切到增强输入模式，Gamepad API 读不到按键，
+// 因此蓝牙连接时用 WebHID 读到的数据替换 navigator.getGamepads() 里的手柄。
 
 const SONY_VENDOR_ID = 0x054c
 const DUALSENSE_PRODUCT_ID = 0x0ce6
 const DUALSENSE_EDGE_PRODUCT_ID = 0x0df2
+const DUALSHOCK4_PRODUCT_ID = 0x05c4
+const DUALSHOCK4_V2_PRODUCT_ID = 0x09cc
+const DUALSHOCK4_DONGLE_PRODUCT_ID = 0x0ba0
 const USB_INPUT_REPORT_ID = 0x01
 const USB_OUTPUT_REPORT_ID = 0x02
 const BT_INPUT_REPORT_ID = 0x31
@@ -17,6 +20,22 @@ const BT_OUTPUT_REPORT_SIZE = 77
 const FEATURE_CALIBRATION = 0x05
 const FEATURE_FIRMWARE_INFO = 0x20
 const EFFECTS_SIZE = 47
+
+const DS4_BT_INPUT_REPORT_ID = 0x11
+const DS4_USB_OUTPUT_REPORT_ID = 0x05
+const DS4_USB_OUTPUT_REPORT_SIZE = 31
+const DS4_BT_OUTPUT_REPORT_ID = 0x11
+const DS4_BT_OUTPUT_REPORT_SIZE = 77
+// 蓝牙下读取 0x05 校准报告会让 DualShock 4 切换到包含体感和触摸的 0x11 输入报告
+const DS4_FEATURE_CALIBRATION_USB = 0x02
+const DS4_FEATURE_CALIBRATION_BT = 0x05
+const DS4_EFFECT_RUMBLE = 0x01
+const DS4_EFFECT_LIGHTBAR = 0x02
+// 无线适配器没有连上手柄时 status[1] 的 bit 2 置位
+const DS4_DONGLE_DISCONNECTED = 0x04
+// 主机按 DualSense 触摸板坐标（1920x1080）处理，DualShock 4 触摸板是 1920x942
+const TOUCHPAD_MAX_Y = 1079
+const DS4_TOUCHPAD_MAX_Y = 941
 
 // DS5EffectsState_t 字段偏移
 const OFFSET_ENABLE_BITS1 = 0
@@ -47,6 +66,7 @@ const TRIGGER_EFFECT_OFF = 0x05
 const GYRO_RES_PER_DEGREE = 1024
 const ACCEL_RES_PER_G = 8192
 const SENSOR_TICKS_PER_US = 3
+const DS4_SENSOR_US_PER_TICK = 16 / 3
 
 const MOTION_EMIT_INTERVAL_MS = 8
 const TOUCH_EMIT_INTERVAL_MS = 8
@@ -93,10 +113,12 @@ interface HIDLike {
 }
 
 export type DualSenseConnection = 'none' | 'usb' | 'bluetooth'
+export type PlayStationControllerModel = 'dualsense' | 'dualshock4'
 
 export interface DualSenseStatus {
   supported: boolean
   connection: DualSenseConnection
+  model: PlayStationControllerModel | null
   productName: string | null
 }
 
@@ -142,14 +164,19 @@ type StatusListener = (status: DualSenseStatus) => void
 type MotionListener = (motion: DualSenseMotion) => void
 type TouchListener = (slots: DualSenseTouchSlot[]) => void
 
-const DEVICE_FILTERS = [
-  { vendorId: SONY_VENDOR_ID, productId: DUALSENSE_PRODUCT_ID },
-  { vendorId: SONY_VENDOR_ID, productId: DUALSENSE_EDGE_PRODUCT_ID },
-]
+const DUALSENSE_PRODUCT_IDS = [DUALSENSE_PRODUCT_ID, DUALSENSE_EDGE_PRODUCT_ID]
+const DUALSHOCK4_PRODUCT_IDS = [DUALSHOCK4_PRODUCT_ID, DUALSHOCK4_V2_PRODUCT_ID, DUALSHOCK4_DONGLE_PRODUCT_ID]
+
+const DEVICE_FILTERS = [...DUALSENSE_PRODUCT_IDS, ...DUALSHOCK4_PRODUCT_IDS].map((productId) => ({
+  vendorId: SONY_VENDOR_ID,
+  productId,
+}))
 
 let device: HIDDeviceLike | null = null
 let connection: DualSenseConnection = 'none'
+let model: PlayStationControllerModel = 'dualsense'
 let isEdge = false
+let isDongle = false
 let firmwareVersion = 0
 let btOutputSeq = 0
 let sendChain: Promise<void> = Promise.resolve()
@@ -180,16 +207,27 @@ function getHid(): HIDLike | null {
   return (navigator as Navigator & { hid?: HIDLike }).hid ?? null
 }
 
-function isDualSense(candidate: HIDDeviceLike): boolean {
-  return (
-    candidate.vendorId === SONY_VENDOR_ID &&
-    (candidate.productId === DUALSENSE_PRODUCT_ID || candidate.productId === DUALSENSE_EDGE_PRODUCT_ID)
-  )
+function getModel(candidate: HIDDeviceLike): PlayStationControllerModel | null {
+  if (candidate.vendorId !== SONY_VENDOR_ID) {
+    return null
+  }
+  if (DUALSENSE_PRODUCT_IDS.includes(candidate.productId)) {
+    return 'dualsense'
+  }
+  if (DUALSHOCK4_PRODUCT_IDS.includes(candidate.productId)) {
+    return 'dualshock4'
+  }
+  return null
 }
 
-function detectConnection(candidate: HIDDeviceLike): DualSenseConnection {
+function isSupportedController(candidate: HIDDeviceLike): boolean {
+  return getModel(candidate) !== null
+}
+
+function detectConnection(candidate: HIDDeviceLike, candidateModel: PlayStationControllerModel): DualSenseConnection {
+  const btReportId = candidateModel === 'dualshock4' ? DS4_BT_OUTPUT_REPORT_ID : BT_OUTPUT_REPORT_ID
   const isBluetooth = candidate.collections.some((collection) =>
-    (collection.outputReports ?? []).some((report) => report.reportId === BT_OUTPUT_REPORT_ID)
+    (collection.outputReports ?? []).some((report) => report.reportId === btReportId)
   )
   return isBluetooth ? 'bluetooth' : 'usb'
 }
@@ -216,6 +254,7 @@ export function getDualSenseStatus(): DualSenseStatus {
   return {
     supported: isWebHidSupported(),
     connection,
+    model: device ? model : null,
     productName: device?.productName ?? null,
   }
 }
@@ -269,7 +308,7 @@ function registerHidListeners(hid: HIDLike) {
 
   // 已授权的手柄重新连上时自动接管
   hid.addEventListener('connect', (event) => {
-    if (!device && isDualSense(event.device)) {
+    if (!device && isSupportedController(event.device)) {
       void takeDevice(event.device)
     }
   })
@@ -300,11 +339,14 @@ function featureByteReader(view: DataView, reportId: number): (index: number) =>
   return (index: number) => view.getUint8(index + base)
 }
 
-function parseCalibration(view: DataView): CalibrationEntry[] | null {
+/**
+ * groupedGyro：DualShock 4 蓝牙的陀螺仪校准按"三个正向、三个负向"排列，其他情况为正负交替
+ */
+function parseCalibration(view: DataView, reportId: number, groupedGyro: boolean): CalibrationEntry[] | null {
   if (view.byteLength < 35) {
     return null
   }
-  const byte = featureByteReader(view, FEATURE_CALIBRATION)
+  const byte = featureByteReader(view, reportId)
   const s16 = (index: number) => {
     const value = byte(index) | (byte(index + 1) << 8)
     return value > 0x7fff ? value - 0x10000 : value
@@ -314,10 +356,10 @@ function parseCalibration(view: DataView): CalibrationEntry[] | null {
   const gyroYawBias = s16(3)
   const gyroRollBias = s16(5)
   const gyroPitchPlus = s16(7)
-  const gyroPitchMinus = s16(9)
-  const gyroYawPlus = s16(11)
-  const gyroYawMinus = s16(13)
-  const gyroRollPlus = s16(15)
+  const gyroPitchMinus = groupedGyro ? s16(13) : s16(9)
+  const gyroYawPlus = groupedGyro ? s16(9) : s16(11)
+  const gyroYawMinus = groupedGyro ? s16(15) : s16(13)
+  const gyroRollPlus = groupedGyro ? s16(11) : s16(15)
   const gyroRollMinus = s16(17)
   const gyroSpeedPlus = s16(19)
   const gyroSpeedMinus = s16(21)
@@ -365,38 +407,60 @@ function applyCalibration(index: number, raw: number): number {
 }
 
 async function takeDevice(candidate: HIDDeviceLike): Promise<boolean> {
+  const candidateModel = getModel(candidate)
+  if (!candidateModel) {
+    return false
+  }
+
   try {
     if (!candidate.opened) {
       await candidate.open()
     }
   } catch (error) {
-    console.warn('[dualsense-hid] failed to open DualSense:', error)
+    console.warn('[dualsense-hid] failed to open controller:', error)
     return false
   }
 
   device = candidate
-  connection = detectConnection(candidate)
+  model = candidateModel
+  connection = detectConnection(candidate, candidateModel)
   isEdge = candidate.productId === DUALSENSE_EDGE_PRODUCT_ID
+  isDongle = candidate.productId === DUALSHOCK4_DONGLE_PRODUCT_ID
   btOutputSeq = 0
+  lastSensorTicks = null
   orientation.reset()
   candidate.addEventListener('inputreport', handleInputReport)
 
   // 读取校准数据（蓝牙下同时让手柄切换到完整输入报告）
-  const calibrationView = await readFeatureReport(candidate, FEATURE_CALIBRATION)
-  calibration = calibrationView ? parseCalibration(calibrationView) : null
+  const isBluetooth = connection === 'bluetooth'
+  const calibrationReportId =
+    model === 'dualshock4'
+      ? isBluetooth
+        ? DS4_FEATURE_CALIBRATION_BT
+        : DS4_FEATURE_CALIBRATION_USB
+      : FEATURE_CALIBRATION
+  const calibrationView = await readFeatureReport(candidate, calibrationReportId)
+  calibration = calibrationView
+    ? parseCalibration(calibrationView, calibrationReportId, model === 'dualshock4' && isBluetooth)
+    : null
 
-  const firmwareView = await readFeatureReport(candidate, FEATURE_FIRMWARE_INFO)
-  if (firmwareView && firmwareView.byteLength >= 46) {
-    const byte = featureByteReader(firmwareView, FEATURE_FIRMWARE_INFO)
-    firmwareVersion = byte(44) | (byte(45) << 8)
-  } else {
-    firmwareVersion = 0
+  firmwareVersion = 0
+  if (model === 'dualsense') {
+    const firmwareView = await readFeatureReport(candidate, FEATURE_FIRMWARE_INFO)
+    if (firmwareView && firmwareView.byteLength >= 46) {
+      const byte = featureByteReader(firmwareView, FEATURE_FIRMWARE_INFO)
+      firmwareVersion = byte(44) | (byte(45) << 8)
+    }
   }
 
-  if (connection === 'bluetooth') {
+  if (isBluetooth) {
     installGamepadShim()
     // 空的效果报告：确保手柄进入增强模式
-    void sendEffects(new Uint8Array(EFFECTS_SIZE))
+    if (model === 'dualshock4') {
+      void sendDualShock4Effects(0, 0, 0, null)
+    } else {
+      void sendEffects(new Uint8Array(EFFECTS_SIZE))
+    }
   }
 
   notifyStatus()
@@ -421,7 +485,7 @@ export async function requestDualSense(): Promise<boolean> {
   registerHidListeners(hid)
 
   const devices = await hid.requestDevice({ filters: DEVICE_FILTERS })
-  const candidate = devices.find(isDualSense)
+  const candidate = devices.find(isSupportedController)
   return candidate ? takeDevice(candidate) : false
 }
 
@@ -440,7 +504,7 @@ export async function autoConnectDualSense(): Promise<boolean> {
   registerHidListeners(hid)
 
   const devices = await hid.getDevices()
-  const candidate = devices.find(isDualSense)
+  const candidate = devices.find(isSupportedController)
   return candidate ? takeDevice(candidate) : false
 }
 
@@ -463,19 +527,44 @@ export async function disconnectDualSense(): Promise<void> {
 // 输入报告
 // ---------------------------------------------------------------------------
 
+// 输入报告中各字段相对于公共数据起点的偏移（两种手柄按键位定义相同）
+interface InputLayout {
+  l2: number
+  r2: number
+  buttons: number
+  gyro: number
+  accel: number
+  touch: number
+  size: number
+}
+
+const DUALSENSE_INPUT_LAYOUT: InputLayout = { l2: 4, r2: 5, buttons: 7, gyro: 15, accel: 21, touch: 32, size: 40 }
+// 34 之前是触摸包数量和触摸包时间戳
+const DUALSHOCK4_INPUT_LAYOUT: InputLayout = { l2: 7, r2: 8, buttons: 4, gyro: 12, accel: 18, touch: 34, size: 42 }
+
+function getInputOffset(reportId: number): number | null {
+  if (reportId === USB_INPUT_REPORT_ID && connection === 'usb') {
+    return 0
+  }
+  if (model === 'dualsense' && reportId === BT_INPUT_REPORT_ID) {
+    return 1
+  }
+  if (model === 'dualshock4' && reportId === DS4_BT_INPUT_REPORT_ID) {
+    return 2
+  }
+  // 蓝牙简易模式报告不含体感和触摸数据
+  return null
+}
+
 function handleInputReport(event: HIDInputReportEventLike) {
-  let offset: number
-  if (event.reportId === USB_INPUT_REPORT_ID && connection === 'usb') {
-    offset = 0
-  } else if (event.reportId === BT_INPUT_REPORT_ID) {
-    offset = 1
-  } else {
-    // 蓝牙简易模式报告不含体感和触摸数据
+  const offset = getInputOffset(event.reportId)
+  if (offset === null) {
     return
   }
 
+  const layout = model === 'dualshock4' ? DUALSHOCK4_INPUT_LAYOUT : DUALSENSE_INPUT_LAYOUT
   const data = event.data
-  if (data.byteLength < offset + 40) {
+  if (data.byteLength < offset + layout.size) {
     return
   }
 
@@ -483,38 +572,59 @@ function handleInputReport(event: HIDInputReportEventLike) {
   const s16 = (index: number) => data.getInt16(offset + index, true)
   const now = performance.now()
 
+  if (model === 'dualshock4' && isDongle && (u8(30) & DS4_DONGLE_DISCONNECTED) !== 0) {
+    return
+  }
+
   lastInput = {
     receivedAt: now,
     leftX: u8(0),
     leftY: u8(1),
     rightX: u8(2),
     rightY: u8(3),
-    l2: u8(4),
-    r2: u8(5),
-    buttons0: u8(7),
-    buttons1: u8(8),
-    buttons2: u8(9),
+    l2: u8(layout.l2),
+    r2: u8(layout.r2),
+    buttons0: u8(layout.buttons),
+    buttons1: u8(layout.buttons + 1),
+    buttons2: u8(layout.buttons + 2),
   }
 
+  let deltaSeconds = 0
+  if (model === 'dualshock4') {
+    const sensorTicks = data.getUint16(offset + 9, true)
+    if (lastSensorTicks !== null) {
+      deltaSeconds = (((sensorTicks - lastSensorTicks) & 0xffff) * DS4_SENSOR_US_PER_TICK) / 1_000_000
+    }
+    lastSensorTicks = sensorTicks
+  } else {
+    const sensorTicks = data.getUint32(offset + 27, true)
+    if (lastSensorTicks !== null) {
+      deltaSeconds = ((sensorTicks - lastSensorTicks) >>> 0) / SENSOR_TICKS_PER_US / 1_000_000
+    }
+    lastSensorTicks = sensorTicks
+  }
+
+  const g = layout.gyro
+  const a = layout.accel
   handleMotion(
-    [applyCalibration(0, s16(15)), applyCalibration(1, s16(17)), applyCalibration(2, s16(19))],
-    [applyCalibration(3, s16(21)), applyCalibration(4, s16(23)), applyCalibration(5, s16(25))],
-    data.getUint32(offset + 27, true),
+    [applyCalibration(0, s16(g)), applyCalibration(1, s16(g + 2)), applyCalibration(2, s16(g + 4))],
+    [applyCalibration(3, s16(a)), applyCalibration(4, s16(a + 2)), applyCalibration(5, s16(a + 4))],
+    deltaSeconds,
     now
   )
 
+  const t = layout.touch
+  const maxY = model === 'dualshock4' ? DS4_TOUCHPAD_MAX_Y : TOUCHPAD_MAX_Y
   handleTouch(
-    [readTouchSlot(u8(32), u8(33), u8(34), u8(35)), readTouchSlot(u8(36), u8(37), u8(38), u8(39))],
+    [
+      readTouchSlot(u8(t), u8(t + 1), u8(t + 2), u8(t + 3), maxY),
+      readTouchSlot(u8(t + 4), u8(t + 5), u8(t + 6), u8(t + 7), maxY),
+    ],
     now
   )
 }
 
-function handleMotion(gyro: number[], accel: number[], sensorTicks: number, now: number) {
-  let deltaSeconds = 0
-  if (lastSensorTicks !== null) {
-    deltaSeconds = ((sensorTicks - lastSensorTicks) >>> 0) / SENSOR_TICKS_PER_US / 1_000_000
-  }
-  lastSensorTicks = sensorTicks
+function handleMotion(gyro: number[], accel: number[], deltaSeconds: number, now: number) {
   orientation.update(gyro[0], gyro[1], gyro[2], accel[0], accel[1], accel[2], deltaSeconds)
 
   if (motionListeners.size === 0 || now - lastMotionEmit < MOTION_EMIT_INTERVAL_MS) {
@@ -524,12 +634,13 @@ function handleMotion(gyro: number[], accel: number[], sensorTicks: number, now:
   notify(motionListeners, orientation.getMotion())
 }
 
-function readTouchSlot(counter: number, b0: number, b1: number, b2: number): DualSenseTouchSlot {
+function readTouchSlot(counter: number, b0: number, b1: number, b2: number, maxY: number): DualSenseTouchSlot {
+  const y = Math.min((b1 >> 4) | (b2 << 4), maxY)
   return {
     down: (counter & 0x80) === 0,
     contact: counter & 0x7f,
     x: b0 | ((b1 & 0x0f) << 8),
-    y: (b1 >> 4) | (b2 << 4),
+    y: maxY === TOUCHPAD_MAX_Y ? y : Math.round((y * TOUCHPAD_MAX_Y) / maxY),
   }
 }
 
@@ -567,14 +678,17 @@ export function resetDualSenseMotion() {
 }
 
 // ---------------------------------------------------------------------------
-// 蓝牙：用 WebHID 数据替换 Gamepad API 里读不到输入的 DualSense
+// 蓝牙：用 WebHID 数据替换 Gamepad API 里读不到输入的手柄
 // ---------------------------------------------------------------------------
 
 let gamepadShimInstalled = false
 
-function isDualSenseGamepadId(id: string): boolean {
+function isManagedGamepadId(id: string): boolean {
+  if (!device) {
+    return false
+  }
   const lower = id.toLowerCase()
-  return lower.includes('054c') && (lower.includes('0ce6') || lower.includes('0df2'))
+  return lower.includes('054c') && lower.includes(device.productId.toString(16).padStart(4, '0'))
 }
 
 function shouldReplaceGamepad(): boolean {
@@ -648,7 +762,7 @@ function installGamepadShim() {
       if (!input || !shouldReplaceGamepad()) {
         return pads
       }
-      return Array.from(pads, (pad) => (pad && isDualSenseGamepadId(pad.id) ? buildVirtualGamepad(pad, input) : pad))
+      return Array.from(pads, (pad) => (pad && isManagedGamepadId(pad.id) ? buildVirtualGamepad(pad, input) : pad))
     },
   })
 }
@@ -692,24 +806,64 @@ function buildBluetoothReport(effects: Uint8Array): Uint8Array {
   return report
 }
 
-function sendEffects(effects: Uint8Array): Promise<void> {
-  const target = device
-  if (!target) {
-    return Promise.resolve()
-  }
-
-  const isBluetooth = connection === 'bluetooth'
+function queueReport(target: HIDDeviceLike, reportId: number, buildData: () => Uint8Array): Promise<void> {
   // WebHID 不允许同一设备并发写报告，按顺序发送；蓝牙报告的序号也必须按发送顺序生成
   sendChain = sendChain
-    .then(() =>
-      isBluetooth
-        ? target.sendReport(BT_OUTPUT_REPORT_ID, buildBluetoothReport(effects))
-        : target.sendReport(USB_OUTPUT_REPORT_ID, effects)
-    )
+    .then(() => target.sendReport(reportId, buildData()))
     .catch((error) => {
       console.warn('[dualsense-hid] sendReport failed:', error)
     })
   return sendChain
+}
+
+function sendEffects(effects: Uint8Array): Promise<void> {
+  const target = device
+  if (!target || model !== 'dualsense') {
+    return Promise.resolve()
+  }
+
+  return connection === 'bluetooth'
+    ? queueReport(target, BT_OUTPUT_REPORT_ID, () => buildBluetoothReport(effects))
+    : queueReport(target, USB_OUTPUT_REPORT_ID, () => effects)
+}
+
+/**
+ * DualShock 4 输出报告公共部分：[有效位] [有效位2] [保留] [右(小)电机] [左(大)电机] [R] [G] [B] [闪烁开] [闪烁关]
+ */
+function sendDualShock4Effects(
+  flags: number,
+  rumbleLeft: number,
+  rumbleRight: number,
+  lightbar: ControllerLightbarEvent | null
+): Promise<void> {
+  const target = device
+  if (!target || model !== 'dualshock4') {
+    return Promise.resolve()
+  }
+
+  const isBluetooth = connection === 'bluetooth'
+  const size = isBluetooth ? DS4_BT_OUTPUT_REPORT_SIZE : DS4_USB_OUTPUT_REPORT_SIZE
+  const report = new Uint8Array(size)
+  // 蓝牙报告：[0xC0 HID + CRC] [音频控制] [公共部分] ... [CRC32 小端]
+  const base = isBluetooth ? 2 : 0
+  if (isBluetooth) {
+    report[0] = 0xc0
+  }
+  report[base] = flags
+  report[base + 3] = rumbleRight & 0xff
+  report[base + 4] = rumbleLeft & 0xff
+  if (lightbar) {
+    report[base + 5] = lightbar.red & 0xff
+    report[base + 6] = lightbar.green & 0xff
+    report[base + 7] = lightbar.blue & 0xff
+  }
+
+  if (!isBluetooth) {
+    return queueReport(target, DS4_USB_OUTPUT_REPORT_ID, () => report)
+  }
+  const crc = crc32([new Uint8Array([0xa2, DS4_BT_OUTPUT_REPORT_ID]), report.subarray(0, size - 4)])
+  new DataView(report.buffer).setUint32(size - 4, crc, true)
+  return queueReport(target, DS4_BT_OUTPUT_REPORT_ID, () => report)
 }
 
 function writeTriggerEffect(effects: Uint8Array, offset: number, type: number, data: number[]) {
@@ -734,6 +888,10 @@ export function applyTriggerEffects(event: ControllerTriggerEffectsEvent): Promi
 export function applyLightbar(event: ControllerLightbarEvent): Promise<void> {
   lastLightbar = event
 
+  if (model === 'dualshock4') {
+    return sendDualShock4Effects(DS4_EFFECT_LIGHTBAR, 0, 0, event)
+  }
+
   const effects = new Uint8Array(EFFECTS_SIZE)
   effects[OFFSET_ENABLE_BITS2] = ENABLE2_LED_COLOR | ENABLE2_PAD_LIGHTS
   // 0x20：玩家灯立即切换而不是渐变
@@ -755,6 +913,18 @@ export function applyDualSenseRumble(left: number, right: number): Promise<void>
 
   const l = Math.max(0, Math.min(255, Math.round(left)))
   const r = Math.max(0, Math.min(255, Math.round(right)))
+
+  if (l > 0 || r > 0) {
+    rumbleStopTimer = setTimeout(() => {
+      rumbleStopTimer = null
+      void applyDualSenseRumble(0, 0)
+    }, RUMBLE_SAFETY_STOP_MS)
+  }
+
+  if (model === 'dualshock4') {
+    return sendDualShock4Effects(DS4_EFFECT_RUMBLE, l, r, null)
+  }
+
   const effects = new Uint8Array(EFFECTS_SIZE)
   effects[OFFSET_ENABLE_BITS1] = ENABLE1_DISABLE_AUDIO_HAPTICS
   // 与 SDL / chiaki-ng 一致：Edge 和读不到固件版本时使用新震动模式
@@ -766,13 +936,6 @@ export function applyDualSenseRumble(left: number, right: number): Promise<void>
     effects[OFFSET_ENABLE_BITS3] = ENABLE3_IMPROVED_RUMBLE
     effects[OFFSET_RUMBLE_LEFT] = l
     effects[OFFSET_RUMBLE_RIGHT] = r
-  }
-
-  if (l > 0 || r > 0) {
-    rumbleStopTimer = setTimeout(() => {
-      rumbleStopTimer = null
-      void applyDualSenseRumble(0, 0)
-    }, RUMBLE_SAFETY_STOP_MS)
   }
   return sendEffects(effects)
 }
@@ -793,8 +956,8 @@ export function resetDualSenseEffects(): Promise<void> {
 }
 
 /**
- * 判断 Gamepad API 中的手柄是不是已经由 WebHID 接管的 DualSense
+ * 判断 Gamepad API 中的手柄是不是已经由 WebHID 接管的 DualSense / DualShock 4
  */
 export function isHidManagedGamepad(gamepad: Gamepad | null | undefined): boolean {
-  return !!gamepad && device !== null && isDualSenseGamepadId(gamepad.id)
+  return !!gamepad && isManagedGamepadId(gamepad.id)
 }

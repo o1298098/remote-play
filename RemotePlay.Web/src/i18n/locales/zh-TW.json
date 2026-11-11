@@ -147,7 +147,11 @@
         "stats": "{{buttons}} 按鈕 · {{axes}} 轴",
         "disconnectTooltip": "中斷連線",
         "disconnectedToastTitle": "🎮 手把已中斷",
-        "disconnectedToastDescription": "{{name}} 已從應用程式中中斷連線"
+        "disconnectedToastDescription": "{{name}} 已從應用程式中中斷連線",
+        "connectedToastTitle": "🎮 手把已連接",
+        "connectedToastDescription": "{{name}} 已成功連接到電腦",
+        "unpluggedToastDescription": "{{name}} 已從電腦中斷連線",
+        "defaultName": "遊戲手把"
       }
     },
     "console": {
@@ -474,22 +478,23 @@
         "toastDisabled": "震動功能已關閉，請先開啟。"
       },
       "dualsense": {
-        "title": "DualSense 增強功能",
-        "description": "透過 WebHID 直接連接 DualSense（USB 或藍牙），同步遊戲的扳機阻力、光條顏色和玩家燈，並把陀螺儀體感和觸控板傳送給主機。授權一次後，串流時會自動啟用。",
+        "title": "DualSense / DualShock 4 增強功能",
+        "description": "透過 WebHID 直接連接 DualSense 或 DualShock 4（USB 或藍牙），把陀螺儀體感和觸控板滑動傳送給主機，並同步光條顏色和震動；DualSense 還會同步扳機阻力和玩家燈。授權一次後，串流時會自動啟用。",
         "notSupported": "目前瀏覽器不支援 WebHID，請使用桌面版 Chrome 或 Edge。",
         "insecureContext": "WebHID 只能在 HTTPS 或 localhost 頁面中使用，目前頁面是 {{origin}}。請改用 HTTPS 存取，或在 chrome://flags/#unsafely-treat-insecure-origin-as-secure 中加入該位址後重新啟動瀏覽器。",
-        "statusDisconnected": "未連接 DualSense",
-        "statusUsb": "已透過 USB 連接 DualSense",
-        "statusBluetooth": "已連接 DualSense（藍牙）",
-        "bluetoothNote": "藍牙模式下手把按鍵改由 WebHID 讀取，中斷 DualSense 後需要重新連接手把才能恢復瀏覽器原生讀取。",
+        "statusDisconnected": "未連接 DualSense / DualShock 4",
+        "statusUsb": "已透過 USB 連接 {{name}}",
+        "statusBluetooth": "已連接 {{name}}（藍牙）",
+        "bluetoothNote": "藍牙模式下手把按鍵改由 WebHID 讀取，中斷連接後需要重新連接手把才能恢復瀏覽器原生讀取。",
         "gyro": "陀螺儀",
         "accel": "加速度",
         "touches": "觸控點：{{count}}",
-        "connect": "連接 DualSense",
+        "connect": "連接手把",
         "disconnect": "中斷連接",
         "test": "測試扳機阻力",
-        "toastConnected": "DualSense 已連接",
-        "toastConnectFailed": "無法連接 DualSense",
+        "testLightbar": "測試光條",
+        "toastConnected": "{{name}} 已連接",
+        "toastConnectFailed": "無法連接手把",
         "toastTestSent": "已設定扳機阻力和光條，5 秒後恢復"
       },
       "mapButton": "點擊對應",

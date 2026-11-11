@@ -108,6 +108,7 @@ export default function ControllerMapping() {
   const [dualSenseStatus, setDualSenseStatus] = useState<DualSenseStatus>(() => getDualSenseStatus())
   const [dualSenseMotion, setDualSenseMotion] = useState<DualSenseMotion | null>(null)
   const [dualSenseTouches, setDualSenseTouches] = useState(0)
+  const dualSenseName = dualSenseStatus.model === 'dualshock4' ? 'DualShock 4' : 'DualSense'
   const hasLoadedMappings = useRef(false)
 
   // 初始化映射
@@ -438,7 +439,8 @@ export default function ControllerMapping() {
     try {
       const connected = await requestDualSense()
       if (connected) {
-        toast({ title: t('devices.controllerMapping.dualsense.toastConnected') })
+        const name = getDualSenseStatus().model === 'dualshock4' ? 'DualShock 4' : 'DualSense'
+        toast({ title: t('devices.controllerMapping.dualsense.toastConnected', { name }) })
       }
     } catch (error) {
       console.warn('[ControllerMapping] DualSense connect failed:', error)
@@ -829,16 +831,18 @@ export default function ControllerMapping() {
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                             {dualSenseStatus.connection === 'usb'
-                              ? t('devices.controllerMapping.dualsense.statusUsb')
+                              ? t('devices.controllerMapping.dualsense.statusUsb', { name: dualSenseName })
                               : dualSenseStatus.connection === 'bluetooth'
-                                ? t('devices.controllerMapping.dualsense.statusBluetooth')
+                                ? t('devices.controllerMapping.dualsense.statusBluetooth', { name: dualSenseName })
                                 : t('devices.controllerMapping.dualsense.statusDisconnected')}
                           </span>
                           <div className="flex flex-col gap-2 sm:flex-row">
                             {dualSenseStatus.connection !== 'none' ? (
                               <Button variant="outline" onClick={handleTestDualSense} className="w-full sm:w-auto">
                                 <Zap className="mr-2 h-4 w-4" />
-                                {t('devices.controllerMapping.dualsense.test')}
+                                {dualSenseStatus.model === 'dualshock4'
+                                  ? t('devices.controllerMapping.dualsense.testLightbar')
+                                  : t('devices.controllerMapping.dualsense.test')}
                               </Button>
                             ) : null}
                             <Button

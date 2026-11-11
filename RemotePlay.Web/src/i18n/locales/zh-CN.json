@@ -147,7 +147,11 @@
         "stats": "{{buttons}} 按钮 · {{axes}} 轴",
         "disconnectTooltip": "断开连接",
         "disconnectedToastTitle": "🎮 手柄已断开",
-        "disconnectedToastDescription": "{{name}} 已从应用中断开连接"
+        "disconnectedToastDescription": "{{name}} 已从应用中断开连接",
+        "connectedToastTitle": "🎮 手柄已连接",
+        "connectedToastDescription": "{{name}} 已成功连接到电脑",
+        "unpluggedToastDescription": "{{name}} 已从电脑断开连接",
+        "defaultName": "游戏手柄"
       }
     },
     "console": {
@@ -474,22 +478,23 @@
         "toastDisabled": "震动功能已关闭，请先开启。"
       },
       "dualsense": {
-        "title": "DualSense 增强功能",
-        "description": "通过 WebHID 直接连接 DualSense（USB 或蓝牙），同步游戏的扳机阻力、光条颜色和玩家灯，并把陀螺仪体感和触摸板发送给主机。授权一次后，串流时会自动启用。",
+        "title": "DualSense / DualShock 4 增强功能",
+        "description": "通过 WebHID 直接连接 DualSense 或 DualShock 4（USB 或蓝牙），把陀螺仪体感和触摸板滑动发送给主机，并同步光条颜色和震动；DualSense 还会同步扳机阻力和玩家灯。授权一次后，串流时会自动启用。",
         "notSupported": "当前浏览器不支持 WebHID，请使用桌面版 Chrome 或 Edge。",
         "insecureContext": "WebHID 只能在 HTTPS 或 localhost 页面中使用，当前页面是 {{origin}}。请改用 HTTPS 访问，或在 chrome://flags/#unsafely-treat-insecure-origin-as-secure 中加入该地址后重启浏览器。",
-        "statusDisconnected": "未连接 DualSense",
-        "statusUsb": "已通过 USB 连接 DualSense",
-        "statusBluetooth": "已连接 DualSense（蓝牙）",
-        "bluetoothNote": "蓝牙模式下手柄按键改由 WebHID 读取，断开 DualSense 后需要重新连接手柄才能恢复浏览器原生读取。",
+        "statusDisconnected": "未连接 DualSense / DualShock 4",
+        "statusUsb": "已通过 USB 连接 {{name}}",
+        "statusBluetooth": "已连接 {{name}}（蓝牙）",
+        "bluetoothNote": "蓝牙模式下手柄按键改由 WebHID 读取，断开后需要重新连接手柄才能恢复浏览器原生读取。",
         "gyro": "陀螺仪",
         "accel": "加速度",
         "touches": "触摸点：{{count}}",
-        "connect": "连接 DualSense",
+        "connect": "连接手柄",
         "disconnect": "断开",
         "test": "测试扳机阻力",
-        "toastConnected": "DualSense 已连接",
-        "toastConnectFailed": "无法连接 DualSense",
+        "testLightbar": "测试光条",
+        "toastConnected": "{{name}} 已连接",
+        "toastConnectFailed": "无法连接手柄",
         "toastTestSent": "已设置扳机阻力和光条，5 秒后恢复"
       },
       "mapButton": "点击映射",

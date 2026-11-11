@@ -147,7 +147,11 @@
         "stats": "{{buttons}} botones · {{axes}} ejes",
         "disconnectTooltip": "Desconectar",
         "disconnectedToastTitle": "🎮 Controlador desconectado",
-        "disconnectedToastDescription": "{{name}} ha sido desconectado de la aplicación"
+        "disconnectedToastDescription": "{{name}} ha sido desconectado de la aplicación",
+        "connectedToastTitle": "🎮 Controlador conectado",
+        "connectedToastDescription": "{{name}} se ha conectado a este equipo",
+        "unpluggedToastDescription": "{{name}} se ha desconectado de este equipo",
+        "defaultName": "Controlador"
       }
     },
     "console": {

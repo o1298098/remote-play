@@ -147,7 +147,11 @@
         "stats": "{{buttons}} кнопок · {{axes}} осей",
         "disconnectTooltip": "Отключить",
         "disconnectedToastTitle": "🎮 Контроллер отключен",
-        "disconnectedToastDescription": "{{name}} был отключен от приложения"
+        "disconnectedToastDescription": "{{name}} был отключен от приложения",
+        "connectedToastTitle": "🎮 Контроллер подключен",
+        "connectedToastDescription": "{{name}} подключен к этому компьютеру",
+        "unpluggedToastDescription": "{{name}} отключен от этого компьютера",
+        "defaultName": "Контроллер"
       }
     },
     "console": {

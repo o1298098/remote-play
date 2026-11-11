@@ -147,7 +147,11 @@
         "stats": "{{buttons}} boutons · {{axes}} axes",
         "disconnectTooltip": "Déconnecter",
         "disconnectedToastTitle": "🎮 Contrôleur déconnecté",
-        "disconnectedToastDescription": "{{name}} a été déconnecté de l'application"
+        "disconnectedToastDescription": "{{name}} a été déconnecté de l'application",
+        "connectedToastTitle": "🎮 Contrôleur connecté",
+        "connectedToastDescription": "{{name}} est connecté à cet ordinateur",
+        "unpluggedToastDescription": "{{name}} a été déconnecté de cet ordinateur",
+        "defaultName": "Contrôleur"
       }
     },
     "console": {

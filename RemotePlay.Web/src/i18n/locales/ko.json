@@ -147,7 +147,11 @@
         "stats": "{{buttons}}개 버튼 · {{axes}}개 축",
         "disconnectTooltip": "연결 해제",
         "disconnectedToastTitle": "🎮 컨트롤러 연결 해제됨",
-        "disconnectedToastDescription": "{{name}}이(가) 앱에서 연결 해제되었습니다"
+        "disconnectedToastDescription": "{{name}}이(가) 앱에서 연결 해제되었습니다",
+        "connectedToastTitle": "🎮 컨트롤러 연결됨",
+        "connectedToastDescription": "{{name}}이(가) 이 컴퓨터에 연결되었습니다",
+        "unpluggedToastDescription": "{{name}}이(가) 이 컴퓨터에서 연결 해제되었습니다",
+        "defaultName": "컨트롤러"
       }
     },
     "console": {

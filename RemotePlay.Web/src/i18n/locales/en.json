@@ -147,7 +147,11 @@
         "stats": "{{buttons}} buttons · {{axes}} axes",
         "disconnectTooltip": "Disconnect",
         "disconnectedToastTitle": "🎮 Controller disconnected",
-        "disconnectedToastDescription": "{{name}} has been disconnected from the app"
+        "disconnectedToastDescription": "{{name}} has been disconnected from the app",
+        "connectedToastTitle": "🎮 Controller connected",
+        "connectedToastDescription": "{{name}} is connected to this computer",
+        "unpluggedToastDescription": "{{name}} has been disconnected from this computer",
+        "defaultName": "Controller"
       }
     },
     "console": {
@@ -474,22 +478,23 @@
         "toastDisabled": "Vibration is currently disabled. Please enable it first."
       },
       "dualsense": {
-        "title": "DualSense features",
-        "description": "Connect a DualSense directly over WebHID (USB or Bluetooth) to mirror the game's trigger resistance, light bar color and player lights, and send gyro motion and the touchpad to the console. Once authorized, it is enabled automatically while streaming.",
+        "title": "DualSense / DualShock 4 features",
+        "description": "Connect a DualSense or DualShock 4 directly over WebHID (USB or Bluetooth) to send gyro motion and touchpad swipes to the console and mirror the light bar color and rumble. A DualSense also mirrors trigger resistance and player lights. Once authorized, it is enabled automatically while streaming.",
         "notSupported": "This browser does not support WebHID. Please use desktop Chrome or Edge.",
         "insecureContext": "WebHID is only available on HTTPS or localhost pages, but this page is {{origin}}. Open it over HTTPS, or add this address under chrome://flags/#unsafely-treat-insecure-origin-as-secure and restart the browser.",
-        "statusDisconnected": "No DualSense connected",
-        "statusUsb": "DualSense connected over USB",
-        "statusBluetooth": "DualSense connected (Bluetooth)",
-        "bluetoothNote": "Over Bluetooth the controller's buttons are read through WebHID. After disconnecting the DualSense, reconnect the controller to restore the browser's own input.",
+        "statusDisconnected": "No DualSense / DualShock 4 connected",
+        "statusUsb": "{{name}} connected over USB",
+        "statusBluetooth": "{{name}} connected (Bluetooth)",
+        "bluetoothNote": "Over Bluetooth the controller's buttons are read through WebHID. After disconnecting here, reconnect the controller to restore the browser's own input.",
         "gyro": "Gyro",
         "accel": "Accel",
         "touches": "Touches: {{count}}",
-        "connect": "Connect DualSense",
+        "connect": "Connect controller",
         "disconnect": "Disconnect",
         "test": "Test trigger resistance",
-        "toastConnected": "DualSense connected",
-        "toastConnectFailed": "Could not connect to the DualSense",
+        "testLightbar": "Test light bar",
+        "toastConnected": "{{name}} connected",
+        "toastConnectFailed": "Could not connect to the controller",
         "toastTestSent": "Trigger resistance and light bar set, reverting in 5 seconds"
       },
       "mapButton": "Click to Map",

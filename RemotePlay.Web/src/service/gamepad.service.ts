@@ -60,6 +60,10 @@ export enum GamepadButton {
   DPadDown = 13,
   DPadLeft = 14,
   DPadRight = 15,
+
+  // PlayStation 手柄在标准映射中额外提供的按钮
+  Home = 16, // PS
+  Touchpad = 17, // 触摸板按下
 }
 
 // 手柄轴索引
@@ -88,6 +92,8 @@ export const PS5_BUTTON_MAP: Record<number, string> = {
   [GamepadButton.DPadDown]: 'down',
   [GamepadButton.DPadLeft]: 'left',
   [GamepadButton.DPadRight]: 'right',
+  [GamepadButton.Home]: 'ps',
+  [GamepadButton.Touchpad]: 'touchpad',
 }
 
 export class GamepadService {
