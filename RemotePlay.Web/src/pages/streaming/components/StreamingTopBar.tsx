@@ -1,23 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown, Zap } from 'lucide-react'
+import { ArrowLeft, Activity, ChevronUp, ChevronDown } from 'lucide-react'
 import { useDevice } from '@/hooks/use-device'
 
 interface StreamingTopBarProps {
   onBack: () => void
   isStatsEnabled?: boolean
   onStatsToggle?: (enabled: boolean) => void
-  onRefresh?: () => void
-  onForceResetQueue?: () => void
 }
 
 export function StreamingTopBar({
   onBack,
   isStatsEnabled = false,
   onStatsToggle,
-  onRefresh,
-  onForceResetQueue,
 }: StreamingTopBarProps) {
   const { t } = useTranslation()
   const { isMobile } = useDevice()
@@ -139,38 +135,6 @@ export function StreamingTopBar({
                 <ArrowLeft className="h-5 w-5" />
               </button>
 
-              {/* 刷新按钮 */}
-              {onRefresh && (
-                <button
-                  onClick={() => onRefresh()}
-                  className="flex items-center justify-center text-white/80 hover:text-white active:scale-95 transition-all"
-                  style={{
-                    touchAction: 'manipulation',
-                    width: '40px',
-                    height: '40px',
-                  }}
-                  aria-label={t('streaming.refresh.label', '刷新串流')}
-                >
-                  <RotateCw className="h-5 w-5" />
-                </button>
-              )}
-
-              {/* 强制重置队列按钮 */}
-              {onForceResetQueue && (
-                <button
-                  onClick={() => onForceResetQueue()}
-                  className="flex items-center justify-center text-amber-400/80 hover:text-amber-400 active:scale-95 transition-all"
-                  style={{
-                    touchAction: 'manipulation',
-                    width: '40px',
-                    height: '40px',
-                  }}
-                  aria-label={t('streaming.resetQueue.label', '重置视频队列')}
-                >
-                  <Zap className="h-5 w-5" />
-                </button>
-              )}
-
               {/* 统计开关 */}
               {onStatsToggle && (
                 <button
@@ -246,46 +210,6 @@ export function StreamingTopBar({
             </Button>
 
             <div className="flex items-center gap-2">
-              {onRefresh && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRefresh()}
-                  className="rounded-full shadow-none bg-transparent text-white hover:bg-transparent hover:text-white focus-visible:ring-0 focus-visible:ring-offset-0 opacity-80 hover:opacity-100"
-                  style={{
-                    pointerEvents: 'auto',
-                    backdropFilter: 'none',
-                    border: 'none',
-                    backgroundColor: 'transparent',
-                    boxShadow: 'none',
-                  }}
-                  aria-label={t('streaming.refresh.label', '刷新串流')}
-                  title={t('streaming.refresh.label', '刷新串流')}
-                >
-                  <RotateCw className="h-5 w-5" />
-                </Button>
-              )}
-
-              {onForceResetQueue && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onForceResetQueue()}
-                  className="rounded-full shadow-none bg-transparent text-amber-400 hover:bg-transparent hover:text-amber-300 focus-visible:ring-0 focus-visible:ring-offset-0 opacity-80 hover:opacity-100"
-                  style={{
-                    pointerEvents: 'auto',
-                    backdropFilter: 'none',
-                    border: 'none',
-                    backgroundColor: 'transparent',
-                    boxShadow: 'none',
-                  }}
-                  aria-label={t('streaming.resetQueue.label', '重置视频队列')}
-                  title={t('streaming.resetQueue.label', '重置视频队列')}
-                >
-                  <Zap className="h-5 w-5" />
-                </Button>
-              )}
-
               {onStatsToggle && (
               <Button
                 variant="ghost"

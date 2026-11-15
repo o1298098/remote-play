@@ -123,6 +123,55 @@ namespace RemotePlay.Controllers
         }
 
         /// <summary>
+        /// 使用 refresh token 续期访问令牌
+        /// </summary>
+        [HttpPost("refresh")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ResponseModel>> Refresh([FromBody] RefreshTokenRequest request)
+        {
+            try
+            {
+                if (!ModelState.IsValid || string.IsNullOrWhiteSpace(request.RefreshToken))
+                {
+                    return BadRequest(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "RefreshToken 不能为空",
+                        ErrorCode = ErrorCode.InvalidRequest
+                    });
+                }
+
+                var response = await _authService.RefreshAsync(request.RefreshToken);
+                if (response == null)
+                {
+                    return Unauthorized(new ApiErrorResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "刷新令牌无效或已过期，请重新登录",
+                        ErrorCode = ErrorCode.Unauthorized
+                    });
+                }
+
+                return Ok(new ApiSuccessResponse<object>
+                {
+                    Success = true,
+                    Data = response,
+                    Message = "令牌续期成功"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Token refresh failed");
+                return StatusCode(500, new ApiErrorResponse
+                {
+                    Success = false,
+                    ErrorMessage = "服务器内部错误",
+                    ErrorCode = ErrorCode.InternalServerError
+                });
+            }
+        }
+
+        /// <summary>
         /// 获取当前用户信息（用于测试）
         /// </summary>
         [HttpGet("me")]

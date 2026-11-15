@@ -23,6 +23,11 @@ namespace RemotePlay.Services.Auth
         private readonly IdGenerator _idGen ;
         private readonly ILogger<AuthService> _logger;
         private const int Pbkdf2Iterations = 1000;
+        private const string TokenUseClaim = "token_use";
+        private const string AccessTokenUse = "access";
+        private const string RefreshTokenUse = "refresh";
+        private static readonly TimeSpan AccessTokenLifetime = TimeSpan.FromHours(24);
+        private static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(30);
 
         public AuthService(
             RPContext context,
@@ -68,17 +73,7 @@ namespace RemotePlay.Services.Auth
 
             _logger.LogInformation("New user registered: {Username}, Email: {Email}", user.Username, user.Email);
 
-            // 生成JWT令牌
-            var token = GenerateJwtToken(user);
-            var expiresAt = DateTime.UtcNow.AddHours(24); // 默认24小时过期
-
-            return new AuthResponse
-            {
-                Token = token,
-                Username = user.Username,
-                Email = user.Email,
-                ExpiresAt = expiresAt
-            };
+            return CreateAuthResponse(user);
         }
 
         /// <summary>
@@ -106,23 +101,45 @@ namespace RemotePlay.Services.Auth
 
             _logger.LogInformation("User logged in: {Username}", user.Username);
 
-            // 生成JWT令牌
-            var token = GenerateJwtToken(user);
-            var expiresAt = DateTime.UtcNow.AddHours(24); // 默认24小时过期
-
-            return new AuthResponse
-            {
-                Token = token,
-                Username = user.Username,
-                Email = user.Email,
-                ExpiresAt = expiresAt
-            };
+            return CreateAuthResponse(user);
         }
 
         /// <summary>
-        /// 验证JWT令牌
+        /// 使用 refresh token 续期
         /// </summary>
-        public async Task<User?> ValidateTokenAsync(string token)
+        public async Task<AuthResponse?> RefreshAsync(string refreshToken)
+        {
+            if (string.IsNullOrWhiteSpace(refreshToken))
+            {
+                return null;
+            }
+
+            var user = await ValidateTokenAsync(refreshToken, RefreshTokenUse);
+            if (user == null)
+            {
+                _logger.LogWarning("Refresh failed: invalid or expired refresh token");
+                return null;
+            }
+
+            if (!user.IsActive)
+            {
+                _logger.LogWarning("Refresh failed: user is disabled - {Username}", user.Username);
+                return null;
+            }
+
+            _logger.LogInformation("Access token refreshed for user: {Username}", user.Username);
+            return CreateAuthResponse(user);
+        }
+
+        /// <summary>
+        /// 验证JWT访问令牌
+        /// </summary>
+        public Task<User?> ValidateTokenAsync(string token)
+        {
+            return ValidateTokenAsync(token, AccessTokenUse);
+        }
+
+        private async Task<User?> ValidateTokenAsync(string token, string expectedTokenUse)
         {
             try
             {
@@ -138,10 +155,24 @@ namespace RemotePlay.Services.Auth
                     ValidateAudience = true,
                     ValidAudience = GetJwtAudience(),
                     ValidateLifetime = true,
-                    ClockSkew = TimeSpan.Zero
+                    ClockSkew = TimeSpan.FromMinutes(1)
                 };
 
-                var principal = tokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+                var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+
+                var tokenUse = principal.FindFirst(TokenUseClaim)?.Value;
+                // 兼容旧版未带 token_use 的访问令牌
+                if (string.IsNullOrEmpty(tokenUse))
+                {
+                    if (expectedTokenUse != AccessTokenUse)
+                    {
+                        return null;
+                    }
+                }
+                else if (!string.Equals(tokenUse, expectedTokenUse, StringComparison.Ordinal))
+                {
+                    return null;
+                }
 
                 var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                 if (string.IsNullOrEmpty(userIdClaim))
@@ -153,7 +184,7 @@ namespace RemotePlay.Services.Auth
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "JWT token validation failed");
+                _logger.LogWarning(ex, "JWT token validation failed (expected use={TokenUse})", expectedTokenUse);
                 return null;
             }
         }
@@ -249,16 +280,33 @@ namespace RemotePlay.Services.Auth
                 | ((uint)(buffer[offset + 3]));
         }
 
+        private AuthResponse CreateAuthResponse(User user)
+        {
+            var accessExpiresAt = DateTime.UtcNow.Add(AccessTokenLifetime);
+            var refreshExpiresAt = DateTime.UtcNow.Add(RefreshTokenLifetime);
+
+            return new AuthResponse
+            {
+                Token = GenerateJwtToken(user, AccessTokenUse, accessExpiresAt),
+                RefreshToken = GenerateJwtToken(user, RefreshTokenUse, refreshExpiresAt),
+                Username = user.Username,
+                Email = user.Email,
+                ExpiresAt = accessExpiresAt,
+                RefreshExpiresAt = refreshExpiresAt
+            };
+        }
+
         /// <summary>
         /// 生成JWT令牌
         /// </summary>
-        private string GenerateJwtToken(User user)
+        private string GenerateJwtToken(User user, string tokenUse, DateTime expiresAt)
         {
             var claims = new[]
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Name, user.Username),
                 new Claim(ClaimTypes.Email, user.Email),
+                new Claim(TokenUseClaim, tokenUse),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 
@@ -269,7 +317,7 @@ namespace RemotePlay.Services.Auth
                 issuer: GetJwtIssuer(),
                 audience: GetJwtAudience(),
                 claims: claims,
-                expires: DateTime.UtcNow.AddHours(24),
+                expires: expiresAt,
                 signingCredentials: creds
             );
 

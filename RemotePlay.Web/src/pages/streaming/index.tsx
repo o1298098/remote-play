@@ -77,8 +77,6 @@ export default function Streaming() {
     connectionStats,
     isStatsMonitoringEnabled,
     setStatsMonitoring,
-    refreshStream,
-    forceResetReorderQueue,
     webrtcSessionId,
     isStalling,
   } = useStreamingConnection({
@@ -416,8 +414,6 @@ export default function Streaming() {
         <StreamingTopBar
           onBack={handleBack}
           isStatsEnabled={isStatsMonitoringEnabled}
-          onRefresh={isConnected ? () => { refreshStream() } : undefined}
-          onForceResetQueue={isConnected ? () => { forceResetReorderQueue() } : undefined}
         />
         <StreamingLoading />
       </div>
@@ -448,8 +444,6 @@ export default function Streaming() {
           onBack={handleBack}
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
-          onRefresh={isConnected ? () => { refreshStream() } : undefined}
-          onForceResetQueue={isConnected ? () => { forceResetReorderQueue() } : undefined}
         />
       )}
 
@@ -544,7 +538,6 @@ export default function Streaming() {
           sessionId={webrtcSessionId}
           isVisible={isConnected}
           onBack={handleBack}
-          onRefresh={isConnected ? () => { refreshStream() } : undefined}
           isStatsEnabled={isStatsMonitoringEnabled}
           onStatsToggle={isConnected ? setStatsMonitoring : undefined}
           onToggleOrientation={toggleOrientation}
@@ -557,7 +550,6 @@ export default function Streaming() {
                 disconnect()
                 navigate('/devices')
               }}
-              onRefresh={isConnected ? () => { refreshStream() } : undefined}
               isStatsEnabled={isStatsMonitoringEnabled}
               onStatsToggle={isConnected ? setStatsMonitoring : undefined}
               onToggleOrientation={toggleOrientation}

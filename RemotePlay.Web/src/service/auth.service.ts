@@ -1,11 +1,14 @@
 import { apiRequest, type ApiResponse } from './api-client'
+import { refreshAccessToken, type RefreshedAuthTokens } from '@/utils/token-refresh'
 
 // 认证响应类型
 export interface AuthResponse {
   token: string
+  refreshToken: string
   username: string
   email: string
   expiresAt: string
+  refreshExpiresAt: string
 }
 
 // 注册请求类型
@@ -46,6 +49,13 @@ export const authService = {
   },
 
   /**
+   * 刷新访问令牌
+   */
+  refresh: async (): Promise<RefreshedAuthTokens | null> => {
+    return refreshAccessToken()
+  },
+
+  /**
    * 获取当前用户信息
    */
   getCurrentUser: async (): Promise<ApiResponse<any>> => {
@@ -54,4 +64,3 @@ export const authService = {
     })
   },
 }
-

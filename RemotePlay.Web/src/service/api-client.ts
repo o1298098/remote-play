@@ -1,4 +1,6 @@
 import { invalidateAuth, isAuthErrorMessage } from '@/utils/auth-invalidation'
+import { getAccessToken } from '@/utils/auth-storage'
+import { refreshAccessToken } from '@/utils/token-refresh'
 import { getTranslatedErrorMessage } from '@/utils/error-code-translator'
 
 // API 基础配置
@@ -18,6 +20,119 @@ export interface ApiResponse<T = any> {
   result?: T
 }
 
+function isAuthRefreshEndpoint(endpoint: string): boolean {
+  return /\/auth\/(login|register|refresh)\b/i.test(endpoint)
+}
+
+function buildRequestInit(options: RequestInit = {}, accessToken?: string | null): RequestInit {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> | undefined),
+  }
+
+  const token = accessToken ?? getAccessToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  return {
+    ...options,
+    headers,
+  }
+}
+
+async function parseApiResponse<T>(
+  response: Response,
+  endpoint: string,
+  requestInit: RequestInit
+): Promise<{ unauthorizedStatus: boolean; data: ApiResponse<T> | null; emptyUnauthorized: boolean }> {
+  const unauthorizedStatus = response.status === 401 || response.status === 403
+
+  if (response.status === 204 && requestInit.method === 'OPTIONS') {
+    return {
+      unauthorizedStatus,
+      emptyUnauthorized: false,
+      data: {
+        success: true,
+        message: '预检请求成功',
+      } as ApiResponse<T>,
+    }
+  }
+
+  const contentType = response.headers.get('content-type')
+  if (!contentType || response.status === 204) {
+    if (response.ok) {
+      return {
+        unauthorizedStatus,
+        emptyUnauthorized: false,
+        data: {
+          success: true,
+          message: '请求成功',
+        } as ApiResponse<T>,
+      }
+    }
+    throw new Error(`请求失败: ${response.status} ${response.statusText}`)
+  }
+
+  const text = await response.text()
+  if (!text || text.trim().length === 0) {
+    return {
+      unauthorizedStatus,
+      emptyUnauthorized: unauthorizedStatus,
+      data: null,
+    }
+  }
+
+  try {
+    return {
+      unauthorizedStatus,
+      emptyUnauthorized: false,
+      data: JSON.parse(text) as ApiResponse<T>,
+    }
+  } catch (parseError) {
+    console.error('JSON解析失败:', parseError)
+    throw new Error('响应格式错误，无法解析JSON数据')
+  }
+}
+
+function normalizeSuccessResponse<T>(data: ApiResponse<T>): ApiResponse<T> {
+  if (data && typeof data === 'object') {
+    const responseData = data as any
+
+    if ('data' in responseData) {
+      return {
+        success: responseData.success ?? true,
+        data: responseData.data,
+        message: responseData.message,
+        errorMessage: responseData.errorMessage,
+        result: responseData.data,
+      } as ApiResponse<T>
+    }
+
+    if ('errorMessage' in responseData && !responseData.success) {
+      const translatedError = getTranslatedErrorMessage({
+        errorCode: responseData.errorCode,
+        errorMessage: responseData.errorMessage,
+      })
+      return {
+        success: false,
+        errorMessage: translatedError,
+        errorCode: responseData.errorCode,
+        result: undefined,
+      } as ApiResponse<T>
+    }
+
+    if ('result' in responseData) {
+      return {
+        ...responseData,
+        data: responseData.result,
+      } as ApiResponse<T>
+    }
+  }
+
+  return data
+}
+
 /**
  * 通用 API 请求函数
  * @param endpoint API端点路径
@@ -29,132 +144,79 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
   const url = `${API_BASE_URL}${endpoint}`
-  
-  const defaultOptions: RequestInit = {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  }
+  const skipRefresh = isAuthRefreshEndpoint(endpoint)
 
-  // 如果有 token，添加到请求头
-  const token = localStorage.getItem('auth_token')
-  if (token) {
-    defaultOptions.headers = {
-      ...defaultOptions.headers,
-      Authorization: `Bearer ${token}`,
-    }
-  }
+  const execute = async (
+    accessToken?: string | null,
+    hasRetriedAfterRefresh = false
+  ): Promise<ApiResponse<T>> => {
+    const requestInit = buildRequestInit(options, accessToken)
+    const response = await fetch(url, requestInit)
+    const parsed = await parseApiResponse<T>(response, endpoint, requestInit)
 
-  try {
-    const response = await fetch(url, defaultOptions)
-    const unauthorizedStatus = response.status === 401 || response.status === 403
-    
-    // 跳过OPTIONS预检请求（204状态码）
-    if (response.status === 204 && defaultOptions.method === 'OPTIONS') {
-      // 这是CORS预检请求，浏览器会自动处理，这里不需要处理
-      return {
-        success: true,
-        message: '预检请求成功',
-      } as ApiResponse<T>
-    }
-    
-    // 检查响应是否有内容
-    const contentType = response.headers.get('content-type')
-    
-    // 如果没有内容类型或者是空响应
-    if (!contentType || response.status === 204) {
-      if (response.ok) {
-        return {
-          success: true,
-          message: '请求成功',
-        } as ApiResponse<T>
-      } else {
-        throw new Error(`请求失败: ${response.status} ${response.statusText}`)
-      }
-    }
-    
-    // 解析JSON响应
-    let data: ApiResponse<T>
-    try {
-      // 先读取文本内容
-      const text = await response.text()
-      if (!text || text.trim().length === 0) {
-        if (unauthorizedStatus) {
-          invalidateAuth(`接口 ${endpoint} 返回未授权（空响应）`)
-          throw new Error('登录状态已失效，请重新登录')
+    if (parsed.emptyUnauthorized) {
+      if (!skipRefresh && !hasRetriedAfterRefresh) {
+        const refreshed = await refreshAccessToken()
+        if (refreshed?.token) {
+          return execute(refreshed.token, true)
         }
-        throw new Error('响应为空')
       }
-      // 尝试解析JSON
-      data = JSON.parse(text)
-    } catch (parseError) {
-      console.error('JSON解析失败:', parseError)
-      throw new Error('响应格式错误，无法解析JSON数据')
+      invalidateAuth(`接口 ${endpoint} 返回未授权（空响应）`)
+      throw new Error('登录状态已失效，请重新登录')
     }
 
-    // 处理新的响应格式
+    const data = parsed.data
+    if (!data) {
+      throw new Error('响应为空')
+    }
+
     if (!response.ok) {
-      // 失败时，优先使用错误码翻译，否则使用 errorMessage 字段
       const errorResponse = data as any
       const errorMsg = getTranslatedErrorMessage({
         errorCode: errorResponse?.errorCode,
-        errorMessage: errorResponse?.errorMessage || errorResponse?.message || `请求失败: ${response.status}`
+        errorMessage:
+          errorResponse?.errorMessage ||
+          errorResponse?.message ||
+          `请求失败: ${response.status}`,
       })
 
-      if (unauthorizedStatus || isAuthErrorMessage(errorMsg)) {
+      const shouldTryRefresh =
+        !skipRefresh &&
+        !hasRetriedAfterRefresh &&
+        (parsed.unauthorizedStatus || isAuthErrorMessage(errorMsg))
+
+      if (shouldTryRefresh) {
+        const refreshed = await refreshAccessToken()
+        if (refreshed?.token) {
+          return execute(refreshed.token, true)
+        }
+        invalidateAuth(errorMsg || `接口 ${endpoint} 返回未授权`)
+      } else if (parsed.unauthorizedStatus || isAuthErrorMessage(errorMsg)) {
         invalidateAuth(errorMsg || `接口 ${endpoint} 返回未授权`)
       }
 
       throw new Error(errorMsg)
     }
 
-    // 统一处理新的响应格式
-    // 成功: { success: true, data: T, message?: string }
-    // 失败: { success: false, errorMessage: string }
-    if (data && typeof data === 'object') {
-      const responseData = data as any
-      
-      // 如果响应包含 data 字段，映射到 result 字段以保持向后兼容
-      if ('data' in responseData) {
-        return {
-          success: responseData.success ?? true,
-          data: responseData.data,
-          message: responseData.message,
-          errorMessage: responseData.errorMessage,
-          result: responseData.data, // 向后兼容
-        } as ApiResponse<T>
+    const normalized = normalizeSuccessResponse(data)
+    if (
+      normalized.success === false &&
+      isAuthErrorMessage(normalized.errorMessage) &&
+      !skipRefresh &&
+      !hasRetriedAfterRefresh
+    ) {
+      const refreshed = await refreshAccessToken()
+      if (refreshed?.token) {
+        return execute(refreshed.token, true)
       }
-      
-      // 如果响应包含 errorMessage，说明是失败响应
-      if ('errorMessage' in responseData && !responseData.success) {
-        const translatedError = getTranslatedErrorMessage({
-          errorCode: responseData.errorCode,
-          errorMessage: responseData.errorMessage
-        })
-        
-        if (isAuthErrorMessage(translatedError)) {
-          invalidateAuth(translatedError || `接口 ${endpoint} 返回认证失败`)
-        }
-        return {
-          success: false,
-          errorMessage: translatedError,
-          errorCode: responseData.errorCode,
-          result: undefined,
-        } as ApiResponse<T>
-      }
-      
-      // 如果已经有 result 字段（旧格式兼容），保持原样
-      if ('result' in responseData) {
-        return {
-          ...responseData,
-          data: responseData.result, // 同时提供 data 字段
-        } as ApiResponse<T>
-      }
+      invalidateAuth(normalized.errorMessage || `接口 ${endpoint} 返回认证失败`)
     }
 
-    return data as ApiResponse<T>
+    return normalized
+  }
+
+  try {
+    return await execute()
   } catch (error) {
     console.error('API请求错误:', error)
     if (error instanceof Error) {
@@ -163,4 +225,3 @@ export async function apiRequest<T>(
     throw new Error('网络错误，请稍后重试')
   }
 }
-

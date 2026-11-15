@@ -19,6 +19,11 @@ namespace RemotePlay.Contracts.Services
         Task<AuthResponse?> LoginAsync(LoginRequest request);
 
         /// <summary>
+        /// 使用 refresh token 续期访问令牌
+        /// </summary>
+        Task<AuthResponse?> RefreshAsync(string refreshToken);
+
+        /// <summary>
         /// 验证JWT令牌
         /// </summary>
         Task<User?> ValidateTokenAsync(string token);

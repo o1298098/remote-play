@@ -3,6 +3,7 @@ using RemotePlay.Contracts.Services;
 using RemotePlay.Models.WebRTC;
 using RemotePlay.Services.WebRTC;
 using RemotePlay.Services.Streaming;
+using System.Security.Claims;
 
 namespace RemotePlay.Hubs
 {
@@ -11,6 +12,7 @@ namespace RemotePlay.Hubs
     /// </summary>
     public class StreamingHub : Hub
     {
+        private const string UserGroupPrefix = "user:";
         private readonly WebRTCSignalingService _signalingService;
         private readonly IStreamingService _streamingService;
         private readonly ILogger<StreamingHub> _logger;
@@ -23,6 +25,36 @@ namespace RemotePlay.Hubs
             _signalingService = signalingService;
             _streamingService = streamingService;
             _logger = logger;
+        }
+
+        public static string GetUserGroupName(string userId) => $"{UserGroupPrefix}{userId}";
+
+        public override async Task OnConnectedAsync()
+        {
+            var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!string.IsNullOrEmpty(userId))
+            {
+                var groupName = GetUserGroupName(userId);
+                await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
+                _logger.LogDebug("StreamingHub connection {ConnectionId} joined {GroupName}", Context.ConnectionId, groupName);
+            }
+            else
+            {
+                _logger.LogWarning("StreamingHub unauthenticated connection {ConnectionId}", Context.ConnectionId);
+            }
+
+            await base.OnConnectedAsync();
+        }
+
+        public override async Task OnDisconnectedAsync(Exception? exception)
+        {
+            var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!string.IsNullOrEmpty(userId))
+            {
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, GetUserGroupName(userId));
+            }
+
+            await base.OnDisconnectedAsync(exception);
         }
 
         /// <summary>

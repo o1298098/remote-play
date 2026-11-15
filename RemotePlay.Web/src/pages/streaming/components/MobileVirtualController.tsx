@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useDevice } from '@/hooks/use-device'
 import { controllerService } from '@/service/controller.service'
 import { getStreamingButtonName } from '@/types/controller-mapping'
-import { ArrowLeft, Activity, RotateCw, ChevronUp, ChevronDown, Smartphone } from 'lucide-react'
+import { ArrowLeft, Activity, ChevronUp, ChevronDown, Smartphone } from 'lucide-react'
 import { useStickInputState } from '@/hooks/use-streaming-connection/stick-input-state'
 import { setVirtualStick, setVirtualStickActive } from '@/hooks/use-streaming-connection/virtual-joystick-state'
 import { createKeyboardHandler } from '@/utils/keyboard-mapping'
@@ -27,7 +27,6 @@ interface MobileVirtualControllerProps {
   sessionId: string | null
   isVisible: boolean
   onBack?: () => void
-  onRefresh?: () => void
   isStatsEnabled?: boolean
   onStatsToggle?: (enabled: boolean) => void
   onToggleOrientation?: () => void
@@ -469,7 +468,6 @@ export function MobileVirtualController({
   sessionId,
   isVisible,
   onBack,
-  onRefresh,
   isStatsEnabled = false,
   onStatsToggle,
   onToggleOrientation,
@@ -1061,24 +1059,6 @@ export function MobileVirtualController({
                   </button>
                 )}
 
-                {onRefresh && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onRefresh()
-                    }}
-                    className="flex items-center justify-center text-white/80 active:text-white active:scale-95 transition-all"
-                    style={{
-                      touchAction: 'manipulation',
-                      width: '32px',
-                      height: '32px',
-                    }}
-                    aria-label={t('streaming.refresh.label', '刷新串流')}
-                  >
-                    <RotateCw className="h-4 w-4" />
-                  </button>
-                )}
-
                 {onStatsToggle && (
                   <button
                     onClick={(e) => {
@@ -1247,24 +1227,6 @@ export function MobileVirtualController({
                 aria-label={t('streaming.menu.back', '返回')}
               >
                 <ArrowLeft className="h-4 w-4" />
-              </button>
-            )}
-
-            {onRefresh && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onRefresh()
-                }}
-                className="flex items-center justify-center text-white/80 active:text-white active:scale-95 transition-all"
-                style={{
-                  touchAction: 'manipulation',
-                  width: '32px',
-                  height: '32px',
-                }}
-                aria-label={t('streaming.refresh.label', '刷新串流')}
-              >
-                <RotateCw className="h-4 w-4" />
               </button>
             )}
 

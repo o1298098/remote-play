@@ -83,10 +83,11 @@ export default function Register() {
       })
 
       if (response.success && response.result) {
-        const { token, username, email } = response.result
+        const { token, refreshToken, username, email, expiresAt, refreshExpiresAt } = response.result
+        const session = { token, refreshToken, expiresAt, refreshExpiresAt }
         
-        // 先保存 token，然后获取完整用户信息
-        login(token, {
+        // 先保存 token / refreshToken，然后获取完整用户信息
+        login(session, {
           id: username, // 临时 ID
           username,
           email,
@@ -98,7 +99,7 @@ export default function Register() {
           const userResponse = await authService.getCurrentUser()
           if (userResponse.success && userResponse.result) {
             const userInfo = userResponse.result as any
-            login(token, {
+            login(session, {
               id: userInfo.userId || username,
               username: userInfo.username || username,
               email: userInfo.email || email,

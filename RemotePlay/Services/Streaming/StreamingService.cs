@@ -81,23 +81,26 @@ namespace RemotePlay.Services.Streaming
         }
         
         /// <summary>
-        /// 处理流断开连接（由 PS5 主动断开）
+        /// 处理流断开连接（由 PS5 主动断开 / 主机无音视频超时）
         /// </summary>
         private async Task HandleStreamDisconnectAsync(Guid sessionId)
         {
             try
             {
                 _logger.LogWarning("Handling stream disconnect for session {SessionId}", sessionId);
-                
+
+                // 必须先取出会话信息再 Stop：StopSessionAsync 会从字典移除，之后无法再查 HostId
+                var session = await _sessionService.GetSessionAsync(sessionId);
+                var hostId = session?.HostId;
+
                 // 从流字典中移除（流会在 RPStreamV2.HandleDisconnectAsync 中自己停止）
                 _streams.TryRemove(sessionId, out _);
-                
-                // 停止 session
+
+                // 先通知客户端，再停 session，避免串流页一直停在“已连接但 0 帧”状态
+                await NotifyClientDisconnectAsync(sessionId, hostId);
+
                 await _sessionService.StopSessionAsync(sessionId);
-                
-                // 通知客户端
-                await NotifyClientDisconnectAsync(sessionId);
-                
+
                 _logger.LogInformation("Stream disconnect handled for session {SessionId}", sessionId);
             }
             catch (Exception ex)
@@ -107,33 +110,27 @@ namespace RemotePlay.Services.Streaming
         }
         
         /// <summary>
-        /// 通知客户端断开连接
+        /// 通知客户端断开连接（DeviceStatusHub + StreamingHub，串流页主要靠后者）
         /// </summary>
-        private async Task NotifyClientDisconnectAsync(Guid sessionId)
+        private async Task NotifyClientDisconnectAsync(Guid sessionId, string? hostId)
         {
             try
             {
-                using var scope = _serviceProvider.CreateScope();
-                var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<DeviceStatusHub>>();
-                var dbContext = scope.ServiceProvider.GetRequiredService<RPContext>();
-
-                var session = await _sessionService.GetSessionAsync(sessionId);
-                if (session == null)
-                {
-                    _logger.LogWarning("Cannot notify client: session {SessionId} not found", sessionId);
-                    return;
-                }
-
-                if (string.IsNullOrEmpty(session.HostId))
+                if (string.IsNullOrEmpty(hostId))
                 {
                     _logger.LogWarning("Cannot notify client: session {SessionId} has no HostId", sessionId);
                     return;
                 }
 
+                using var scope = _serviceProvider.CreateScope();
+                var deviceStatusHub = scope.ServiceProvider.GetRequiredService<IHubContext<DeviceStatusHub>>();
+                var streamingHub = scope.ServiceProvider.GetRequiredService<IHubContext<StreamingHub>>();
+                var dbContext = scope.ServiceProvider.GetRequiredService<RPContext>();
+
                 var userIds = await dbContext.UserDevices
                     .Where(ud => ud.IsActive
                                  && ud.Device != null
-                                 && ud.Device.HostId == session.HostId
+                                 && ud.Device.HostId == hostId
                                  && !string.IsNullOrEmpty(ud.UserId))
                     .Select(ud => ud.UserId!)
                     .Distinct()
@@ -141,22 +138,26 @@ namespace RemotePlay.Services.Streaming
 
                 if (userIds.Count == 0)
                 {
-                    _logger.LogWarning("No user bound to host {HostId}, skipping disconnect notification: SessionId={SessionId}", session.HostId, sessionId);
+                    _logger.LogWarning("No user bound to host {HostId}, skipping disconnect notification: SessionId={SessionId}", hostId, sessionId);
                     return;
                 }
 
                 var payload = new
                 {
                     sessionId = sessionId,
+                    hostId = hostId,
                     reason = "PS5主动断开连接",
                     timestamp = DateTime.UtcNow
                 };
                 
                 foreach (var userId in userIds)
                 {
-                    var groupName = DeviceStatusHub.GetUserGroupName(userId);
-                    await hubContext.Clients.Group(groupName).SendAsync("SessionDisconnected", payload);
-                    _logger.LogDebug("Sent disconnect notification to group {GroupName}: SessionId={SessionId}", groupName, sessionId);
+                    var deviceGroup = DeviceStatusHub.GetUserGroupName(userId);
+                    var streamingGroup = StreamingHub.GetUserGroupName(userId);
+                    await deviceStatusHub.Clients.Group(deviceGroup).SendAsync("SessionDisconnected", payload);
+                    await streamingHub.Clients.Group(streamingGroup).SendAsync("SessionDisconnected", payload);
+                    _logger.LogDebug("Sent disconnect notification to groups {DeviceGroup}/{StreamingGroup}: SessionId={SessionId}",
+                        deviceGroup, streamingGroup, sessionId);
                 }
                 
                 _logger.LogInformation("Disconnect notification sent to clients for session {SessionId}", sessionId);

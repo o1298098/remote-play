@@ -35,6 +35,13 @@ export interface ClientVideoStats {
   connectionState: string | null
 }
 
+export interface SessionDisconnectedPayload {
+  sessionId: string
+  hostId?: string
+  reason?: string
+  timestamp?: string
+}
+
 export class StreamingHubService {
   private connection: signalR.HubConnection | null = null
   private connectingPromise: Promise<signalR.HubConnection> | null = null
@@ -44,6 +51,8 @@ export class StreamingHubService {
   // ✅ ICE Restart 事件回调
   public onIceRestartOffer?: (offerSdp: string) => void
   public onIceRestartFailed?: (reason: string) => void
+  /** PS5 / 主机端会话断开（串流页应据此退出） */
+  public onSessionDisconnected?: (payload: SessionDisconnectedPayload) => void
 
   private ensureConnection(): Promise<signalR.HubConnection> {
     if (this.connection && this.connection.state === signalR.HubConnectionState.Connected) {
@@ -103,6 +112,12 @@ export class StreamingHubService {
       }
     })
 
+    // PS5 关机 / 主动断开 Remote Play 时，后端经此事件通知串流页
+    connection.on('SessionDisconnected', (payload: SessionDisconnectedPayload) => {
+      console.warn('⚠️ 收到 SessionDisconnected:', payload)
+      this.onSessionDisconnected?.(payload)
+    })
+
     connection.on('Error', (message: string) => {
       console.warn('StreamingHub 错误:', message)
     })
@@ -144,6 +159,11 @@ export class StreamingHubService {
       })
 
     return this.connectingPromise
+  }
+
+  /** 串流开始时提前建连，以便接收 SessionDisconnected 等推送 */
+  async ensureConnected(): Promise<void> {
+    await this.ensureConnection()
   }
 
   async requestKeyframe(sessionId: string): Promise<boolean> {

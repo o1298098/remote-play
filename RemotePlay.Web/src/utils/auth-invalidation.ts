@@ -1,3 +1,5 @@
+import { clearAuthTokens } from '@/utils/auth-storage'
+
 const AUTH_INVALIDATED_EVENT = 'auth:invalidated'
 
 interface AuthInvalidationDetail {
@@ -6,21 +8,9 @@ interface AuthInvalidationDetail {
 
 let invalidationInProgress = false
 
-function safeRemoveItem(storage: Storage, key: string) {
-  try {
-    storage.removeItem(key)
-  } catch {
-    // 忽略存储异常
-  }
-}
-
 export function clearStoredAuth() {
   if (typeof window === 'undefined') return
-
-  if (typeof localStorage !== 'undefined') {
-    safeRemoveItem(localStorage, 'auth_token')
-    safeRemoveItem(localStorage, 'user_data')
-  }
+  clearAuthTokens()
 }
 
 export function isAuthErrorMessage(message?: string | null): boolean {
@@ -32,11 +22,17 @@ export function isAuthErrorMessage(message?: string | null): boolean {
     normalizedMessage.includes('登录后') ||
     normalizedMessage.includes('请登录') ||
     normalizedMessage.includes('登录才能') ||
+    normalizedMessage.includes('登录状态已失效') ||
+    normalizedMessage.includes('刷新令牌无效') ||
     normalizedMessage.includes('unauthorized') ||
     normalizedMessage.includes('401') ||
     normalizedMessage.includes('forbidden') ||
-    normalizedMessage.includes('token') ||
-    normalizedMessage.includes('auth')
+    normalizedMessage.includes('jwt') ||
+    (normalizedMessage.includes('token') &&
+      (normalizedMessage.includes('expired') ||
+        normalizedMessage.includes('invalid') ||
+        normalizedMessage.includes('过期') ||
+        normalizedMessage.includes('无效')))
   )
 }
 
@@ -79,4 +75,3 @@ export function resetInvalidationFlag() {
 
 export { AUTH_INVALIDATED_EVENT }
 export type { AuthInvalidationDetail }
-

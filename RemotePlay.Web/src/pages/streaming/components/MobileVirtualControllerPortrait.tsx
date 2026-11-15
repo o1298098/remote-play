@@ -26,7 +26,6 @@ interface MobileVirtualControllerPortraitProps {
   sessionId: string | null
   isVisible: boolean
   onBack?: () => void
-  onRefresh?: () => void
   isStatsEnabled?: boolean
   onStatsToggle?: (enabled: boolean) => void
   onToggleOrientation?: () => void
@@ -401,7 +400,6 @@ export function MobileVirtualControllerPortrait({
   sessionId,
   isVisible,
   onBack,
-  onRefresh: _onRefresh,
   isStatsEnabled = false,
   onStatsToggle,
   onToggleOrientation,

@@ -110,6 +110,16 @@ builder.Services.AddAuthentication(options =>
                 }
             }
             return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            // refresh token 不能当作 access token 访问受保护接口
+            var tokenUse = context.Principal?.FindFirst("token_use")?.Value;
+            if (string.Equals(tokenUse, "refresh", StringComparison.Ordinal))
+            {
+                context.Fail("Refresh token cannot be used as access token");
+            }
+            return Task.CompletedTask;
         }
     };
 });
