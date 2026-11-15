@@ -43,7 +43,6 @@ function buildRequestInit(options: RequestInit = {}, accessToken?: string | null
 
 async function parseApiResponse<T>(
   response: Response,
-  endpoint: string,
   requestInit: RequestInit
 ): Promise<{ unauthorizedStatus: boolean; data: ApiResponse<T> | null; emptyUnauthorized: boolean }> {
   const unauthorizedStatus = response.status === 401 || response.status === 403
@@ -152,7 +151,7 @@ export async function apiRequest<T>(
   ): Promise<ApiResponse<T>> => {
     const requestInit = buildRequestInit(options, accessToken)
     const response = await fetch(url, requestInit)
-    const parsed = await parseApiResponse<T>(response, endpoint, requestInit)
+    const parsed = await parseApiResponse<T>(response, requestInit)
 
     if (parsed.emptyUnauthorized) {
       if (!skipRefresh && !hasRetriedAfterRefresh) {
