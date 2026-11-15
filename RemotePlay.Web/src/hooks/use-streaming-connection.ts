@@ -42,8 +42,6 @@ interface ConnectOptions {
 const WEBRTC_REBUILD_STALL_MS = 6000
 const WEBRTC_REBUILD_MIN_FRAMES_RECEIVED = 120
 const WEBRTC_REBUILD_COOLDOWN_MS = 30000
-/** 浏览器↔服务器 WebRTC 仍连通时，画面长时间无进展视为 PS5/主机端已断流 */
-const HOST_STREAM_GONE_MS = 20000
 
 interface InboundVideoStatsLike {
   type?: string
@@ -514,11 +512,6 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         console.warn('⚠️ 获取流健康状态失败（已禁用自动关键帧回退）', error)
         if (error instanceof Error && /不存在或已结束/.test(error.message)) {
           remotePlaySessionIdRef.current = null
-          if (isConnectedRef.current && onConnectionError && !hasTriggeredErrorCallbackRef.current) {
-            hasTriggeredErrorCallbackRef.current = true
-            onConnectionError(t('streaming.connection.errors.hostDisconnected', '主机已断开串流'))
-          }
-          return
         }
         // 不再自动回退请求关键帧，仅更新活动时间
         lastVideoActivityRef.current = Date.now()
@@ -528,7 +521,6 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
     },
     [
       HEALTH_CHECK_COOLDOWN_MS,
-      onConnectionError,
       resolveRemotePlaySessionId,
       resolveWebrtcSessionId,
       requestKeyframe,
@@ -2858,19 +2850,6 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
       setIsStalling(true)
       requestKeyframe('monitor-stall')
       void handleStreamHealthCheck('monitor-stall', { forceNeutral: true })
-
-      // WebRTC 到服务器仍可能是 connected，但 PS5 关机后不再送帧；超时后主动退出串流页
-      if (
-        inactivity >= HOST_STREAM_GONE_MS &&
-        isConnectedRef.current &&
-        !rebuildInFlightRef.current &&
-        onConnectionError &&
-        !hasTriggeredErrorCallbackRef.current
-      ) {
-        hasTriggeredErrorCallbackRef.current = true
-        console.warn('⚠️ 画面长时间无进展，判定主机端串流已中断', { inactivityMs: inactivity })
-        onConnectionError(t('streaming.connection.errors.hostDisconnected', '主机已断开串流'))
-      }
     }
 
     keyframeMonitorIntervalRef.current = window.setInterval(checkStall, 1000)
@@ -2881,9 +2860,9 @@ export function useStreamingConnection({ hostId, deviceName, isLikelyLan, videoR
         keyframeMonitorIntervalRef.current = null
       }
     }
-  }, [handleStreamHealthCheck, isConnected, onConnectionError, requestKeyframe, resolveWebrtcSessionId, t, videoRef])
+  }, [handleStreamHealthCheck, isConnected, requestKeyframe, resolveWebrtcSessionId, videoRef])
 
-  // 监听后端推送的 PS5/主机端断流（WebRTC 到服务器可能仍显示 connected）
+  // 仅处理后端明确推送的 PS5 断流通知，不额外改动卡顿/恢复策略
   useEffect(() => {
     streamingHubService.onSessionDisconnected = (payload) => {
       const currentSessionId = remotePlaySessionIdRef.current

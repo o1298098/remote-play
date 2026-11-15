@@ -70,6 +70,22 @@ namespace RemotePlay.Services.Streaming.Buffer
 
         #region Public API
 
+        /// <summary>
+        /// 清空缓冲并重置序号状态，用于画面冻结时强制恢复。
+        /// </summary>
+        public void Reset()
+        {
+            lock (_lock)
+            {
+                Array.Clear(_slots, 0, _slots.Length);
+                _initialized = false;
+                _baseSeq = 0;
+                _buffered = 0;
+                _holeSinceTicks = 0;
+                _holeBaseSeq = 0;
+            }
+        }
+
         public void Push(T item)
         {
             if (item == null) throw new ArgumentNullException(nameof(item));

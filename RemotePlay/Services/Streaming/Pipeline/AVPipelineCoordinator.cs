@@ -405,6 +405,14 @@ namespace RemotePlay.Services.Streaming.Pipeline
         }
 
         /// <summary>
+        /// 强制重置视频排序队列
+        /// </summary>
+        public void ForceResetReorderQueue()
+        {
+            _videoPipeline.ForceResetReorderQueue();
+        }
+
+        /// <summary>
         /// 设置帧丢失回调
         /// </summary>
         public void SetFrameLossCallback(Action<int>? callback)

@@ -1903,18 +1903,20 @@ namespace RemotePlay.Services.Streaming.Core
         }
 
         /// <summary>
-        /// 强制重置 ReorderQueue（用户主动触发，解决画面冻结）
+        /// 强制重置 ReorderQueue（解决有流量但画面冻结）
         /// ✅ 公共方法：允许外部主动重置队列以恢复卡顿的视频流
         /// </summary>
         public void ForceResetReorderQueue()
         {
-            _logger.LogWarning("🔄 User requested video ReorderQueue reset");
-            _avHandler?.ForceResetReorderQueue();
-            // Pipeline 模式下 AVHandler 不处理视频，客户端检测到画面停滞时直接请求关键帧
-            if (_usePipeline)
+            _logger.LogWarning("🔄 Requested video ReorderQueue reset");
+            if (_usePipeline && _avPipeline != null)
             {
+                _avPipeline.ForceResetReorderQueue();
                 _ = RequestKeyframeAsync();
+                return;
             }
+
+            _avHandler?.ForceResetReorderQueue();
         }
         
         /// <summary>

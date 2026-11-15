@@ -130,6 +130,23 @@ namespace RemotePlay.Services.Streaming.Pipeline
         }
 
         /// <summary>
+        /// 强制重置排序队列（有流量但画面冻结时由客户端触发）
+        /// </summary>
+        public void ForceResetReorderQueue()
+        {
+            if (_reorderQueue == null)
+            {
+                return;
+            }
+
+            var stats = _reorderQueue.GetStats();
+            _logger.LogWarning(
+                "🔄 Force resetting VideoPipeline ReorderQueue: processed={Processed}, dropped={Dropped}, timeout={Timeout}, buffer={Buffer}",
+                stats.processed, stats.dropped, stats.timeoutDropped, stats.bufferSize);
+            _reorderQueue.Reset();
+        }
+
+        /// <summary>
         /// 设置请求关键帧回调
         /// </summary>
         public void SetRequestKeyframeCallback(Func<Task>? callback)
