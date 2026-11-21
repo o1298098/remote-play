@@ -69,11 +69,22 @@ namespace RemotePlay.Services.Streaming
                 _logger.LogInformation("Test mode: Auto-attached DefaultReceiver for session {SessionId}", sessionId);
             }
             
-            // 设置断开连接回调
-            rp.SetOnDisconnectCallback(async () =>
+            if (_streams.TryRemove(sessionId, out var existing))
             {
-                await HandleStreamDisconnectAsync(sessionId);
-            });
+                _logger.LogWarning("Stopping previous stream before starting session {SessionId}", sessionId);
+                existing.SetOnDisconnectCallback(null);
+                try
+                {
+                    await existing.StopAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error stopping previous stream {SessionId}", sessionId);
+                }
+            }
+
+            // 设置断开连接回调。捕获本次流实例，避免旧流的断开回调拆掉后启动的新流。
+            rp.SetOnDisconnectCallback(() => HandleStreamDisconnectAsync(sessionId, rp));
             
             await rp.StartAsync();
             _streams[sessionId] = rp;
@@ -81,20 +92,34 @@ namespace RemotePlay.Services.Streaming
         }
         
         /// <summary>
-        /// 处理流断开连接（由 PS5 主动断开 / 主机无音视频超时）
+        /// 处理流断开连接（由 PS5 主动断开 / 主机无音视频超时 / 可靠通道无 ACK）
         /// </summary>
-        private async Task HandleStreamDisconnectAsync(Guid sessionId)
+        private async Task HandleStreamDisconnectAsync(Guid sessionId, RPStreamV2 stream)
         {
             try
             {
+                if (_streams.TryGetValue(sessionId, out var current) && !ReferenceEquals(current, stream))
+                {
+                    _logger.LogInformation("Ignoring disconnect from a replaced stream {SessionId}", sessionId);
+                    return;
+                }
+
                 _logger.LogWarning("Handling stream disconnect for session {SessionId}", sessionId);
 
                 // 必须先取出会话信息再 Stop：StopSessionAsync 会从字典移除，之后无法再查 HostId
                 var session = await _sessionService.GetSessionAsync(sessionId);
                 var hostId = session?.HostId;
 
-                // 从流字典中移除（流会在 RPStreamV2.HandleDisconnectAsync 中自己停止）
                 _streams.TryRemove(sessionId, out _);
+
+                try
+                {
+                    await stream.StopAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error stopping stream {SessionId} after disconnect", sessionId);
+                }
 
                 // 先通知客户端，再停 session，避免串流页一直停在“已连接但 0 帧”状态
                 await NotifyClientDisconnectAsync(sessionId, hostId);

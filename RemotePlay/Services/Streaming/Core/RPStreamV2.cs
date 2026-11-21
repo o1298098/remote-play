@@ -18,6 +18,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Channels;
 
 namespace RemotePlay.Services.Streaming.Core
@@ -111,6 +112,7 @@ namespace RemotePlay.Services.Streaming.Core
         private bool _isReady = false;
         private bool _isStopping = false;
         private bool _isReconnecting = false; // ✅ 标记是否正在进行流重置/重连
+        private int _disconnectOnce;
 
         // 加密
         private StreamECDH? _ecdh;
@@ -145,7 +147,10 @@ namespace RemotePlay.Services.Streaming.Core
         private const int RELIABLE_RESEND_TIMEOUT_MS = 200;
         private const int RELIABLE_RESEND_CHECK_INTERVAL_MS = RELIABLE_RESEND_TIMEOUT_MS / 2;
         private const int RELIABLE_RESEND_TRIES_MAX = 25;
+        // 连续这么久没有任何 DATA_ACK，说明对端已经不在，停止心跳和重发
+        private const int RELIABLE_ACK_DEAD_MS = 10_000;
         private readonly object _reliableLock = new();
+        private long _lastReliableAckMs;
         private readonly List<ReliablePacket> _reliablePackets = new();
         private readonly Stopwatch _reliableClock = Stopwatch.StartNew();
         private Task? _reliableResendTask;
@@ -395,6 +400,10 @@ namespace RemotePlay.Services.Streaming.Core
             _isStopping = true;
             _isReconnecting = false; // ✅ 清除重连标志
             _isReady = false; // ✅ 立即停止心跳循环和卡顿检测任务
+            lock (_reliableLock)
+            {
+                _reliablePackets.Clear();
+            }
             _logger.LogInformation("Stopping RPStream");
 
             try
@@ -996,7 +1005,7 @@ namespace RemotePlay.Services.Streaming.Core
                             if (timeSinceLastPacket >= STREAM_TIMEOUT_SECONDS)
                             {
                                 _logger.LogError("❌ Stream lost: no UDP packets for {Seconds}s, disconnecting", timeSinceLastPacket);
-                                await TriggerDisconnectAsync();
+                                RequestDisconnect();
                                 break; // 退出接收循环
                             }
                             
@@ -1100,25 +1109,51 @@ namespace RemotePlay.Services.Streaming.Core
             }
 
             _logger.LogWarning("❌ No audio/video data for {Seconds:F0}s (host may have stopped streaming), disconnecting", silence);
-            await TriggerDisconnectAsync();
+            RequestDisconnect();
             return true;
         }
 
-        private async Task TriggerDisconnectAsync()
+        /// <summary>
+        /// 在接收循环之外停流并通知会话层。接收循环里直接 await StopAsync 会等自己退出。
+        /// </summary>
+        private void RequestDisconnect()
         {
-            if (_onDisconnectCallback == null)
+            if (_isStopping)
             {
                 return;
             }
 
-            try
+            if (Interlocked.Exchange(ref _disconnectOnce, 1) != 0)
             {
-                await _onDisconnectCallback();
+                return;
             }
-            catch (Exception ex)
+
+            var callback = _onDisconnectCallback;
+            _ = Task.Run(async () =>
             {
-                _logger.LogError(ex, "❌ Disconnect callback failed");
-            }
+                try
+                {
+                    await StopAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error stopping stream during disconnect");
+                }
+
+                if (callback == null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await callback();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Disconnect callback failed");
+                }
+            });
         }
 
         private void HandleReceivedData(byte[] data)
@@ -1289,6 +1324,7 @@ namespace RemotePlay.Services.Streaming.Core
         private void HandleDataAck(Packet packet)
         {
             var tsn = (uint)packet.Params.Tsn;
+            Interlocked.Exchange(ref _lastReliableAckMs, _reliableClock.ElapsedMilliseconds);
 
             // DATA_ACK 携带累计序号：不大于它的可靠包都已送达
             lock (_reliableLock)
@@ -1762,28 +1798,11 @@ namespace RemotePlay.Services.Streaming.Core
         /// <summary>
         /// 处理断开连接
         /// </summary>
-        private async Task HandleDisconnectAsync()
+        private Task HandleDisconnectAsync()
         {
-            try
-            {
-                _logger.LogWarning("Handling PS5 disconnect: stopping stream and session...");
-                
-                // 先触发断开连接回调（由 StreamingService 处理 session 停止和客户端通知）
-                // 注意：回调应该在停止流之前调用，以便 StreamingService 可以正确处理
-                if (_onDisconnectCallback != null)
-                {
-                    await _onDisconnectCallback();
-                }
-                
-                // 然后停止流（清理资源）
-                await StopAsync();
-                
-                _logger.LogInformation("PS5 disconnect handled successfully");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error handling PS5 disconnect");
-            }
+            _logger.LogWarning("Handling PS5 disconnect: stopping stream and session...");
+            RequestDisconnect();
+            return Task.CompletedTask;
         }
 
         /// <summary>
@@ -2589,6 +2608,7 @@ namespace RemotePlay.Services.Streaming.Core
             if (firstTimeReady)
             {
                 _lastAvPacketTime = DateTime.UtcNow;
+                Interlocked.Exchange(ref _lastReliableAckMs, _reliableClock.ElapsedMilliseconds);
             }
             
             // ✅ 启动心跳循环
@@ -2869,9 +2889,14 @@ namespace RemotePlay.Services.Streaming.Core
                 while (!_cancellationToken.IsCancellationRequested && !_isStopping)
                 {
                     await Task.Delay(RELIABLE_RESEND_CHECK_INTERVAL_MS, _cancellationToken);
+                    if (_isStopping)
+                    {
+                        break;
+                    }
 
                     due.Clear();
                     long now = _reliableClock.ElapsedMilliseconds;
+                    bool linkDead = false;
                     lock (_reliableLock)
                     {
                         for (int i = _reliablePackets.Count - 1; i >= 0; i--)
@@ -2887,6 +2912,11 @@ namespace RemotePlay.Services.Streaming.Core
                                 _logger.LogInformation("Hit max retries of {Tries} tries, giving up on packet tsn={Tsn}",
                                     RELIABLE_RESEND_TRIES_MAX, p.Tsn);
                                 _reliablePackets.RemoveAt(i);
+                                long lastAckMs = Interlocked.Read(ref _lastReliableAckMs);
+                                if (_isReady && !_isReconnecting && now - lastAckMs >= RELIABLE_ACK_DEAD_MS)
+                                {
+                                    linkDead = true;
+                                }
                                 continue;
                             }
 
@@ -2896,8 +2926,20 @@ namespace RemotePlay.Services.Streaming.Core
                         }
                     }
 
+                    if (linkDead)
+                    {
+                        _logger.LogWarning("No reliable ACK for {Seconds}s, stopping stream", RELIABLE_ACK_DEAD_MS / 1000);
+                        RequestDisconnect();
+                        break;
+                    }
+
                     for (int i = due.Count - 1; i >= 0; i--)
                     {
+                        if (_isStopping)
+                        {
+                            break;
+                        }
+
                         var p = due[i];
                         _logger.LogDebug("Re-sending reliable packet tsn={Tsn}, tries={Tries}", p.Tsn, p.Tries);
                         await _sendQueueWriter.WriteAsync(new SendPacketItem
